@@ -70,6 +70,7 @@ import windowsScenarios from './scenarios/windows.mjs';
 import chromeTab from './scenarios/chrome-tab.mjs';
 // ---- windows ◂
 // ---- optics ▸
+import opticsAside from './scenarios/optics-aside.mjs';
 // ---- optics ◂
 // ---- chrome-relay ▸
 import chromeLink from './scenarios/chrome-link.mjs';
@@ -114,6 +115,7 @@ const V81_SCENARIOS = [
   ...chromeTab,
   // ---- windows ◂
   // ---- optics ▸
+  ...opticsAside,
   // ---- optics ◂
   // ---- chrome-relay ▸
   ...chromeLink,

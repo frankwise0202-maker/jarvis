@@ -6,6 +6,14 @@
 //           normal turn of the current conversation (deps.look), stream the answer into a sheet and
 //           pin Claude's labels (pin_labels) on the frozen frame, EDITH style. Follow-up questions
 //           while frozen reuse the frame (deps.ask).
+//   Aside   (v8.1, a Mac's layout: at least 900 × 501) after LOOK the live video stays big and the
+//           Look sits in a card at the top of the right column: its picture with the labels, the
+//           question, the answer, the follow-ups, and Expand · Other screen · Close. Expand swaps
+//           them (the picture big, mode 'frozen', the live video in a corner tile, still live); Live
+//           swaps back. A question while the card is aside goes to the card (a follow-up, no new
+//           frame) when it is an explicit follow-up or the scene hasn't changed since the card's
+//           picture; else it takes a new Look (asideQuestionRoute). Each answer is marked "New look"
+//           or "About this picture". Phones and smaller windows keep today's frozen view.
 //   Watch   sends a frame only when the scene changes (frame differencing on a 64 px thumbnail):
 //           at most one every 10 s, off after 5 minutes, with a countdown and the cost so far.
 //   Live view (v8.0) Jarvis watches live: about once a second the newest frame (640×360) goes to
@@ -13,7 +21,11 @@
 //           under the video says what he sees, a worth-saying line is listed and spoken (at most one
 //           every 15 s, never over the owner or over Jarvis: deps.liveSpeech). Never over $1 in any
 //           hour (src/lib/live-view.js createLiveBudget, shared by every tab), off after an hour,
-//           paused while a Look is on screen, stopped whenever the camera stops. Never with Watch.
+//           paused while a Look fills the screen (v8.1: it keeps looking while a Look sits aside),
+//           stopped whenever the camera stops. Never with Watch. v8.1: with deps.liveGate (src/lib/
+//           live-gate.js), answers asked meanwhile reserve their worst case in the same hour, so the
+//           live view's own looks count those reservations too, and the gate (not Optics) counts
+//           what each answer really cost.
 //   Screen  "look at my screen" (computers): one frame of the screen, then the capture stops.
 //   Camera  the picker under the title lists every camera (the MacBook's, a Logitech webcam, an
 //           iPhone's back lenses): the owner's choice is remembered (deps.cameraChoice); a camera
@@ -27,7 +39,8 @@
 //           looking at?" is a Look, "flip", "close", "tell me more", "hologram of this", "what's
 //           this part?"; the mic button is Voice Mode's.
 //
-//   openOptics(deps) -> { close(), el, command(text), stopWatch(), stopLiveView(), autoLookDone, autoLiveDone }
+//   openOptics(deps) -> { close(), el, command(text), question(text), stopWatch(), stopLiveView(), autoLookDone,
+//           autoLiveDone, cameraDone, card(), sceneChanged(), sendAway(frameId), bringBack(frameId) }
 //   isOpticsOpen()   currentOptics()
 //   opticsCameraBridge (engine deps.camera)
 //   deps: { look({ text, frame }) -> Promise<{ run, frameId?, note? } | { error }>, ask({ text }) -> same,
@@ -48,6 +61,7 @@
 //           router, asked first for what is typed or said here: today Screens ("put the camera on my
 //           other screen"), then Optics' own words; typed, only the live view's and "stop watching"),
 //           cameraChoice?: { get() -> { id, label } | null, set({ id, label }) },
+//           liveGate?: createLiveGate(…) (v8.1: the live view's hour, reservations included),
 //           hologram?({ subject, frameId }) -> { run } | { error }, canHologram?() -> boolean,
 //           hologramEstimate?() -> usd, openHologram?(run, segment),
 //           voice?: { tap(), info() -> { listening, heard, busy } } (opened over Voice Mode) }
@@ -79,8 +93,8 @@ import {
   releaseCanvas,
   screenLookSupported,
 } from '../../platform/camera.js';
-import { OPTICS_LIMITS, WATCH_DEFAULTS, createChangeDetector, estimateLookCost, estimateWatchCost, fitTransform, formatUsd, frameToView, layoutPins } from '../../lib/optics.js';
-import { hologramRequest, matchOpticsCommand, partQuestion, theName } from '../../lib/optics-commands.js';
+import { OPTICS_LIMITS, WATCH_DEFAULTS, changedFraction, createChangeDetector, estimateLookCost, estimateWatchCost, fitTransform, formatUsd, frameToView, layoutPins } from '../../lib/optics.js';
+import { FRESH_LOOK_QUESTION, asideQuestionRoute, findNamedCamera, hologramRequest, matchOpticsCommand, partQuestion, theName } from '../../lib/optics-commands.js';
 import { LIVE_DEFAULTS, canSpeakLive, createLiveBudget, estimateLiveLookUsd, liveBackoff, liveMeterText, liveResumeShownAt, liveSpentText, nextLiveDelay } from '../../lib/live-view.js';
 import { matchScreenCommand } from '../../lib/screen-commands.js';
 import { listenPhrases } from '../voice-heard.js';
@@ -98,6 +112,9 @@ const TURN_ENDED = ['done', 'error', 'stopped', 'interrupted'];
 const SOURCE_LABEL = { rear: 'BACK', front: 'FRONT', camera: 'CAMERA', screen: 'SCREEN' };
 // The two-column desktop layout; a phone held sideways (short) keeps the phone layout (optics.css).
 const DESKTOP_MQ = '(min-width: 900px) and (min-height: 501px)';
+// v8.1, owner question 8: the live view keeps looking while a Look sits aside (false), or pauses as
+// for a Look that fills the screen (true). syncLiveLook reads it.
+const LIVE_VIEW_PAUSES_ASIDE = false;
 
 let current = null;
 
@@ -269,7 +286,10 @@ export function openOptics(deps = {}) {
   const schematicLabel = h('p', { class: 'optics-schematic-label', attrs: { 'data-testid': 'optics-schematic-label', 'aria-hidden': 'true' } });
   // What Jarvis sees now (the newest summary), under the video while the live view is on.
   const liveCaption = h('p', { class: 'optics-liveview-caption', hidden: true, attrs: { 'data-testid': 'optics-liveview-caption', 'aria-hidden': 'true' } });
-  const stage = h('div', { class: 'optics-stage' }, video, frozenHost, schematic, brackets, reticle, scan, pinsLayer, schematicLabel, liveCaption, flash, card);
+  // v8.1: while a Look is expanded on a Mac, the live video shrinks to a tile in the corner; a click on
+  // it goes back to the card (Live).
+  const tileBtn = h('button', { class: 'optics-tile', type: 'button', hidden: true, attrs: { 'data-testid': 'optics-tile', 'aria-label': 'Live video: back to it, the picture aside' }, on: { click: () => lookAside() } });
+  const stage = h('div', { class: 'optics-stage' }, video, frozenHost, schematic, brackets, reticle, scan, pinsLayer, schematicLabel, liveCaption, tileBtn, flash, card);
 
   const title = h('span', { class: 'optics-title', text: 'OPTICS' });
   // The camera's name (shortened with "…" when long) and then its frame size and state, always whole.
@@ -337,6 +357,11 @@ export function openOptics(deps = {}) {
 
   // Answer sheet (phone: above the deck; desktop: the side column)
   const answerState = h('span', { class: 'optics-answer-state', attrs: { 'data-testid': 'optics-answer-status' } });
+  // v8.1: which answer this is: "NEW LOOK" (a fresh picture) or, on follow-ups, "ABOUT THIS PICTURE".
+  const answerMark = h('span', { class: 'optics-answer-mark', hidden: true, attrs: { 'data-testid': 'optics-answer-mark' } });
+  // v8.1, a Look set aside (Mac): its picture at the top of the card, with its labels pinned on it
+  // (the frozen frame and the pins layer move in here while aside, back to the stage when expanded).
+  const asideBox = h('div', { class: 'optics-aside-pic', hidden: true, attrs: { 'data-testid': 'optics-aside-picture' } });
   const answerCost = h('span', { class: 'optics-answer-cost', attrs: { 'data-testid': 'optics-answer-cost' } });
   const answerQ = h('p', { class: 'optics-answer-q' });
   // Focusable (tabindex 0): a click in the answer puts the keyboard there, so Space and the arrow keys
@@ -360,15 +385,22 @@ export function openOptics(deps = {}) {
   const holoChip = h('button', { class: 'optics-chip optics-chip--holo', type: 'button', hidden: true, attrs: { 'data-testid': 'optics-hologram' }, on: { click: () => hologramOfThis() } }, icon('hologram', { size: 15 }), holoText, holoCost);
   const followRow = h('div', { class: 'optics-followups', hidden: true, attrs: { 'data-testid': 'optics-followups' } }, partBtn, moreChip, holoChip);
   const answerActions = h('div', { class: 'optics-answer-actions' }, liveBtn, moreBtn);
+  // v8.1, the card's own actions while it is aside: Expand, Other screen (Screens), Close.
+  const expandBtn = h('button', { class: 'btn btn-sm optics-expand-btn', type: 'button', attrs: { 'data-testid': 'optics-expand', 'aria-label': 'Expand: the picture big, the live video in a corner' }, on: { click: () => expandLook() } }, icon('fit', { size: 16 }), h('span', { text: 'Expand' }));
+  const awayBtn = h('button', { class: 'btn btn-sm optics-away-btn', type: 'button', hidden: typeof deps.route !== 'function', attrs: { 'data-testid': 'optics-other-screen', 'aria-label': 'Show this Look on your other screen' }, on: { click: () => lookToOtherScreen() } }, icon('external', { size: 16 }), h('span', { text: 'Other screen' }));
+  const closeCardBtn = h('button', { class: 'btn btn-sm optics-close-card', type: 'button', attrs: { 'data-testid': 'optics-close-card', 'aria-label': 'Close the picture (the camera stays on)' }, on: { click: () => closeCard() } }, icon('close', { size: 16 }), h('span', { text: 'Close' }));
+  const asideActions = h('div', { class: 'optics-answer-actions optics-aside-actions', hidden: true, attrs: { 'data-testid': 'optics-aside-actions' } }, expandBtn, awayBtn, closeCardBtn);
   const answer = h(
     'section',
     { class: 'optics-answer', hidden: true, attrs: { 'data-testid': 'optics-answer', 'aria-label': 'Jarvis’s answer' } },
-    h('div', { class: 'optics-answer-head' }, answerState, h('span', { class: 'optics-answer-meta' }, inChat, answerCost)),
+    asideBox,
+    h('div', { class: 'optics-answer-head' }, h('span', { class: 'optics-answer-states' }, answerState, answerMark), h('span', { class: 'optics-answer-meta' }, inChat, answerCost)),
     answerQ,
     answerBody,
     pinList,
     followRow,
     answerActions,
+    asideActions,
   );
   // A click anywhere else in the answer sheet (its heading, the question line) also puts the keyboard
   // in the answer, not on the picture behind it.
@@ -434,7 +466,8 @@ export function openOptics(deps = {}) {
   );
 
   // ---- state ---------------------------------------------------------------------------------
-  let mode = 'starting'; // intro | starting | live | frozen | paused | error | review | closed
+  // aside (v8.1, a Mac's layout): the live video big, the Look (frozen) in its card on the right.
+  let mode = 'starting'; // intro | starting | live | aside | frozen | paused | error | review | screen | closed
   let frozen = null; // { canvas|img, width, height, source, mirrored, preview, frameId, pins, question, text, status, costUsd, run, unsub }
   let followups = []; // [{ question, text, status }]
   // The newest follow-up stays in view in the answer's scrolling body (its "› question" line at the
@@ -460,6 +493,8 @@ export function openOptics(deps = {}) {
   // and autoLiveDone says what happened ({ ack } to say, or { error }): Jarvis says "Live view on"
   // only once it is (not at the limit, not when the camera couldn't start).
   let autoLive = deps.autoLive === true;
+  // v8.1: "switch cameras" / "use the Logitech camera" said with Optics closed: made once the camera is live.
+  let autoCommand = typeof deps.autoCommand === 'string' ? deps.autoCommand.trim().slice(0, 200) : '';
   // The caller says autoLiveDone's outcome (Voice Mode heard "live view"); else (the tap on Voice
   // Mode's Look) Optics says a pause at the limit itself.
   const autoLiveSaid = deps.autoLiveSaid === true;
@@ -470,6 +505,16 @@ export function openOptics(deps = {}) {
     if (!autoLiveResolve) return;
     const resolve = autoLiveResolve;
     autoLiveResolve = null;
+    resolve(value);
+  }
+  // v8.1 (E2): how the camera started, once (the app says "Optics is on." only once it is live):
+  // { ok: true } | { error, code } | { paused: true }.
+  let cameraDoneResolve = null;
+  const cameraDone = new Promise((resolve) => (cameraDoneResolve = resolve));
+  function settleCameraDone(value) {
+    if (!cameraDoneResolve) return;
+    const resolve = cameraDoneResolve;
+    cameraDoneResolve = null;
     resolve(value);
   }
   // "What am I looking at?" said in Voice Mode opened Optics: look as soon as the camera is live.
@@ -504,16 +549,58 @@ export function openOptics(deps = {}) {
     mode = next;
     el.dataset.state = next;
     el.dataset.frozen = frozen && (next === 'frozen' || next === 'review') ? 'true' : 'false';
+    // v8.1: a Look set aside beside the live video (a Mac): the stage stays live.
+    el.dataset.aside = frozen && next === 'aside' ? 'true' : 'false';
     const liveNow = camera.live;
+    const liveStage = next === 'live' || next === 'aside';
     deck.dataset.frozen = el.dataset.frozen;
-    lookBtn.disabled = !(liveNow && (next === 'live' || next === 'frozen')) || isBusy();
+    lookBtn.disabled = !(liveNow && (liveStage || next === 'frozen')) || isBusy();
     flipBtn.disabled = !(liveNow && camera.canFlip) || !!watch || !!liveView || isBusy();
-    watchBtn.disabled = !(liveNow && (next === 'live' || watch));
-    liveViewBtn.disabled = !((liveNow && (next === 'live' || next === 'frozen') && !!deps.liveLook) || liveView);
+    watchBtn.disabled = !(liveNow && (liveStage || watch));
+    liveViewBtn.disabled = !((liveNow && (liveStage || next === 'frozen') && !!deps.liveLook) || liveView);
     if (screenBtn) screenBtn.disabled = isBusy() || !!watch || !!liveView;
+    placePicture();
     syncTop();
     renderLookCost();
     fitLive();
+    syncLiveLook();
+  }
+
+  /**
+   * v8.1: the Look's picture and its labels sit in the card while aside, on the stage otherwise
+   * (frozen: the picture fills the stage). Moving them lays the labels out again in their new box.
+   */
+  function placePicture() {
+    const inCard = mode === 'aside' && !!frozen;
+    asideBox.hidden = !inCard;
+    if (inCard) {
+      if (frozenHost.parentNode !== asideBox) {
+        asideBox.append(frozenHost, pinsLayer);
+        layoutSoon();
+      }
+      if (frozen.width > 0 && frozen.height > 0) asideBox.style.aspectRatio = `${frozen.width} / ${frozen.height}`;
+    } else if (frozenHost.parentNode !== stage) {
+      stage.insertBefore(frozenHost, schematic);
+      stage.insertBefore(pinsLayer, schematicLabel);
+      layoutSoon();
+    }
+  }
+
+  /** v8.1: a Look may sit aside beside the live video: a Mac's layout, the camera live, a camera frame. */
+  function asideAllowed(source = frozen ? frozen.source : 'camera') {
+    return el.dataset.layout === 'desktop' && camera.live && source !== 'screen';
+  }
+
+  /**
+   * v8.1: the live view pauses only while a Look fills the screen (expanded on a Mac, or a phone's
+   * frozen view), and goes on as soon as it doesn't (aside, Live, the card closed).
+   */
+  function syncLiveLook() {
+    const lv = liveView;
+    if (!lv || closed) return;
+    const big = !!frozen && (mode === 'frozen' || mode === 'review' || (LIVE_VIEW_PAUSES_ASIDE && mode === 'aside'));
+    if (big && lv.paused !== 'look') pauseLiveView('look');
+    else if (!big && lv.paused === 'look' && camera.live) resumeLiveView();
   }
 
   /**
@@ -590,6 +677,10 @@ export function openOptics(deps = {}) {
     livePill.setAttribute('aria-label', liveView ? (lvPaused ? 'Live view is paused. Turn the camera off' : 'Live view is on. Turn the camera off') : watch ? 'Watch is on. Turn the camera off' : 'Camera is on. Turn it off');
     el.dataset.camera = on ? 'live' : camera.state === 'paused' ? 'paused' : 'off';
     el.dataset.mirrored = camera.mirrored ? 'true' : 'false';
+    // v8.1: a Look expanded on a Mac keeps the live video in a corner tile (a click: back to the card).
+    const tile = on && !!frozen && mode === 'frozen' && el.dataset.layout === 'desktop';
+    el.dataset.tile = tile ? 'true' : 'false';
+    tileBtn.hidden = !tile;
     const liveKey = `${on}|${!!watch}|${!!liveView}`;
     if (liveKey !== lastLiveKey) {
       lastLiveKey = liveKey;
@@ -609,6 +700,10 @@ export function openOptics(deps = {}) {
   }
 
   // ---- camera ---------------------------------------------------------------------------------
+  // v8.1: a Look aside when something covered Optics (Hologram of this) goes back aside beside the
+  // live video on a computer once Optics shows again (onCover): the camera was live for the owner.
+  let asideWhenCovered = false;
+  let restoreAside = false;
   function onCameraState(state, info) {
     if (closed) return;
     if (state === 'live') {
@@ -618,9 +713,13 @@ export function openOptics(deps = {}) {
       }
       el.dataset.interrupted = 'false';
       hideCard();
+      settleCameraDone({ ok: true });
       deps.wakeLock && deps.wakeLock.keepAwake && deps.wakeLock.keepAwake();
-      // A frozen Look stays frozen when the camera comes back (after a pause); otherwise live.
-      setMode(frozen ? (mode === 'review' ? 'review' : 'frozen') : 'live');
+      // A frozen Look stays frozen when the camera comes back (after a pause), one set aside stays
+      // aside (also one that was aside when something covered Optics: restoreAside); otherwise live.
+      const backAside = restoreAside;
+      restoreAside = false;
+      setMode(frozen ? (mode === 'review' ? 'review' : (mode === 'aside' || backAside) && asideAllowed() ? 'aside' : 'frozen') : 'live');
       if (autoLive && mode === 'live') {
         autoLive = false;
         // A moment for the exposure to settle, then the live view ("live view" said in Voice Mode).
@@ -631,8 +730,20 @@ export function openOptics(deps = {}) {
           settleAutoLive(on ? { ack: liveStartedAck() } : { error: 'The live view couldn’t start.' });
         }, 300);
       }
+      if (autoCommand && mode === 'live') {
+        const words = autoCommand;
+        autoCommand = '';
+        setTimeout(() => {
+          if (closed) return;
+          const res = command(words);
+          if (res && res.command && res.command.ack) announce(res.command.ack);
+        }, 300);
+      }
       if (autoLook && mode === 'live') {
-        const words = autoLook;
+        // "Take a picture" (v8.1) asks the default question; a question keeps its own words.
+        const said = autoLook;
+        const fresh = matchOpticsCommand(said);
+        const words = fresh && fresh.fresh ? fresh.question : said;
         autoLook = '';
         // A moment for the exposure to settle, then the Look.
         setTimeout(() => {
@@ -643,6 +754,7 @@ export function openOptics(deps = {}) {
       return;
     }
     if (state === 'paused') {
+      settleCameraDone({ paused: true });
       stopWatch('The camera stopped.');
       // Off means off: hidden, minimized, another app, a call, the camera unplugged (v8.0).
       stopLiveView('Live view stopped: the camera stopped.');
@@ -673,6 +785,14 @@ export function openOptics(deps = {}) {
         why = '';
       }
       settleAutoLive({ error: why || 'The camera couldn’t start.' });
+      let code = '';
+      try {
+        const err = info && info.error ? (info.error instanceof CameraError ? info.error : classifyCameraError(info.error)) : null;
+        code = err && typeof err.code === 'string' ? err.code : '';
+      } catch {
+        code = '';
+      }
+      settleCameraDone({ error: why || 'The camera couldn’t start.', code });
       showError(info && info.error);
       return;
     }
@@ -959,6 +1079,10 @@ export function openOptics(deps = {}) {
       costUsd: 0,
       unsub: null,
       at: Date.now(),
+      // v8.1: the scene as this picture shows it (Watch's 64 × 36 thumbnail): a question while the
+      // Look is aside goes to it only while the live picture still matches. And how it is marked.
+      luma: frame.source === 'screen' ? null : grabSceneLuma(),
+      mark: 'new',
     };
     el.dataset.frozenMirror = 'false';
     followups = [];
@@ -983,7 +1107,7 @@ export function openOptics(deps = {}) {
   }
 
   async function look({ textOverride, newChat = false } = {}) {
-    if (!camera.live || isBusy() || !(mode === 'live' || mode === 'frozen')) return { error: camera.live ? 'Jarvis is still answering.' : 'The camera is off.' };
+    if (!camera.live || isBusy() || !(mode === 'live' || mode === 'frozen' || mode === 'aside')) return { error: camera.live ? 'Jarvis is still answering.' : 'The camera is off.' };
     // This chat is busy (a reply or a mission running): never a frozen frame that can't be sent. The
     // owner chooses: the Look in a new chat now, or wait.
     const blocked = newChat ? null : lookBlockedNow();
@@ -999,8 +1123,9 @@ export function openOptics(deps = {}) {
       announce(blocked.title || 'Jarvis is still answering.');
       return { error: blocked.title || 'Jarvis is still answering.', blocked: true };
     }
-    if (mode === 'frozen') {
-      // A new look straight from a frozen one (the desktop deck stays visible): unfreeze first.
+    if (mode === 'frozen' || mode === 'aside') {
+      // A new look straight from a frozen one (the desktop deck stays visible), or with one in its
+      // card (v8.1): that one folds into the Optics log first.
       clearFrozen();
       answer.hidden = true;
       setMode('live');
@@ -1088,14 +1213,14 @@ export function openOptics(deps = {}) {
     captured(frame.source);
     freezeWith(frame, question || 'What am I looking at?');
     const target = frozen;
-    // A Look asked during the live view: the live view pauses while its picture and answer are on
-    // screen, and the Look's cost counts toward the live view's hour limit (v8.0).
-    if (liveView) {
-      target.liveCount = true;
-      pauseLiveView('look');
-    }
+    // A Look asked during the live view counts toward the live view's hour: through the gate, request
+    // by request, whatever happens to the sheet (v8.1, deps.liveGate: the engine settles each request);
+    // without a gate, once its turn ends (v8.0, countLiveRun below). The live view pauses while its
+    // picture fills the screen (a phone), and keeps looking while it sits aside (a Mac: setMode).
+    if (liveView) target.liveCount = !deps.liveGate;
     askInput.value = '';
-    setMode('frozen');
+    setMode(asideAllowed(frame.source) ? 'aside' : 'frozen');
+    renderAnswer();
     playScan();
     safeCue('scan');
     announce('Analyzing.');
@@ -1163,10 +1288,13 @@ export function openOptics(deps = {}) {
           target.costUsd = Number(t.costUsd) || 0;
           if (TURN_ENDED.includes(t.status)) {
             target.status = t.status === 'done' ? 'done' : 'error';
-            // (Asked during the live view, its cost reaches the hour through countLiveRun(), which
-            // the sheet's own listener can't lose.)
+            // (Asked during the live view, its cost reaches the hour through the live view's gate in
+            // the engine (v8.1), or countLiveRun() without one: never through this sheet, which Live
+            // or closing can take away.)
             if (typeof target.onEnd === 'function') target.onEnd(t);
             if (t.status !== 'done' && !target.text) target.text = (t.error && t.error.message) || target.error || 'Jarvis couldn’t finish this answer.';
+            // v8.1 (E0): an answer the live view's gate refused at its dollar is said out loud.
+            if (t.status === 'error' && t.error && t.error.kind === 'live_cap') sayAloud(t.error.message);
             if (target === frozen && frozen.logEntry) updateLogEntry(frozen);
             if (target.status === 'done') announce(frozen && frozen.pins.length ? `Answer ready. ${frozen.pins.length} labels pinned.` : 'Answer ready.');
             setMode(mode);
@@ -1186,7 +1314,7 @@ export function openOptics(deps = {}) {
    */
   async function ask(question, { display = '', send = null, entryExtra = null } = {}) {
     if (!frozen || isBusy()) return null;
-    const entry = { question: display || question, text: '', status: 'analyzing', costUsd: 0, unsub: null, liveCount: !!liveView, ...(entryExtra || {}) };
+    const entry = { question: display || question, text: '', status: 'analyzing', costUsd: 0, unsub: null, liveCount: !!liveView && !deps.liveGate, mark: 'card', ...(entryExtra || {}) };
     followups.push(entry);
     followInView = entry;
     followScrolledByOwner = false;
@@ -1212,6 +1340,55 @@ export function openOptics(deps = {}) {
     follow(res.run, entry);
     return entry;
   }
+
+  /**
+   * v8.1: a line said out loud where Jarvis may speak, and announced: "That would take the live view
+   * past its dollar this hour…" (E0), the research offer (E3). Over Voice Mode, Voice Mode says its own
+   * (a turn's error, its question); elsewhere v8.0's sayNotice() waits for a quiet moment.
+   */
+  function sayAloud(text) {
+    const line = String(text || '').trim();
+    if (!line || closed) return;
+    announce(line);
+    if (!deps.voice) sayNotice(line);
+  }
+
+  /** v8.1 (E3): the research offer's card: the line with the prices, and a button per way. */
+  function offerResearch(offer, pick) {
+    if (closed || !offer || !Array.isArray(offer.choices)) return { close() {} };
+    const token = {};
+    researchCard = token;
+    const buttons = offer.choices.map((c) =>
+      h('button', {
+        class: c.id === 'cancel' ? 'btn' : 'btn btn-primary',
+        type: 'button',
+        text: c.label,
+        attrs: { 'data-testid': `optics-research-${c.id}` },
+        on: {
+          click: () => {
+            if (researchCard !== token) return;
+            researchCard = null;
+            hideCard();
+            try {
+              pick(c.id);
+            } catch (err) {
+              console.error('[jarvis] research failed:', err);
+            }
+          },
+        },
+      }),
+    );
+    showCard({ kind: 'research', title: 'Research', text: offer.say, extra: h('div', { class: 'optics-card-actions optics-research-choices', attrs: { 'data-testid': 'optics-research-offer' } }, ...buttons) });
+    sayAloud(offer.say); // said where Jarvis may speak (Voice Mode says its own question)
+    return {
+      close() {
+        if (researchCard !== token) return;
+        researchCard = null;
+        if (card.dataset.kind === 'research') hideCard();
+      },
+    };
+  }
+  let researchCard = null;
 
   /** Labels added by a follow-up: a new object gets its pin; one already pinned (same name, nearby) stays put. */
   function mergePins(pins, more) {
@@ -1275,6 +1452,9 @@ export function openOptics(deps = {}) {
    */
   async function hologramOfThis(subjectOverride) {
     if (!frozen || isBusy() || holo || !canHologram()) return null;
+    // A hologram covers Optics, which stops the live view anyway; stopped first, its request goes out
+    // whole (v8.1: an answer asked during the live view is kept short by its gate).
+    if (liveView) stopLiveView('Live view stopped: Jarvis is building a hologram.');
     const pin = selectedPinData() || (frozen.pins.length ? frozen.pins[0] : null);
     const subject = subjectOverride !== undefined && subjectOverride !== null ? subjectOverride : pin ? pin.text : '';
     const text = hologramRequest(subject);
@@ -1367,23 +1547,178 @@ export function openOptics(deps = {}) {
       askInput.value = '';
       return;
     }
-    if (frozen && (mode === 'frozen' || mode === 'review')) {
-      if (!q) return;
-      askInput.value = '';
-      ask(q);
-    } else if (mode === 'live') {
-      look();
-    }
+    // The Look's question (live), a follow-up (frozen), or with a Look aside the scene rule (v8.1).
+    if (frozen && (mode === 'frozen' || mode === 'review') && !q) return;
+    askInput.value = '';
+    question(q);
   }
 
   function backToLive() {
+    // v8.1, a Mac with the camera live: from the expanded picture back to its card, the live video big.
+    if (frozen && mode === 'frozen' && asideAllowed()) {
+      lookAside();
+      return;
+    }
     clearFrozen();
     answer.hidden = true;
     if (camera.live) setMode('live');
     else startWithIntro(); // a screen look or a past Look reviewed: the camera was never on
     layoutSoon();
-    // Back to Live from a Look asked during the live view: it goes on (v8.0).
-    if (liveView && liveView.paused === 'look' && camera.live) resumeLiveView();
+    // Back to Live from a Look asked during the live view: it goes on (v8.0; setMode's syncLiveLook).
+  }
+
+  // ---- v8.1: a Look set aside beside the live video (Mac) ----------------------------------------
+  /** Expand: the card's picture fills the stage (frozen), the live video in a corner tile, still live. */
+  function expandLook() {
+    if (!frozen || mode !== 'aside') return false;
+    setMode('frozen');
+    renderAnswer();
+    layoutSoon();
+    announce('The picture, big. The live video is in the corner.');
+    return true;
+  }
+
+  /** Live from the expanded picture (or "put the picture aside"): back into its card. */
+  function lookAside() {
+    if (!frozen || mode !== 'frozen' || !asideAllowed()) return false;
+    setMode('aside');
+    renderAnswer();
+    layoutSoon();
+    announce('The picture is aside. The live video is back.');
+    return true;
+  }
+
+  /** Close: the Look's card goes (it stays in the Optics log); the camera stays on. */
+  function closeCard() {
+    if (!frozen) return false;
+    clearFrozen();
+    answer.hidden = true;
+    if (camera.live) setMode('live');
+    else startWithIntro();
+    layoutSoon();
+    return true;
+  }
+
+  /** The live picture's 64 × 36 gray thumbnail (a copy: the camera reuses its buffer), or null. */
+  function grabSceneLuma() {
+    try {
+      const l = camera.live ? camera.grabLuma(watchOpts.thumbW) : null;
+      return l ? Uint8Array.from(l) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Whether the scene changed since the Look's picture: more than Watch's share of the thumbnail's
+   * pixels moved by more than Watch's gray step. Unknown (no thumbnail, the camera off or switched)
+   * counts as changed: a question is then never answered from an old picture.
+   */
+  function sceneChanged() {
+    if (!frozen || !frozen.luma) return true;
+    let now = null;
+    try {
+      now = camera.live ? camera.grabLuma(watchOpts.thumbW) : null;
+    } catch {
+      now = null;
+    }
+    if (!now) return true;
+    return changedFraction(now, frozen.luma, watchOpts.pixelDelta) > watchOpts.changeFraction;
+  }
+
+  /**
+   * Runs `fn` once Voice Mode has said the line it is saying now (v8.1: "New look." before the Look):
+   * when it is no longer busy, after it was, or after 400 ms if it never was; at most 4 s.
+   */
+  function afterVoiceLine(fn) {
+    const t0 = Date.now();
+    let seenBusy = false;
+    const tick = () => {
+      if (closed) return;
+      const busy = !!(voiceNow && voiceNow.busy);
+      if (busy) seenBusy = true;
+      const waited = Date.now() - t0;
+      if ((!busy && (seenBusy || waited >= 400)) || waited >= 4000) {
+        try {
+          fn();
+        } catch (err) {
+          console.error('[jarvis] optics: the new look failed:', err);
+        }
+        return;
+      }
+      setTimeout(tick, 80);
+    };
+    setTimeout(tick, 80);
+  }
+
+  /** With a Look aside: 'card' (a follow-up on its picture) or 'look' (a new Look): asideQuestionRoute. */
+  function asideRoute(words, cmd) {
+    return asideQuestionRoute(words, { cmd, labels: frozen ? frozen.pins.map((p) => p.text) : [], sceneChanged: sceneChanged() });
+  }
+
+  /**
+   * A question for Optics that is no other command (typed, or said): a Look with the camera live, a
+   * follow-up with a Look on screen, and with a Look aside the rule above. A new Look taken that way
+   * is marked "New look" and said so first. Resolves like look() / ask() (null: nothing to do).
+   */
+  function question(text, { cmd } = {}) {
+    const q = String(text ?? '').trim();
+    const c = cmd !== undefined ? cmd : q ? matchOpticsCommand(q, { frozen: !!frozen }) : null;
+    // "Look again", "new look", "what about now", "take a picture": always a new picture.
+    if (c && c.action === 'look' && c.fresh && camera.live && (mode === 'live' || mode === 'aside' || mode === 'frozen')) {
+      if (mode === 'aside') announce('New look.');
+      return look({ textOverride: c.question });
+    }
+    if (frozen && mode === 'aside') {
+      if (!q) return look();
+      if (asideRoute(q, c) === 'card') return ask(q);
+      announce('New look.');
+      return look({ textOverride: q });
+    }
+    if (frozen && (mode === 'frozen' || mode === 'review')) return q ? ask(q) : Promise.resolve(null);
+    if (mode === 'live') return look({ textOverride: q });
+    return Promise.resolve(null);
+  }
+
+  /** The card's Other screen: Screens puts this Look there, through the app's router (E5: Optics stays live here). */
+  function lookToOtherScreen() {
+    if (!frozen) return;
+    routed('put this on my other screen', false);
+  }
+
+  /**
+   * E5: the Look went to another screen (Screens' look panel): its card folds here, the camera and
+   * the live view go on, and its row in the log says where it is. True when this Look was on screen.
+   */
+  function sendAway(frameId) {
+    const entry = frozen && (!frameId || frozen.frameId === frameId) ? frozen : null;
+    if (!entry) return false;
+    // A past Look reviewed (or the screen) with the camera off: as before, Optics closes (folding the
+    // card would turn the camera on, which only the owner does).
+    if (!camera.live) {
+      setTimeout(() => close('screens'), 0);
+      return true;
+    }
+    entry.away = true;
+    if (entry.logEntry && entry.logEntry.meta) setText(entry.logEntry.meta, `${timeLabel(entry.at)} · ON YOUR OTHER SCREEN`);
+    if (entry.logEntry && entry.logEntry.item) entry.logEntry.item.dataset.away = 'true';
+    // Keep its full picture for "bring it back" (the log keeps the four newest anyway).
+    entry.logged = true;
+    closeCard();
+    showNotice('On your other screen.', 5000);
+    announce('The picture is on your other screen.');
+    return true;
+  }
+
+  /** E5: "bring it back": the Look's card opens again (a Mac with the camera live: aside). */
+  function bringBack(frameId) {
+    const entry = logEntries.find((e) => e && (!frameId || e.frameId === frameId) && e.away) || logEntries.find((e) => e && frameId && e.frameId === frameId);
+    if (!entry) return false;
+    entry.away = false;
+    if (entry.logEntry && entry.logEntry.meta) setText(entry.logEntry.meta, `${timeLabel(entry.at)} · ${SOURCE_LABEL[entry.source] || 'CAMERA'}`);
+    if (entry.logEntry && entry.logEntry.item) entry.logEntry.item.dataset.away = 'false';
+    if (frozen === entry) return true;
+    return reopen(entry, { force: true }) !== false;
   }
 
   // ---- answer sheet -----------------------------------------------------------------------------
@@ -1429,6 +1764,14 @@ export function openOptics(deps = {}) {
     const tone = busy ? 'busy' : newest.status === 'error' ? 'error' : 'done';
     answerState.dataset.tone = tone;
     setText(answerState, tone === 'busy' ? 'ANALYZING' : tone === 'error' ? 'NO ANSWER' : 'ANSWER');
+    // v8.1: which answer this is, beside the state: a fresh picture ("NEW LOOK"); follow-ups say
+    // "ABOUT THIS PICTURE" on their own question lines. Only for Looks taken with the camera live, and
+    // only on a computer's layout, where a question may go either way (a phone keeps its sheet as it was).
+    const marks = el.dataset.layout === 'desktop';
+    const marked = marks && frozen.mark === 'new' && mode !== 'review' && frozen.source !== 'screen';
+    answerMark.hidden = !marked;
+    answerMark.dataset.kind = marked ? 'new' : '';
+    setText(answerMark, marked ? 'NEW LOOK' : '');
     const total = frozen.costUsd + followups.reduce((s, f) => s + (f.costUsd || 0), 0);
     setText(answerCost, total > 0 ? `${busy ? 'So far' : 'This look'} ${formatUsd(total)}` : '');
     setText(answerQ, frozen.question);
@@ -1439,7 +1782,12 @@ export function openOptics(deps = {}) {
       f.node = h(
         'div',
         { class: 'optics-answer-follow' },
-        h('p', { class: 'optics-answer-q optics-answer-q--follow', text: f.question }),
+        h(
+          'p',
+          { class: 'optics-answer-q optics-answer-q--follow' },
+          h('span', { text: f.question }),
+          f.mark === 'card' && marks ? h('span', { class: 'optics-answer-mark', text: 'ABOUT THIS PICTURE', attrs: { 'data-testid': 'optics-answer-mark', 'data-kind': 'card' } }) : null,
+        ),
         f.text ? renderMarkdown(f.text, { streaming: f.status === 'analyzing' }) : h('p', { class: 'optics-answer-wait', text: f.status === 'error' ? 'No answer.' : 'Jarvis is thinking…' }),
       );
       blocks.push(f.node);
@@ -1469,6 +1817,12 @@ export function openOptics(deps = {}) {
     liveBtn.disabled = false;
     moreBtn.disabled = busy;
     setText(liveBtn.lastChild, camera.live ? 'Live' : 'Camera');
+    // v8.1: the card aside has its own actions (Expand, Other screen, Close); expanded, Live goes back.
+    const aside = mode === 'aside';
+    asideActions.hidden = !aside;
+    answerActions.hidden = aside;
+    answer.dataset.aside = aside ? 'true' : 'false';
+    awayBtn.hidden = typeof deps.route !== 'function' || !frozen.frameId;
     keepFollowUpInView();
   }
 
@@ -1506,16 +1860,16 @@ export function openOptics(deps = {}) {
     });
   }
 
-  /** The frozen frame's rectangle inside the stage (object-fit: contain), in stage pixels. */
+  /** The frozen frame's rectangle inside its box (object-fit: contain): the stage, or the card's picture while aside (v8.1). */
   function frameTransform() {
-    const box = stage.getBoundingClientRect();
+    const box = (frozenHost.parentNode === asideBox ? asideBox : stage).getBoundingClientRect();
     return fitTransform(frozen.width, frozen.height, { x: 0, y: 0, w: box.width, h: box.height }, 'contain');
   }
 
   function renderPins() {
     for (const n of Array.from(pinsLayer.children)) if (n !== leaders) n.remove();
     leaders.replaceChildren();
-    if (!frozen || !frozen.pins.length || el.dataset.frozen !== 'true') return;
+    if (!frozen || !frozen.pins.length || (el.dataset.frozen !== 'true' && el.dataset.aside !== 'true')) return;
     const t = frameTransform();
     if (!(t.scale > 0)) return;
     const box = t.box;
@@ -1570,7 +1924,7 @@ export function openOptics(deps = {}) {
   }
 
   function startWatch() {
-    if (!camera.live || mode !== 'live' || !deps.watchLook) return;
+    if (!camera.live || !(mode === 'live' || mode === 'aside') || !deps.watchLook) return;
     // Watch and the live view never run together: starting one stops the other (v8.0).
     if (liveView) {
       stopLiveView('');
@@ -1608,7 +1962,7 @@ export function openOptics(deps = {}) {
     watch.tickTimer = setInterval(tickWatch, 250);
     tickWatch();
     announce(`Watching for ${Math.round(watchOpts.sessionMs / 60000)} minutes.`);
-    setMode('live');
+    setMode(mode);
   }
 
   function tickWatch() {
@@ -1732,8 +2086,19 @@ export function openOptics(deps = {}) {
     },
   };
   function budget() {
-    if (!liveBudget) liveBudget = createLiveBudget({ capUsd: liveOpts.capUsd, windowMs: liveOpts.windowMs, now: () => Date.now(), storage: liveStore, key: 'jarvis.liveView.spend' });
+    // v8.1: the app's gate holds the hour's budget (shared with the answers' reservations).
+    if (!liveBudget) liveBudget = deps.liveGate && deps.liveGate.budget ? deps.liveGate.budget : createLiveBudget({ capUsd: liveOpts.capUsd, windowMs: liveOpts.windowMs, now: () => Date.now(), storage: liveStore, key: 'jarvis.liveView.spend' });
     return liveBudget;
+  }
+
+  /** v8.1: whether a look of `usd` fits in the hour, with the answers' reservations (every window's). */
+  function liveFits(usd) {
+    return deps.liveGate && typeof deps.liveGate.fits === 'function' ? deps.liveGate.fits(usd) : budget().canSpend(usd);
+  }
+
+  /** v8.1: when a look of `usd` fits again, the reservations counted (approximate: they settle soon). */
+  function liveResumeAt(usd) {
+    return deps.liveGate && typeof deps.liveGate.resumeAt === 'function' ? deps.liveGate.resumeAt(usd) : budget().resumeAt(usd);
   }
 
   /** The last real cost of a live look in the past hour (this tab, another one, before a reload), else 0. */
@@ -1906,9 +2271,9 @@ export function openOptics(deps = {}) {
    */
   function startLiveView({ aloud = true } = {}) {
     if (liveView) return true;
-    if (closed || !camera.live || !deps.liveLook || !(mode === 'live' || mode === 'frozen')) return false;
-    if (mode === 'frozen') backToLive();
-    if (mode !== 'live') return false;
+    if (closed || !camera.live || !deps.liveLook || !(mode === 'live' || mode === 'frozen' || mode === 'aside')) return false;
+    if (mode === 'frozen') backToLive(); // a Mac: back into its card (v8.1); a phone: back to live
+    if (mode !== 'live' && mode !== 'aside') return false;
     if (watch) {
       stopWatch('');
       watchHud.hidden = true;
@@ -1960,12 +2325,13 @@ export function openOptics(deps = {}) {
     liveView.tickTimer = setInterval(tickLiveView, 1000);
     renderLiveHud();
     announce(`Live view on, for up to ${durationWords(liveOpts.sessionMs)}. Jarvis speaks up when he sees something.`);
-    setMode('live');
+    setMode(mode); // live, or a Look aside (v8.1): it keeps looking beside the card
     // Not when the hour's $1 is already spent (another tab, or a live view just before): it starts
-    // paused at the limit, at once, so what is said or shown is the pause, never "on".
+    // paused at the limit, at once, so what is said or shown is the pause, never "on" (v8.1: the
+    // answers' reservations count too).
     const est = Math.max(estimateLive(), liveView.lastCostUsd);
     if (!isOnline()) pauseLiveView('offline');
-    else if (!budget().canSpend(est)) pauseLiveView('cap', { est, aloud });
+    else if (!liveFits(est)) pauseLiveView('cap', { est, aloud });
     else scheduleLive(0);
     syncTop();
     return true;
@@ -2036,7 +2402,7 @@ export function openOptics(deps = {}) {
     if (kind === 'look') setLiveNote('Paused while you look at this', 'info');
     else if (kind === 'offline') setLiveNote('You’re offline. Live view goes on when you’re back online.', 'warn');
     else if (kind === 'cap') {
-      showCapNote(lv, budget().resumeAt(est || Math.max(estimateLive(), lv.lastCostUsd)));
+      showCapNote(lv, liveResumeAt(est || Math.max(estimateLive(), lv.lastCostUsd)));
       if (aloud) sayNotice(liveNote.textContent);
     }
     renderLiveHud();
@@ -2072,15 +2438,15 @@ export function openOptics(deps = {}) {
     if (lv.paused === 'cap') {
       budget().reload();
       const est = Math.max(estimateLive(), lv.lastCostUsd);
-      if (!budget().canSpend(est)) {
-        // Another tab spent meanwhile: the note names the new time.
-        showCapNote(lv, budget().resumeAt(est), { say: false });
+      if (!liveFits(est)) {
+        // Another tab spent meanwhile (or an answer holds its reservation): the note names the new time.
+        showCapNote(lv, liveResumeAt(est), { say: false });
         if (byOwner && Number.isFinite(lv.resumeAt)) announce(`It can go on at ${resumeLabel(lv.resumeAt)}.`);
         return false;
       }
     }
     if (lv.paused === 'offline' && !isOnline()) return false;
-    if (!camera.live || mode !== 'live') return false;
+    if (!camera.live || !(mode === 'live' || mode === 'aside')) return false;
     lv.paused = null;
     clearTimeout(lv.resumeTimer);
     el.dataset.liveviewPaused = '';
@@ -2140,9 +2506,10 @@ export function openOptics(deps = {}) {
       scheduleLive(wait);
       return;
     }
-    // The estimate, or the last real cost when that was higher: never past the cap.
+    // The estimate, or the last real cost when that was higher: never past the cap (v8.1: nor into
+    // the room an answer asked meanwhile holds).
     const est = Math.max(estimateLive(), lv.lastCostUsd);
-    if (!budget().canSpend(est)) {
+    if (!liveFits(est)) {
       pauseLiveView('cap', { est });
       return;
     }
@@ -2370,15 +2737,18 @@ export function openOptics(deps = {}) {
    */
   function command(text) {
     if (closed) return { handled: false };
-    const showing = !!frozen && (mode === 'frozen' || mode === 'review');
+    // A Look on screen: frozen (phone, expanded), a past one reviewed, or in its card aside (v8.1).
+    const showing = !!frozen && (mode === 'frozen' || mode === 'review' || mode === 'aside');
+    const aside = !!frozen && mode === 'aside';
     const cmd = matchOpticsCommand(text, { frozen: showing });
     if (!cmd) return { handled: false };
     const ack = (kind, line) => ({ handled: true, command: { action: 'optics', kind, ack: line } });
     // A turn starts on the next tick: Voice Mode first takes note that a command is under way (its
-    // "One moment…"), then the turn it is handed replaces that note.
-    const started = (kind, start) => ({
+    // "One moment…"), then the turn it is handed replaces that note. `line`: said first (v8.1: "New
+    // look." when a question took a new picture instead of going to the card aside).
+    const started = (kind, start, line = '') => ({
       handled: true,
-      command: { action: 'optics', kind, ack: '' },
+      command: { action: 'optics', kind, ack: line },
       done: new Promise((resolve) => setTimeout(resolve, 0))
         .then(() => (closed ? { error: 'Closed.' } : start()))
         .then((r) => r || { error: 'That didn’t work.' }, (err) => ({ error: (err && err.message) || 'That didn’t work.' })),
@@ -2387,15 +2757,25 @@ export function openOptics(deps = {}) {
     const busy = isBusy() || !!holo;
     switch (cmd.action) {
       case 'look':
+      case 'ask':
         if (busy) return ack('busy', 'One moment, I’m still on the last one.');
+        // v8.1, a Look aside: its card (a follow-up, no new frame), or a new Look by the rule.
+        if (aside) {
+          if (asideRoute(text, cmd) === 'card') return started('ask', () => asked(ask(cmd.question)));
+          if (deps.voice) {
+            // Over Voice Mode, Jarvis says "New look." first (this ack, said at once), and the Look goes
+            // once he has said it: its turn would cut the line short.
+            afterVoiceLine(() => look({ textOverride: cmd.question }));
+            return ack('look', 'New look.');
+          }
+          return started('look', () => look({ textOverride: cmd.question }), 'New look.');
+        }
+        if (cmd.action === 'ask') return started('ask', () => asked(ask(cmd.question)));
         if (!camera.live) {
           if (showing) return started('ask', () => asked(ask(cmd.question)));
           return ack('no-camera', 'The camera is off. Tap Live to turn it on.');
         }
         return started('look', () => look({ textOverride: cmd.question }));
-      case 'ask':
-        if (busy) return ack('busy', 'One moment, I’m still on the last one.');
-        return started('ask', () => asked(ask(cmd.question)));
       case 'more':
         if (!showing) return { handled: false };
         if (busy) return ack('busy', 'One moment, I’m still on the last one.');
@@ -2410,7 +2790,9 @@ export function openOptics(deps = {}) {
         if (!canHologram()) return ack('no-hologram', 'This chat can’t show holograms. Start a new chat, then ask again.');
         if (showing) return started('hologram', () => asked(hologramOfThis(cmd.subject)));
         if (!camera.live) return ack('no-camera', 'The camera is off. Tap Live to turn it on.');
-        // Live: a Look whose question asks for the hologram (the frame goes with it).
+        // Live: a Look whose question asks for the hologram (the frame goes with it). The live view
+        // stops first (the hologram covers Optics).
+        if (liveView) stopLiveView('Live view stopped: Jarvis is building a hologram.');
         return started('hologram', () => look({ textOverride: hologramRequest(cmd.subject) }));
       case 'flip': {
         if (!camera.live || !camera.canFlip || watch || liveView || busy) return ack('flip', camera.canFlip ? 'Not right now.' : 'There’s only one camera.');
@@ -2419,18 +2801,56 @@ export function openOptics(deps = {}) {
         flip();
         return ack('flip', 'Switching cameras.');
       }
+      case 'camera': {
+        // v8.1: "use the Logitech camera" (by its name among the cameras: cameras.js).
+        if (!camera.live || watch || liveView || busy) return ack('camera', 'Not right now.');
+        const cam = findNamedCamera(camera.cameras, cmd.name);
+        if (!cam) return ack('camera', `I can’t find a ${cmd.name === 'built-in' ? 'built-in' : cmd.name} camera.`);
+        if (cam.id === camera.deviceId) return ack('camera', `That’s ${cameraName(cam)} already.`);
+        selectCamera(cam);
+        return ack('camera', `Switching to ${cameraName(cam)}.`);
+      }
       case 'close':
         setTimeout(() => close('voice'), 0);
         return ack('close', 'Camera off.');
       case 'live':
         // The camera, live again after a Look ("go live", "back to the camera", "unfreeze"). Words
-        // that name the live view are the live view's (below): these never say it is on.
+        // that name the live view are the live view's (below): these never say it is on. v8.1, a Mac:
+        // the live video is big already while the Look sits aside; from the expanded picture, back
+        // to its card.
+        if (aside) return ack('live', 'The live video is on. The picture stays beside it.');
         if (!showing) return ack('live', camera.live ? 'This is the camera.' : 'The camera is off. Tap Live to turn it on.');
+        if (mode === 'frozen' && asideAllowed()) {
+          lookAside();
+          return ack('live', 'Back to the live video. The picture is aside.');
+        }
         backToLive();
         return ack('live', liveView && !liveView.paused ? 'Back to the camera. The live view goes on.' : 'Back to the camera.');
+      case 'expand':
+        if (aside) {
+          expandLook();
+          return ack('expand', 'Here’s the picture, big.');
+        }
+        if (showing) return ack('expand', 'The picture is already big.');
+        return ack('expand', 'There’s no picture yet. Say look, or take a picture.');
+      case 'aside':
+        if (!showing) return { handled: false };
+        if (aside) return ack('aside', 'The picture is already aside.');
+        if (lookAside()) return ack('aside', 'The picture is aside.');
+        return ack('aside', 'On this screen the picture stays full size.');
+      case 'close-card':
+        if (!showing) return ack('close-card', 'There’s no picture open.');
+        // A past Look (or the screen) with the camera off: closing the picture closes Optics (it never
+        // turns the camera on by itself).
+        if (!camera.live) {
+          setTimeout(() => close('voice'), 0);
+          return ack('close', 'Closed.');
+        }
+        closeCard();
+        return ack('close-card', 'Picture closed. The camera stays on.');
       case 'watch':
         if (cmd.on && !watch) {
-          if (!camera.live || showing) return ack('watch', 'Go live first, then say watch.');
+          if (!camera.live || (showing && !aside)) return ack('watch', 'Go live first, then say watch.');
           startWatch();
           return ack('watch', watch ? 'Watching. I’ll speak up if something changes.' : 'Watch can’t start right now.');
         }
@@ -2487,9 +2907,12 @@ export function openOptics(deps = {}) {
 
   // Opened over Voice Mode: the mic button is Voice Mode's (a tap is the core's tap), and it shows
   // whether Voice Mode is listening and what it hears.
+  // v8.1: Voice Mode's state as it last told us (busy: a turn or its speech), for "New look." first.
+  let voiceNow = null;
   function setVoice(info) {
     if (!deps.voice) return;
     const i = info && typeof info === 'object' ? info : {};
+    voiceNow = i;
     micBtn.hidden = false;
     micBtn.setAttribute('aria-pressed', String(!!i.listening));
     micBtn.classList.toggle('is-listening', !!i.listening);
@@ -2539,10 +2962,8 @@ export function openOptics(deps = {}) {
           askInput.value = '';
           return;
         }
-        if (frozen && (mode === 'frozen' || mode === 'review')) {
-          askInput.value = '';
-          if (t.trim()) ask(t.trim());
-        } else if (mode === 'live') look({ textOverride: t });
+        askInput.value = '';
+        question(t.trim());
       },
       onError: (e) => announce(e && e.message ? e.message : 'Voice input stopped.'),
       onEnd: () => {
@@ -2587,7 +3008,7 @@ export function openOptics(deps = {}) {
     const line = h('span', { class: 'optics-log-line', text: entry.question });
     const meta = h('span', { class: 'optics-log-meta', text: `${timeLabel(entry.at)} · ${SOURCE_LABEL[entry.source] || 'CAMERA'}` });
     const item = h('li', null, h('button', { class: 'optics-log-item', type: 'button', attrs: { 'data-testid': 'optics-log-item' }, on: { click: () => reopen(entry) } }, thumb, h('span', { class: 'optics-log-text' }, line, meta)));
-    entry.logEntry = { item, line };
+    entry.logEntry = { item, line, meta };
     logList.prepend(item);
     while (logList.children.length > 12) logList.lastChild.remove();
   }
@@ -2597,8 +3018,8 @@ export function openOptics(deps = {}) {
     setText(entry.logEntry.line, first.length > 90 ? `${first.slice(0, 89)}…` : first);
   }
 
-  function reopen(entry) {
-    if (isBusy() || watch || frozen === entry) return;
+  function reopen(entry, { force = false } = {}) {
+    if (isBusy() || (watch && !force) || frozen === entry) return false;
     if (frozen && frozen !== entry && frozen.unsub) frozen.unsub();
     frozen = entry;
     const node = entry.canvas && entry.canvas.width ? entry.canvas : h('img', { src: entry.preview, alt: '' });
@@ -2608,11 +3029,14 @@ export function openOptics(deps = {}) {
     followups = [];
     followInView = null;
     answerBody.scrollTop = 0;
-    setMode('frozen');
-    if (liveView) pauseLiveView('look'); // a past Look on screen: the live view waits for Live
+    // v8.1, a Mac with the camera live: the Look opens as the card beside the live video (the one
+    // that was there folds into the log); else it fills the screen and the live view waits for Live
+    // (setMode's syncLiveLook).
+    setMode(asideAllowed(entry.source) ? 'aside' : 'frozen');
     renderAnswer();
     renderPinList();
     layoutSoon();
+    return true;
   }
 
   // ---- for the engine (look_through_camera) ---------------------------------------------------------
@@ -2669,7 +3093,7 @@ export function openOptics(deps = {}) {
     const onControl = !!target && target !== lookBtn && !!target.closest(NOT_FOR_LOOK);
     if (e.key === ' ' || e.code === 'Space') {
       if (onControl) return; // the focused control's own Space, or the answer scrolls
-      if (mode === 'live' || (mode === 'frozen' && camera.live)) {
+      if (mode === 'live' || mode === 'aside' || (mode === 'frozen' && camera.live)) {
         e.preventDefault();
         look();
       }
@@ -2693,6 +3117,11 @@ export function openOptics(deps = {}) {
     // Live sits in the answer's actions on a computer, and in the deck's ask row on a phone.
     const home = layout === 'desktop' ? answerActions : askRow;
     if (liveBtn.parentNode !== home) home.prepend(liveBtn);
+    // v8.1: too small for a card beside the live video: the Look fills the screen as on a phone.
+    if (mode === 'aside' && !asideAllowed()) {
+      setMode('frozen');
+      renderAnswer();
+    } else if (frozen) setMode(mode);
     if (!liveHud.hidden || liveView) placeLiveHud();
     layoutSoon();
     keepFollowUpInView();
@@ -2714,6 +3143,7 @@ export function openOptics(deps = {}) {
     ro.observe(stage);
     ro.observe(deck);
     ro.observe(liveHud); // the live view's panel grows with its lines: a frozen frame stays clear of it
+    ro.observe(asideBox); // v8.1: the card's picture: its labels follow its size
   }
   const onVisible = () => {
     if (document.visibilityState === 'visible' && resumeOnVisible && !closed && camera.state === 'paused') {
@@ -2735,6 +3165,7 @@ export function openOptics(deps = {}) {
     covered = now;
     el.dataset.covered = now ? 'true' : 'false';
     if (now) {
+      asideWhenCovered = !!frozen && mode === 'aside';
       toggleCameraMenu(false);
       stopWatch('');
       stopLiveView('Live view stopped: something covered the camera.');
@@ -2743,8 +3174,14 @@ export function openOptics(deps = {}) {
       return;
     }
     if (frozen) {
+      const wasAside = asideWhenCovered;
+      asideWhenCovered = false;
       setMode(mode === 'review' ? 'review' : 'frozen');
       layoutSoon();
+      if (wasAside && mode === 'frozen' && cameraPlatform().autoResume) {
+        restoreAside = true;
+        startCamera();
+      }
     } else if (cameraPlatform().autoResume) startCamera();
     else {
       setMode('paused');
@@ -2820,6 +3257,7 @@ export function openOptics(deps = {}) {
     endSchematic();
     settleAutoLook({ error: 'Closed.' });
     settleAutoLive({ error: 'Closed.' });
+    settleCameraDone({ error: 'Closed.' });
     deps.wakeLock && deps.wakeLock.allowSleep && deps.wakeLock.allowSleep();
     try {
       deps.onLiveChange && deps.onLiveChange({ camera: false, watch: false, watchEndsAt: null });
@@ -2863,6 +3301,47 @@ export function openOptics(deps = {}) {
     close: () => close('api'),
     /** Words for Optics (see command()): Voice Mode routes what it hears here while Optics is open. */
     command: (text) => command(text),
+    /**
+     * v8.1: a question that is no other command (typed in the field, or heard by Optics' own mic): a
+     * Look, a follow-up, or with a Look aside by the scene rule. Resolves like a Look or a follow-up.
+     */
+    question: (text) => question(text),
+    /**
+     * v8.1: the Look on screen or in its card: { frameId, question, answer, labels, tapped, aside }
+     * (for "research this": its tapped or first label and the answer), or null.
+     */
+    card() {
+      if (!frozen || !(mode === 'frozen' || mode === 'review' || mode === 'aside')) return null;
+      const pin = selectedPinData();
+      return { frameId: frozen.frameId || null, question: frozen.question || '', answer: frozen.text || '', labels: frozen.pins.map((p) => p.text), tapped: pin ? pin.text : '', aside: mode === 'aside', analyzing: isBusy() };
+    },
+    /** v8.1: whether the live picture has changed since the Look's (true when unknown). */
+    sceneChanged: () => sceneChanged(),
+    /** v8.1 (E5): the Look went to another screen: its card folds here, the camera stays live. */
+    sendAway: (frameId) => sendAway(frameId),
+    /** v8.1 (E5): "bring it back": the Look's card opens again. */
+    bringBack: (frameId) => bringBack(frameId),
+    /** v8.0's live view summary of the scene ("research this" with no Look on screen), or ''. */
+    get liveSummary() {
+      return liveView && liveView.summary ? liveView.summary : '';
+    },
+    /** v8.1: whether a Look can be taken now (the camera live, nothing under way). */
+    canLook: () => camera.live && !isBusy() && (mode === 'live' || mode === 'aside' || mode === 'frozen'),
+    /** v8.1 (E3): a follow-up about the Look on screen or aside (shown in its card: "About this picture"). */
+    followUp: (text) => (frozen && (mode === 'frozen' || mode === 'review' || mode === 'aside') ? ask(String(text || '')) : Promise.resolve(null)),
+    /** v8.1: a short line under the top bar (and announced). */
+    notice: (text) => {
+      const line = String(text || '').trim();
+      if (!line || closed) return;
+      showNotice(line, 7000);
+      announce(line);
+    },
+    /**
+     * v8.1 (E3): the research offer as a card with its prices and buttons (`pick(choiceId)` on a tap),
+     * said where Jarvis speaks when Voice Mode isn't open (Voice Mode says its own question). Returns
+     * { close() }.
+     */
+    offerResearch: (offer, pick) => offerResearch(offer, pick),
     /** Voice Mode's listening state for the mic button (opened over Voice Mode). */
     setVoice: (info) => setVoice(info),
     /** Watch off (the WATCH pill in the header); the camera stays on. */
@@ -2877,6 +3356,8 @@ export function openOptics(deps = {}) {
     overVoice: !!deps.voice,
     /** deps.autoLook: a Promise of the Look's outcome ({ run, frameId } | { error }), else null. */
     autoLookDone,
+    // v8.1 (E2): how the camera started ({ ok } | { error, code } | { paused }), for "open optics" by voice.
+    cameraDone,
     /** deps.autoLive: a Promise of the live view's start ({ ack } to say | { error }), else null (v8.0). */
     autoLiveDone,
     get state() {
@@ -2885,9 +3366,13 @@ export function openOptics(deps = {}) {
     get frozen() {
       return !!frozen && (mode === 'frozen' || mode === 'review');
     },
-    /** The Look on screen (frozen, with its frame id), for Screens' "this": { frameId, question, analyzing } | null. */
+    /** v8.1: 'live' | 'aside' | 'frozen' | … (the Look's place: in its card beside the live video, or big). */
+    get mode() {
+      return mode;
+    },
+    /** The Look on screen (frozen, or aside in its card: v8.1), for Screens' "this": { frameId, question, analyzing } | null. */
     frozenLook() {
-      if (!frozen || !(mode === 'frozen' || mode === 'review') || !frozen.frameId) return null;
+      if (!frozen || !(mode === 'frozen' || mode === 'review' || mode === 'aside') || !frozen.frameId) return null;
       return { frameId: frozen.frameId, question: frozen.question || '', analyzing: isBusy() };
     },
   };

@@ -116,6 +116,13 @@ import { register as registerChromeCommands } from './commands/chrome.js';
 // v8.1 chrome-relay: Jarvis for Chrome, linked through the home base (SPEC §32.1).
 import { installChromeLink } from '../platform/chrome-link.js';
 import { notify as notifyOwner } from './attention.js';
+// v8.1 Optics (Track 5): the live view's gate for answers, "open optics", "research this".
+import { createLiveBudget } from '../lib/live-view.js';
+import { createLiveGate, createTurnGate, requestWorstUsd, gateMaxTokens } from '../lib/live-gate.js';
+import { LIVE_VIEW_COUNTS, LOOK_FIRST_LINE, OFFLINE_LINE, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
+import { matchOpticsCommand, opticsOpenLine, voiceOpticsOpen } from '../lib/optics-commands.js';
+import { resolveThis } from '../lib/this-target.js';
+import { commandAck as viewerAck } from './voice-visuals.js';
 
 // v8.1 (SPEC §28.2-§28.3): Settings → Voice → Microphone and speaker (a computer in Chrome or Edge). Standby's
 // capture and every listen use the microphones chosen there, and George, the chimes and music previews the
@@ -819,7 +826,12 @@ export async function startApp(rootEl) {
     } else if (target.kind === 'mission' && mcSheet) {
       safe(() => mcSheet.sheet.close('screens'));
       return true;
-    } else if ((target.kind === 'camera' || target.kind === 'look') && isOpticsOpen()) {
+    } else if (target.kind === 'look' && isOpticsOpen()) {
+      // v8.1 (E5): a Look on the other screen is its picture, labels and answer, no camera: Optics stays
+      // open and live here, and the Look's card folds ("On your other screen"). Closing that screen
+      // (or "bring it back") hands the Look back to its card.
+      return !!safe(() => currentOptics().sendAway(r.frameId || null), false);
+    } else if (target.kind === 'camera' && isOpticsOpen()) {
       // The camera moves to the other screen: Optics closes here, so one view holds the camera.
       safe(() => currentOptics().close());
       return true;
@@ -831,9 +843,14 @@ export async function startApp(rootEl) {
   function showScreenInApp(target, { reason, back = false } = {}) {
     const r = (target && target.ref) || {};
     if (target.kind === 'look') {
-      // The Look again, frozen in Optics with its labels (camera off): "bring it back", a screen that
-      // hands it back, or a phone (where Optics already shows it).
-      if (state.conv && state.conv.id === r.conversationId && r.frameId && !isOpticsOpen()) reviewOptics({ optics: { frameId: r.frameId } }, null);
+      // v8.1 (E5): Optics open (the Look went to the other screen from it): its card opens again, the
+      // camera still live. Optics closed: the Look again, frozen in Optics with its labels (camera off):
+      // "bring it back", a screen that hands it back, or a phone (where Optics already shows it).
+      if (isOpticsOpen()) {
+        if (r.frameId) safe(() => currentOptics().bringBack(r.frameId));
+        return;
+      }
+      if (state.conv && state.conv.id === r.conversationId && r.frameId) reviewOptics({ optics: { frameId: r.frameId } }, null);
       return;
     }
     if (target.kind === 'camera') {
@@ -1470,6 +1487,12 @@ export async function startApp(rootEl) {
     if (extras && extras.spoken === true) input.spoken = true; // Voice Mode: the reply is written for the ear
     if (extras && extras.blueprintFor) input.blueprintFor = extras.blueprintFor; // a 2D request from the hologram viewer
     if (extras && extras.optics) input.optics = extras.optics; // a Look: the one image is an Optics frame
+    // v8.1 (E0): an answer asked while the live view is on goes through its $1-an-hour gate, as a quick
+    // answer (agents are outside the gate); a research mission is outside it (its offer says so).
+    if (!takeOutsideLiveView(extras, clean)) {
+      input.gate = liveTurnGate();
+      if (liveViewOn()) input.mode = 'quick';
+    }
     clearFollowups();
     let run;
     try {
@@ -2420,7 +2443,9 @@ export async function startApp(rootEl) {
    */
   // "What am I looking at?" said where the camera needs a tap first (iPhone): kept for Voice Mode's Look.
   // v8.0: "live view" said there waits the same way: the tap on Look then starts the live view.
-  let pendingVoiceLook = null; // { text, at, live }
+  // v8.1: "open optics" said there (and "switch cameras"): only the camera opens with the tap (open,
+  // command: the switch to make once it is live).
+  let pendingVoiceLook = null; // { text, at, live, open?, command? }
   const PENDING_LOOK_MS = 30000;
   function takePendingVoiceLook() {
     const p = pendingVoiceLook;
@@ -2430,7 +2455,23 @@ export async function startApp(rootEl) {
   /** Voice Mode's Look button: Optics over Voice Mode, with what was said before the tap. */
   function openOpticsForVoiceLook() {
     const p = takePendingVoiceLook();
-    return openOpticsScreen({ voice: true, autoLook: p && !p.live ? p.text : '', autoLive: !!(p && p.live) });
+    return openOpticsScreen({ voice: true, autoLook: p && !p.live && !p.open ? p.text : '', autoLive: !!(p && p.live), autoCommand: (p && p.command) || '' });
+  }
+
+  /**
+   * v8.1 (E2): Jarvis hidden on a Mac (he listens there, A1): the camera only runs on screen, so one
+   * notification brings him up, and its click opens Optics (`open`: what to do then).
+   */
+  function cameraNeedsFront(open) {
+    safe(() =>
+      notifyOwner({
+        tag: 'jarvis-optics',
+        title: 'Jarvis: the camera',
+        body: 'Click to bring Jarvis up and turn the camera on.',
+        onClick: () => safe(() => open()),
+      }),
+    );
+    return 'The camera only runs while I’m on screen. Click the notification to bring me up.';
   }
 
   function voiceLookRequest(text) {
@@ -2440,8 +2481,11 @@ export async function startApp(rootEl) {
     // blueprint is on screen: it is about that. The live view's words follow the same rule: with a
     // hologram or blueprint on screen, "keep watching" never turns the camera on (v8.0).
     const viewerOpen = !!(getHologramViewer() || getBlueprintViewer());
-    // "Live view", "watch me", "keep watching": the camera opens by the same rule, then the live view.
-    const live = safe(() => voiceLiveViewRequest(text, { viewerOpen, cameraAllowed, ios: isIOS() }), null);
+    // v8.1: Jarvis hidden on a Mac: a notification first (the camera never runs hidden).
+    const hidden = !!document.hidden && !safe(() => isIOS(), false);
+    // "Live view", "watch me", "keep watching", "video mode": the camera opens by the same rule, then the live view.
+    const live = safe(() => voiceLiveViewRequest(text, { viewerOpen, cameraAllowed, ios: isIOS(), hidden }), null);
+    if (live === 'need-front') return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLive: true })) } };
     if (live === 'need-tap') {
       pendingVoiceLook = { text: '', at: Date.now(), live: true };
       return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and I’ll keep watching.' } };
@@ -2453,8 +2497,12 @@ export async function startApp(rootEl) {
       const done = optics && optics.autoLiveDone ? optics.autoLiveDone : Promise.resolve({ error: 'The camera couldn’t start.' });
       return { handled: true, command: { action: 'optics', kind: 'liveview', ack: '' }, done };
     }
-    const kind = safe(() => voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios: isIOS() }), null);
+    const kind = safe(() => voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios: isIOS(), hidden }), null);
     if (!kind) return null;
+    if (kind === 'need-front') {
+      const words = String(text).trim().slice(0, 500);
+      return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLook: words })) } };
+    }
     if (kind === 'need-tap') {
       // The question waits for that tap (30 s): Look then looks at once, with these words.
       pendingVoiceLook = { text: String(text).trim().slice(0, 500), at: Date.now(), live: false };
@@ -2463,6 +2511,314 @@ export async function startApp(rootEl) {
     const optics = openOpticsScreen({ voice: true, autoLook: String(text).trim() });
     const done = optics && optics.autoLookDone ? optics.autoLookDone : Promise.resolve({ error: 'The camera couldn’t start.' });
     return { handled: true, command: { action: 'optics', kind: 'look', ack: '' }, done };
+  }
+
+  // ---- v8.1 (E0): the live view's $1 an hour holds for answers -------------------------------------
+  // One gate for this window over v8.0's budget (localStorage: every window's hour), each window's
+  // reservations beside it, and a Web Lock so two windows can't both take the hour's last room.
+  const gateStorage = {
+    getItem: (k) => safe(() => localStorage.getItem(k), null),
+    setItem: (k, v) => safe(() => localStorage.setItem(k, v)),
+    removeItem: (k) => safe(() => localStorage.removeItem(k)),
+    key: (i) => safe(() => localStorage.key(i), null),
+    get length() {
+      return safe(() => localStorage.length, 0);
+    },
+  };
+  let liveGate = null;
+  function getLiveGate() {
+    if (!liveGate) {
+      const budget = createLiveBudget({ storage: gateStorage, now: () => Date.now() });
+      const locks = typeof navigator !== 'undefined' && navigator.locks && typeof navigator.locks.request === 'function' ? navigator.locks : null;
+      liveGate = createLiveGate({ budget, storage: gateStorage, lock: locks ? (fn) => locks.request('jarvis.liveView.gate', () => fn()) : null });
+    }
+    return liveGate;
+  }
+  /** Whether the live view is on in this window now (paused counts as on). */
+  function liveViewOn() {
+    const optics = currentOptics();
+    return !!(optics && safe(() => optics.liveView.on, false));
+  }
+  /** A gate for one turn (startTurn({ gate })): inert while the live view is off. */
+  function liveTurnGate() {
+    return state.demo ? null : createTurnGate({ gate: getLiveGate(), isOn: liveViewOn });
+  }
+  // A research way outside the live view's dollar (a mission: its offer says so) is the send() of
+  // exactly its words, whenever it comes (Voice Mode may hold a request a moment), once.
+  let outsideLiveViewText = '';
+  function takeOutsideLiveView(extras, text) {
+    if (state.demo || (extras && extras.outsideLiveView)) return true;
+    if (!outsideLiveViewText || text !== outsideLiveViewText) return false;
+    outsideLiveViewText = '';
+    return true;
+  }
+  /** About what a quick answer in this chat would reserve now (its first request's worst case). */
+  function quickAnswerFits(text = 'Research this with a web search.') {
+    if (!liveViewOn()) return true;
+    const conv = state.conv;
+    const model = getSettings().leadModel;
+    const params = {
+      model,
+      max_tokens: gateMaxTokens(true),
+      system: conv ? conv.system : '',
+      tools: conv ? conv.tools : [],
+      messages: [...(conv ? conv.apiMessages : []), { role: 'user', content: [{ type: 'text', text }] }],
+    };
+    return safe(() => getLiveGate().fits(requestWorstUsd(params, { model })), true);
+  }
+
+  // ---- v8.1 (E2): "open optics" by voice, free (no Look) ------------------------------------------
+  /**
+   * "Open optics", "open the camera", "switch cameras", "use the Logitech camera" (the router's
+   * optics-open): with Optics open, "Optics is on."; typed in the chat, it opens on every device (Enter
+   * is a gesture); said: a Mac where the camera is allowed and Jarvis on screen opens it over Voice
+   * Mode, no Look ("Optics is on."); Jarvis hidden, a notification first; an iPhone or the camera not
+   * allowed yet, "Tap Look to turn the camera on." (it waits 30 s for that tap). A switch is made once
+   * the camera is live.
+   */
+  function openOpticsByWords({ text, surface, open = false } = {}) {
+    if (open || isOpticsOpen()) return { say: 'Optics is on.' };
+    const cmd = safe(() => matchOpticsCommand(String(text || '')), null);
+    const autoCommand = cmd && (cmd.action === 'flip' || cmd.action === 'camera') ? String(text || '').trim() : '';
+    if (surface === 'chat') return { say: openOpticsScreen({ autoCommand }) ? '' : 'The camera couldn’t start in this browser.' };
+    const kind = safe(() => voiceOpticsOpen(text, { cameraAllowed, ios: isIOS(), hidden: !!document.hidden }), null);
+    if (kind === 'need-tap') {
+      pendingVoiceLook = { text: '', at: Date.now(), live: false, open: true, command: autoCommand };
+      return { say: 'Tap Look to turn the camera on.' };
+    }
+    if (kind === 'need-front') return { say: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoCommand })) };
+    if (kind !== 'open') return false;
+    const api = openOpticsScreen({ voice: !!voiceApi, autoCommand });
+    if (!api) return { say: 'The camera couldn’t start.' };
+    // "Optics is on." only once the camera is live; else why not ("I can't find a camera.", in use…).
+    const done = api && api.cameraDone && typeof api.cameraDone.then === 'function' ? api.cameraDone : null;
+    if (!done) return { say: 'Optics is on.' };
+    const late = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 12000));
+    return Promise.race([done, late]).then((r) => ({ say: opticsOpenLine(r) }));
+  }
+
+  /** "Close the camera" with Optics closed: a camera view on another screen goes off (Screens), else nothing to do. */
+  function closeCameraByWords() {
+    const shown = screensCtl ? safe(() => screensCtl.list().some((w) => w.kind === 'camera'), false) : false;
+    if (shown && screenCommand('close the camera window', null, 'voice')) return { say: 'Camera off.' };
+    return { say: 'The camera is off.' };
+  }
+
+  /**
+   * R10: "open the camera" with a laptop hologram on top (the router's optics-camera-part): the
+   * hologram selects its camera part as it does today, and Jarvis adds how to reach Optics.
+   */
+  function hologramPartByWords({ text, surface, hint }) {
+    const words = String(text || '');
+    const res = surface === 'voice' ? safe(() => voiceCommand(words), null) : safe(() => getHologramViewer().command(words, { source: 'typed' }), null);
+    if (!res || !res.handled) return false;
+    const ack = safe(() => viewerAck(res.command), '');
+    return { say: [ack, hint].filter(Boolean).join(' ') };
+  }
+
+  /** Optics' own words (the router's optics-card, optics-close in its field): its line, or false. */
+  function opticsCommandByWords(text) {
+    const optics = currentOptics();
+    const res = optics ? safe(() => optics.command(String(text || '')), null) : null;
+    if (!res || !res.handled) return false;
+    const line = (res.command && res.command.ack) || '';
+    return res.done ? Promise.resolve(res.done).then(() => ({ say: line })) : { say: line };
+  }
+
+  // ---- v8.1 (E3): "research this", the price first ----------------------------------------------
+  let researchAsk = null; // the open offer: { handle (Voice Mode's question), card (Optics'), offer, subject, deep }
+  /** What "this" is outside Optics (resolveThis): a hologram's title, the newest reply, the last question. */
+  function thisOutsideOptics() {
+    const viewer = getHologramViewer();
+    const title = viewer ? safe(() => viewer.getState().title, '') : '';
+    const turns = state.conv ? turnsOf(state.conv) : [];
+    const lastUser = [...turns].reverse().find((t) => t && t.role === 'user' && t.text);
+    return safe(() => resolveThis({ hologram: title ? { title } : null, lastQuestion: lastUser ? lastUser.text : '' }), null);
+  }
+
+  /**
+   * The router's optics-research: the subject in words, the offer with each way's price (Voice Mode:
+   * a question said and answered by voice; Optics: a card with its buttons, said where Jarvis speaks),
+   * then the way the owner picks. Nothing is spent before that. No subject yet with the camera live:
+   * "Let me look first: about 3¢." (a Look, then the offer).
+   */
+  function researchThis({ where = 'offer', deep = false, surface = 'voice' } = {}) {
+    if (!state.online) return { say: OFFLINE_LINE };
+    const optics = currentOptics();
+    const card = optics ? safe(() => optics.card(), null) : null;
+    const subject = researchSubject({
+      label: card ? card.tapped || (card.labels && card.labels[0]) || '' : '',
+      answer: card && !card.analyzing ? card.answer : '',
+      liveSummary: optics ? safe(() => optics.liveSummary, '') : '',
+      resolved: optics ? null : thisOutsideOptics(),
+    });
+    if (!subject && optics && safe(() => optics.canLook(), false)) {
+      // A Look first (by name, about 3¢), then the offer about what it found. In Voice Mode the Look
+      // starts once Jarvis has said so (its turn would cut the line short).
+      const go = () => {
+        const looking = Promise.resolve(safe(() => optics.question('What am I looking at?'), null)).then((res) => (res && res.run && res.run.done ? res.run.done : null));
+        looking.then((turn) => {
+          if (turn && turn.status === 'done') researchThis({ where, deep, surface });
+        });
+      };
+      if (voiceApi && safe(() => isVoiceModeOpen(), false)) afterVoiceSays(go);
+      else go();
+      return { say: LOOK_FIRST_LINE };
+    }
+    const settings = getSettings();
+    const offer = researchOffer({
+      subject,
+      homeBase: !!(brain && safe(() => brain.base(), null)),
+      online: state.online,
+      liveView: liveViewOn() ? { on: true, quickFits: quickAnswerFits() } : null,
+      agents: settings.maxAgents,
+      depth: settings.depth,
+      deep,
+      only: where === 'homebase' ? 'homebase' : null,
+    });
+    if (offer.refuse) return { say: offer.lookFirst ? 'Show me first: open Optics and look, then say research this.' : offer.refuse };
+    closeResearchOffer();
+    const entry = { offer, subject, deep, handle: null, card: null };
+    researchAsk = entry;
+    const pick = (choice) => {
+      if (researchAsk !== entry) return;
+      closeResearchOffer();
+      runResearch(choice, subject, { deep });
+    };
+    const voice = !!voiceApi && safe(() => isVoiceModeOpen(), false);
+    if (voice && typeof voiceApi.question === 'function') {
+      // Quick and Cancel are the question's own answers (at once); Mission and Home base, the dear
+      // ones, are the router's optics-research-answer, through the 2-second check.
+      const cheap = offer.choices.filter((c) => !c.dear);
+      entry.handle = safe(() =>
+        voiceApi.question({
+          id: 'research-offer', // RESEARCH_OFFER_ID (src/ui/commands/optics.js)
+          say: offer.say,
+          choices: offer.choices.map((c) => ({ id: c.id, label: c.label, words: c.words, dear: c.dear })),
+          match: (words) => matchOfferChoice(words, cheap),
+          onAnswer: (choice) => pick(choice),
+          onExpire: (reason) => {
+            if (researchAsk !== entry) return;
+            if (reason === 'dropped') {
+              // Other words were heard. They may be the offer's dear answer ("mission", "home base": the
+              // router's optics-research-answer, which goes through the 2-second check first), so the
+              // offer stays answerable that way a little longer; its question and card are gone.
+              entry.handle = null;
+              if (entry.card) safe(() => entry.card.close());
+              entry.card = null;
+              entry.dropTimer = setTimeout(() => {
+                if (researchAsk === entry) closeResearchOffer();
+              }, 30000);
+              return;
+            }
+            closeResearchOffer();
+          },
+        }),
+      );
+    }
+    if (optics) entry.card = safe(() => optics.offerResearch(offer, (choice) => (entry.handle ? entry.handle.answer(choice) : pick(choice))), null);
+    if (entry.handle) return { say: '' }; // Voice Mode says the question itself
+    return { say: surface === 'voice' ? offer.say : '' };
+  }
+
+  /**
+   * Runs `fn` once Voice Mode has said what it is saying now (its `busy`, as it syncs it): when it is no
+   * longer busy after it was, after 400 ms if it never was; at most 4 s.
+   */
+  function afterVoiceSays(fn) {
+    const t0 = Date.now();
+    let seen = false;
+    const tick = () => {
+      const busy = !!(voiceInfo && voiceInfo.busy);
+      if (busy) seen = true;
+      const waited = Date.now() - t0;
+      if ((!busy && (seen || waited >= 400)) || waited >= 4000) {
+        safe(fn);
+        return;
+      }
+      setTimeout(tick, 80);
+    };
+    setTimeout(tick, 80);
+  }
+
+  /** The open research offer goes (answered, expired, replaced). */
+  function closeResearchOffer() {
+    const entry = researchAsk;
+    researchAsk = null;
+    if (!entry) return;
+    clearTimeout(entry.dropTimer);
+    if (entry.card) safe(() => entry.card.close());
+  }
+
+  /** Mission or Home base said for the open offer (after the 2-second check): the router's optics-research-answer. */
+  function answerResearchOffer(choice) {
+    const entry = researchAsk;
+    // Never "mission" sent to Claude as a question: the offer has gone, so say so.
+    if (!entry) return { say: 'That research offer has gone. Say research this again.' };
+    if (entry.handle && safe(() => entry.handle.answer(choice), false)) return { say: '' };
+    closeResearchOffer();
+    return runResearch(choice, entry.subject, { deep: entry.deep });
+  }
+
+  /**
+   * The way the owner picked: Quick = a follow-up in this chat with a web search (with the live view
+   * on, through its gate); Mission = a swarm turn with the subject in words (outside the live view's
+   * dollar); Home base = the home base's own research job (words only). Returns { say }.
+   */
+  function runResearch(choice, subject, { deep = false } = {}) {
+    const voice = !!voiceApi && safe(() => isVoiceModeOpen(), false);
+    // In Voice Mode a turn starts on the next tick: an answer is acted on while Voice Mode is still
+    // taking the words (the router's run, a question's onAnswer), and a turn started then would be
+    // overwritten by its "One moment…"; on the next tick ask() takes over from it.
+    const later = (fn) =>
+      new Promise((resolve) =>
+        setTimeout(() => {
+          safe(fn);
+          resolve({ say: '' });
+        }, 0),
+      );
+    if (choice === 'cancel') {
+      const line = 'Okay, no research.';
+      if (voice) setTimeout(() => safe(() => voiceApi.say(line)), 0);
+      return { say: line };
+    }
+    const optics = currentOptics();
+    // Owner question 9 (LIVE_VIEW_COUNTS): a way that doesn't count toward the live view's dollar is
+    // sent outside its gate (the send() of exactly its words).
+    const outside = !LIVE_VIEW_COUNTS[choice];
+    if (choice === 'quick') {
+      const text = researchPrompt(subject, 'quick');
+      outsideLiveViewText = outside ? text : '';
+      // With a Look on screen it is that Look's follow-up (the card shows it); else a quick question.
+      const go = () => {
+        if (optics && safe(() => optics.card(), null)) safe(() => optics.followUp(text));
+        else if (voice) voiceTurnResult(safe(() => voiceApi.ask(text, { mode: 'quick' }), null));
+        else send(text, 'quick', { keepOnStop: true });
+      };
+      if (voice) return later(go);
+      go();
+      return { say: '' };
+    }
+    if (choice === 'mission') {
+      const text = researchPrompt(subject, 'mission');
+      outsideLiveViewText = outside ? text : '';
+      if (voice) return later(() => voiceTurnResult(safe(() => voiceApi.ask(text, { mode: 'swarm' }), null)));
+      const ok = send(text, 'swarm');
+      if (ok && optics) safe(() => optics.notice('The research mission is under way: it’s in the chat.'));
+      return { say: ok ? 'The research mission is under way: it’s in the chat.' : 'I couldn’t start the mission.' };
+    }
+    if (choice === 'homebase') {
+      const done = Promise.resolve(runBrainCommand({ kind: 'research', prompt: researchPrompt(subject, 'homebase'), depth: deep ? 'deep' : 'quick' }))
+        .catch(() => ({ speech: 'Something went wrong asking the home base.' }))
+        .then((r) => {
+          const line = (r && r.speech) || 'The home base has it.';
+          if (voice) safe(() => voiceApi.say(line));
+          if (optics) safe(() => optics.notice(line));
+          return { say: line };
+        });
+      return done;
+    }
+    return false;
   }
 
   function opticsDeps(extra = {}) {
@@ -2488,6 +2844,8 @@ export async function startApp(rootEl) {
       watchLook: watchFromOptics,
       // v8.0 Live view: looks on the cheap model, the lines spoken through the voice output.
       liveLook: state.demo ? null : liveFromOptics,
+      // v8.1 (E0): the hour's budget with the answers' reservations (the same gate the turns use).
+      liveGate: state.demo ? null : getLiveGate(),
       liveSpeech: { state: liveSpeechState, say: sayLiveLine, unlock: () => safe(() => unlockSpeech()) },
       // A live look sent but never answered (stopped, a timeout): the month counts its estimate too.
       liveSpendEstimate: (usd) => safe(() => addSpend(usd)),
@@ -2521,13 +2879,14 @@ export async function startApp(rootEl) {
    * words of a Look to take as soon as the camera is live ("what am I looking at?" said in Voice Mode).
    * Returns the Optics api (truthy), or false.
    */
-  function openOpticsScreen({ start, voice = false, autoLook = '', autoLive = false, autoLiveSaid = false } = {}) {
+  function openOpticsScreen({ start, voice = false, autoLook = '', autoLive = false, autoLiveSaid = false, autoCommand = '' } = {}) {
     if (isOpticsOpen()) return currentOptics() || true;
     if (!voice) stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
     const extra = {};
     if (start === 'screen') extra.start = start;
     if (autoLook) extra.autoLook = autoLook;
+    if (autoCommand) extra.autoCommand = autoCommand; // v8.1: "switch cameras" said with Optics closed: made once live
     if (autoLive) extra.autoLive = true; // "live view" said in Voice Mode: it starts once the camera is live
     if (autoLive && autoLiveSaid) extra.autoLiveSaid = true; // and Voice Mode says the outcome (autoLiveDone)
     if (voice && voiceApi) {
@@ -3232,7 +3591,7 @@ export async function startApp(rootEl) {
     }
     let run = null;
     try {
-      run = engine.resumeTurn(state.conv);
+      run = engine.resumeTurn(state.conv, { gate: liveTurnGate() }); // v8.1 (E0): the live view's gate, as send()'s
     } catch (err) {
       console.error('[jarvis] resumeTurn failed:', err);
     }
@@ -4294,6 +4653,14 @@ export async function startApp(rootEl) {
     s.reply.links = safe(() => newestReplyLinks(), []);
     // ---- windows ◂
     // ---- optics ▸ (s.optics.mode 'aside', card, sceneChanged)
+    if (optics && s.optics) {
+      // v8.1: a Look in its card beside the live video ('aside'), its labels, and (only then: a 64 × 36
+      // grab) whether the scene changed since its picture.
+      const look = safe(() => optics.card(), null);
+      if (safe(() => optics.mode, null) === 'aside') s.optics.mode = 'aside';
+      s.optics.card = look ? { frameId: look.frameId, labels: look.labels || [], aside: !!look.aside } : null;
+      s.optics.sceneChanged = look && look.aside ? safe(() => optics.sceneChanged(), null) : null;
+    }
     // ---- optics ◂
     // ---- chrome-relay ▸ (s.chrome)
     if (chromeLink) {
@@ -4654,7 +5021,7 @@ export async function startApp(rootEl) {
     // windows (src/ui/commands/windows.js):
     register('windows', registerWindowCommands, { ...shared, screens: screensCtl, tabs: browserTabs, thisInputs: () => thisInputs(), links: () => newestReplyLinks(), closeViewers: () => closeViewers() });
     // optics (src/ui/commands/optics.js):
-    register('optics', registerOpticsCommands, { ...shared });
+    register('optics', registerOpticsCommands, { ...shared, opticsCommand: opticsCommandByWords, openOptics: openOpticsByWords, closeCamera: closeCameraByWords, researchThis, answerResearch: answerResearchOffer, hologramPart: hologramPartByWords });
     // chrome-relay (src/ui/commands/chrome.js):
     register('chrome', registerChromeCommands, { ...shared, chromeLink, openSettings: (opts) => openSettings(opts) });
   }

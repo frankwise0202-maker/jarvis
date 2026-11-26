@@ -38,8 +38,13 @@ test('words that name the live view are the live view\'s: "show me the live view
     }
     assert.equal(isLiveViewRequest(words), true, words);
   }
-  for (const words of ['Go live', 'Live', 'Back to the camera', 'Back to live', 'Show me the camera', 'Resume the camera', 'Unfreeze', 'Unfreeze it', 'New picture']) {
+  for (const words of ['Go live', 'Live', 'Back to the camera', 'Back to live', 'Show me the camera', 'Resume the camera', 'Unfreeze', 'Unfreeze it']) {
     assert.deepEqual(cmd(words, { frozen: true }), { action: 'live' }, words);
+    assert.equal(isLiveViewRequest(words), false, words);
+  }
+  // v8.1 (E1, changed on purpose): "new picture" and "new look" take a new picture; never Live, never the live view.
+  for (const words of ['New picture', 'New look']) {
+    assert.deepEqual(cmd(words, { frozen: true }), { action: 'look', question: 'What am I looking at?', explicit: true, fresh: true }, words);
     assert.equal(isLiveViewRequest(words), false, words);
   }
 });

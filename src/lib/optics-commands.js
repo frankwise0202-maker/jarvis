@@ -2,27 +2,61 @@
 // read as commands the screen carries out itself (free: no tokens), and the follow-up questions its
 // chips send.
 //
-//   matchOpticsCommand(text, { frozen }) -> null | { action, question?, side?, subject?, on? }
+//   matchOpticsCommand(text, { frozen }) -> null | { action, question?, side?, subject?, on?, name? }
 //     look      "what am I looking at?", "what is this?", "what do you see?", "look at this",
 //               "identify this", "what am I holding?", "can you read this?" (explicit: true), and
 //               (with the camera live) any question about "this" or "these" (explicit: false): a
-//               Look with these very words
+//               Look with these very words. "Look" alone, "look here", "look now", "look at this /
+//               that / it / me" with at most three more words; never "look up …", "look into …",
+//               "look at my calendar" or "look it up", which are for Jarvis (v8.1). fresh: true
+//               (v8.1) for words that always take a new picture: "look again", "new look", "what
+//               about now?", "take a picture", "take a photo" (question: "What am I looking at?"
+//               when the words are not a question themselves)
 //     ask       (an answer is on screen) a question about "this": asked about the frozen frame
 //     flip      "flip", "switch cameras", "use the front camera" (side: 'front'|'rear'|null)
+//     camera    (v8.1) "use the Logitech camera", "switch to the MacBook camera" (name: the word
+//               to find in the cameras' names)
 //     close     "close the camera", "camera off", "stop looking", "close"
-//     live      "go live", "back to the camera", "unfreeze" (the camera, live again after a Look;
-//               words that name the live view are the live view's, below)
+//     live      "go live", "back to the camera", "unfreeze", "back to live", "show the live video"
+//               (the camera, live again after a Look; with a Look set aside on a Mac, v8.1: the
+//               picture goes back into its card; words that name the live view are the live
+//               view's, below)
+//     expand    (v8.1) "expand the picture", "show the picture big": the Look's picture fills the
+//               stage, the live video in a corner tile
+//     aside     (v8.1) "put the picture aside", "put the picture to the side": back to the card
+//     close-card (v8.1) "close the picture": the Look's card goes (the camera stays on)
 //     more      "tell me more", "more about it"
 //     hologram  "hologram of this", "make a hologram of the battery" (subject: 'battery' or null)
 //     part      "what's this part?", "what part is that?" (the pin the owner tapped)
 //     watch     "watch this" / "stop watching" (on: true | false)
 //     liveview  (v8.0) "live view", "start live view", "turn on live view", and every other phrase
 //               that names it ("show me the live view", "back to the live view", "resume live
-//               view": start it, or go on with it when it is paused) (on: true); "watch me", "keep
-//               watching" (on: true, watching: true: while Watch is on they mean "go on");
-//               "stop live view", "turn off live view", "that's enough" (on: false). "Stop
-//               watching" stays a watch command: it stops whichever is on.
+//               view": start it, or go on with it when it is paused), and (v8.1) "video mode",
+//               "start video mode", "turn on video mode" (on: true); "watch me", "keep watching"
+//               (on: true, watching: true: while Watch is on they mean "go on"); "stop live view",
+//               "turn off live view", "that's enough", "video mode off", "stop video mode" (on:
+//               false). "Stop watching" stays a watch command: it stops whichever is on. "Show the
+//               live video" is Live, never the live view.
 //   Anything else is null: it goes to Jarvis as a normal message (in Voice Mode, a spoken turn).
+//
+//   findNamedCamera(cameras, name)    (v8.1) the camera "use the Logitech camera" names, or null
+//   isOpticsOpenRequest(text), isCameraCloseRequest(text)
+//                                     (v8.1) "open optics" (and the switches) / "close the camera",
+//                                     whole sentences, for the router with Optics closed
+//   asideQuestionRoute(text, { cmd, labels, sceneChanged })
+//                                     (v8.1) a question asked while a Look sits in its card beside
+//                                     the live video: 'card' (a follow-up on that picture, no new
+//                                     frame) or 'look' (a new Look): explicit follow-ups and the
+//                                     card's own labels go to the card; "look again" and the like
+//                                     always look; anything else goes to the card only while the
+//                                     scene hasn't changed since the card's picture
+//   voiceOpticsOpen(text, { cameraAllowed, ios, hidden })
+//                                     (v8.1) "open optics", "open the camera", "camera on", "start
+//                                     the camera", "show me the camera" (and the camera switches),
+//                                     free, with Optics closed: 'open' (a Mac where the camera is
+//                                     allowed, Jarvis on screen), 'need-front' (Jarvis hidden: the
+//                                     camera only runs on screen), 'need-tap' (iPhone, or not
+//                                     allowed yet: "Tap Look"), or null
 //
 //   isCameraRequest(text)             words plainly about seeing ("what am I looking at?", "look at
 //                                     this", "what is this?" on its own): Voice Mode opens the camera
@@ -30,17 +64,18 @@
 //                                     "what do you see as the biggest risk…?", which only starts like
 //                                     one, and not "what's that?" or "what is it?", which in a
 //                                     conversation are about something Jarvis said.
-//   voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios })
+//   voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios, hidden })
 //                                     what Voice Mode does with such words while Optics is closed:
 //                                     null (Jarvis takes them as usual: not about seeing, or a
 //                                     hologram or blueprint is on screen, so "what is this?" is about
 //                                     it), 'need-tap' (iPhone, or the camera not allowed yet: "Tap
-//                                     Look") or 'look' (open the camera and look)
+//                                     Look"), 'need-front' (v8.1: Jarvis hidden on a Mac) or 'look'
+//                                     (open the camera and look). "Take a picture" (v8.1) too.
 //
 //   isLiveViewRequest(text)           (v8.0) whole sentences that start the live view ("live view",
 //                                     "watch me", "keep watching"): Voice Mode opens the camera for
 //                                     them while it is closed, by the same rule as a Look
-//   voiceLiveViewRequest(text, { viewerOpen, cameraAllowed, ios })
+//   voiceLiveViewRequest(text, { viewerOpen, cameraAllowed, ios, hidden })
 //                                     null (not those words, or a hologram or blueprint is on
 //                                     screen: then they are Jarvis's, as "what is this?" is),
 //                                     'need-tap' (iPhone, or the camera not allowed yet) or 'start'
@@ -69,13 +104,23 @@ const LOOK = [
   /^what(?:'s| is| are) (?:this|that|these|those|it|in front of me|on (?:my|the) (?:desk|table|screen)|here)\b/,
   /^whats (?:this|that|these|those|it)\b/,
   /^(?:what do you see|what can you see|do you see (?:this|that|it|these)|(?:can you )?see (?:this|that|it|these|me))\b/,
-  /^(?:take a look|have a look|look at (?:this|that|it|these|those|me)|look here|look)\b/,
+  // "Look" alone, "look here / now", "look at this / that / it / me" with at most three more words,
+  // "take a look (at this …)" (v8.1: before, any sentence starting with "look" was a Look: "look up
+  // the battery part number", "look into the warranty", "take a look at my calendar").
+  /^(?:look|look here|look now|(?:take|have) a (?:quick )?look)$/,
+  /^(?:look|(?:take|have) a (?:quick )?look) at (?:this|that|it|these|those|me)(?: [a-z0-9']+){0,3}$/,
   /^(?:identify|recognize|recognise|read|describe) (?:this|that|it|these|those|what you see)\b/,
   /^(?:tell me what (?:this|that|these|those|it) (?:is|are)|tell me what you see)\b/,
   /^what (?:brand|model|make|kind|type|sort) (?:is|of) (?:this|that|it|these)\b/,
-  /^what about (?:now|this|this one)\b/,
-  /^(?:and )?(?:now|this one)$/,
+  /^what about (?:this|this one)\b/,
+  /^(?:and )?this one$/,
 ];
+// Words that always take a new picture, even with a Look on screen or in its card (v8.1). The
+// question stays the owner's when it is one ("What about now?"); a bare command ("take a picture",
+// "new look") asks the default question.
+const FRESH_QUESTION = [/^what about now\b/, /^(?:and )?now$/];
+const FRESH = /^(?:look again|look closer|look again now|(?:take|have) (?:another|a closer|a new|one more) look|another look|new look|new (?:picture|photo|frame)|(?:take|snap|grab) (?:a |another |one more |a new |a quick )?(?:picture|photo|pic|snapshot)(?: of (?:this|that|it|me|these|what i'm holding|what i'm looking at))?)$/;
+export const FRESH_LOOK_QUESTION = 'What am I looking at?';
 // A question about "this" / "these" (is this ripe? how do I fix this?): with the camera live, a Look.
 const DEICTIC = /\b(?:this|these|this one|this thing|here)\b/;
 const QUESTION_START = /^(?:what|whats|which|who|where|when|why|how|is|are|can|could|should|would|will|do|does|did|was|were|tell me|explain|show me)\b/;
@@ -90,18 +135,27 @@ const CLOSE = [
   /^(?:camera off|stop looking|close it|close that|done looking|i'm done|that's all|close|exit)$/,
 ];
 // The camera live again after a Look. "Live view" is not among these words: it names the live view.
-const LIVE = [/^(?:go )?live$/, /^(?:back to|resume|show(?: me)?|go back to) (?:the )?(?:camera|live|picture)$/, /^unfreeze(?: it)?$/, /^new (?:look|picture|frame)$/];
+// (v8.1: "the live video" is the camera too; "new look" takes a new Look: FRESH above.)
+const LIVE = [/^(?:go )?live$/, /^(?:back to|resume|show(?: me)?|go back to) (?:the )?(?:camera|live|picture|live video|live camera)$/, /^unfreeze(?: it)?$/, /^(?:the )?live video$/];
+// v8.1, a Look set aside beside the live video (Mac): its picture big, back into its card, or gone.
+const PICTURE = '(?:the |this |that )?(?:picture|photo|image|look)';
+const EXPAND = new RegExp(`^(?:expand|enlarge|maximi[sz]e|blow up) ${PICTURE}$|^(?:expand|enlarge) (?:it|this)$|^(?:show|make|put) (?:me )?${PICTURE} (?:big|bigger|large|larger|full size|full screen)$`);
+const ASIDE = new RegExp(`^(?:put|set|move) ${PICTURE} (?:aside|to the side|on the side|back in (?:its|the) card)$|^(?:put|set) (?:it|this) aside$|^shrink ${PICTURE}$`);
+const CLOSE_CARD = new RegExp(`^(?:close|hide|dismiss|clear|remove|put away) ${PICTURE}$`);
+// v8.1: a camera by name ("use the Logitech camera"), found among the cameras' names (cameras.js).
+const NAMED_CAMERA = /^(?:use|switch to|change to|go to|show me) (?:the |my )?(logitech|macbook|mac|built in|builtin|iphone|continuity|external|usb|desk view|studio display) (?:camera|webcam|cam)$/;
 const MORE = /^(?:tell me more|more|go on|keep going|more about (?:it|this|that)|tell me more about (?:it|this|that|them))$/;
 const PART = /^(?:what(?:'s| is) (?:this|that) part|whats (?:this|that) part|what part is (?:this|that|it)|what is (?:this|that) piece|what's (?:this|that) piece)\b/;
 const WATCH_ON = /^(?:start )?watch(?:ing)?(?: (?:this|it|that|for changes))?$/;
 const WATCH_OFF = /^(?:stop|end|turn off) watch(?:ing)?$/;
 // v8.0 Live view (Jarvis watches, live, for up to an hour): whole sentences only. Words that name it
 // start it, or go on with it when it is paused ("show me the live view", "back to the live view",
-// "resume live view": before v8.0 these meant the camera, which never started anything).
-const LIVE_VIEW_ON = /^(?:(?:start|begin|turn on|switch on|use|resume|continue|restart|show(?: me)?|back to|go back to)(?: the)? live view|live view(?: on| please)?|turn(?: the)? live view on)$/;
+// "resume live view": before v8.0 these meant the camera, which never started anything). v8.1:
+// "video mode" is the owner's own word for it (never "go live" or "live video": those are the camera).
+const LIVE_VIEW_ON = /^(?:(?:start|begin|turn on|switch on|use|resume|continue|restart|show(?: me)?|back to|go back to|go into|switch to)(?: the)? (?:live view|video mode)|(?:live view|video mode)(?: on| please)?|turn(?: the)? (?:live view|video mode) on)$/;
 // "Watch me", "keep watching": the live view too, but while Watch is on they mean "go on" (Optics).
 const LIVE_VIEW_WATCHING = /^(?:watch me|keep watching(?: me)?)$/;
-const LIVE_VIEW_OFF = /^(?:(?:stop|end|turn off|switch off)(?: the)? live view|live view off|turn(?: the)? live view off|that's enough|thats enough|that is enough)$/;
+const LIVE_VIEW_OFF = /^(?:(?:stop|end|turn off|switch off|exit|leave)(?: the)? (?:live view|video mode)|(?:live view|video mode) off|turn(?: the)? (?:live view|video mode) off|that's enough|thats enough|that is enough)$/;
 
 function hologramOf(n) {
   if (!/\bholo ?grams?\b|\bhollow ?grams?\b/.test(n)) return null;
@@ -130,7 +184,13 @@ const CAMERA_REQUEST = [
   /^whats (?:this|these)$/,
   /^what(?:'s| is) in front of me$/,
   /^what (?:brand|model|make) (?:is|are) (?:this|these)$/,
+  // v8.1 (E7): "take a picture", "take a photo of this": a Look, once the camera is on.
+  /^(?:take|snap|grab) (?:a |another |one more |a new |a quick )?(?:picture|photo|pic|snapshot)(?: of (?:this|that|it|me|these|what i'm holding|what i'm looking at))?$/,
 ];
+// v8.1 (E2): open Optics, free, no Look. Whole sentences only: never "open the camera app on my phone"
+// or "turn on the camera flash".
+const CAMERA_THING = '(?:the |my )?(?:camera|webcam|web cam|optics|camera view)';
+const OPEN_OPTICS = new RegExp(`^(?:optics|camera on|optics on|webcam on|(?:open|open up|launch|start|turn on|switch on|show me|bring up|pull up|fire up) ${CAMERA_THING}|(?:turn|switch) ${CAMERA_THING} on)$`);
 
 /** v8.0: words that start the live view (see the header). */
 export function isLiveViewRequest(text) {
@@ -139,14 +199,15 @@ export function isLiveViewRequest(text) {
 }
 
 /**
- * Voice Mode, Optics closed: "live view" (or "watch me", "keep watching") opens the camera by the
- * same rule as "what am I looking at?": never while a hologram or blueprint is on screen (the words
- * are then about it, and go to Jarvis: null), by voice alone only on a computer where the camera is
- * already allowed ('start'); else Jarvis asks for the tap ('need-tap'). Null for other words.
+ * Voice Mode, Optics closed: "live view" (or "watch me", "keep watching", v8.1 "video mode") opens
+ * the camera by the same rule as "what am I looking at?": never while a hologram or blueprint is on
+ * screen (the words are then about it, and go to Jarvis: null), by voice alone only on a computer
+ * where the camera is already allowed ('start'); else Jarvis asks for the tap ('need-tap'), or (v8.1)
+ * to be brought to the front while he is hidden ('need-front'). Null for other words.
  */
-export function voiceLiveViewRequest(text, { viewerOpen = false, cameraAllowed = 'unknown', ios = false } = {}) {
+export function voiceLiveViewRequest(text, { viewerOpen = false, cameraAllowed = 'unknown', ios = false, hidden = false } = {}) {
   if (viewerOpen || !isLiveViewRequest(text)) return null;
-  return cameraAllowed === 'granted' && !ios ? 'start' : 'need-tap';
+  return openRule({ cameraAllowed, ios, hidden }, 'start');
 }
 
 /** Words that ask Jarvis to look even while the camera is closed (see the header). */
@@ -160,9 +221,106 @@ export function isCameraRequest(text) {
  * 'prompt', 'denied' or 'unknown'); the camera opens by voice alone only where the browser allows
  * it without a tap: a computer where it was already allowed (iOS asks inside a tap every time).
  */
-export function voiceCameraRequest(text, { viewerOpen = false, cameraAllowed = 'unknown', ios = false } = {}) {
+export function voiceCameraRequest(text, { viewerOpen = false, cameraAllowed = 'unknown', ios = false, hidden = false } = {}) {
   if (viewerOpen || !isCameraRequest(text)) return null;
-  return cameraAllowed === 'granted' && !ios ? 'look' : 'need-tap';
+  return openRule({ cameraAllowed, ios, hidden }, 'look');
+}
+
+/** The camera opens by voice alone only on a computer where it is allowed and Jarvis is on screen. */
+function openRule({ cameraAllowed, ios, hidden }, yes) {
+  if (ios) return 'need-tap'; // iOS asks for the camera inside a tap, every time
+  if (hidden) return 'need-front'; // the camera never runs while Jarvis is hidden (camera.js)
+  return cameraAllowed === 'granted' ? yes : 'need-tap';
+}
+
+/**
+ * v8.1: "close the camera", "turn off the camera", "camera off" with Optics closed: explicit camera
+ * words only (never Optics' own bare "close", "close it" or "that's all").
+ */
+const CAMERA_OFF = new RegExp(`^(?:(?:close|turn off|switch off|shut off|shut down|stop|hide)(?: the| my)? (?:camera|webcam|web cam|optics|camera view)|(?:camera|webcam|optics) off|(?:turn|switch) (?:the |my )?(?:camera|webcam|optics) off)$`);
+export function isCameraCloseRequest(text) {
+  const n = normalizeOpticsText(text);
+  return !!n && n.length <= 60 && CAMERA_OFF.test(n);
+}
+
+/** v8.1: "open optics", "open the camera", "camera on" … and the camera switches, as whole sentences. */
+export function isOpticsOpenRequest(text) {
+  const n = normalizeOpticsText(text);
+  if (!n || n.length > 60) return false;
+  if (OPEN_OPTICS.test(n) || NAMED_CAMERA.test(n)) return true;
+  // "switch cameras", "use the front camera": Optics' own flip words open it too.
+  return FLIP.some((re) => re.test(n)) && /\bcam(?:era)?s?\b/.test(n);
+}
+
+/**
+ * v8.1 (E2), Optics closed: "open optics" and its cousins open the camera, free (no Look).
+ * 'open' on a computer where the camera is allowed and Jarvis is on screen; 'need-front' while Jarvis
+ * is hidden (the camera only runs on screen: a notification brings him up); 'need-tap' on an iPhone
+ * or where the camera isn't allowed yet ("Tap Look to turn the camera on."). Null for other words.
+ * Never from a reading the recognizer was less sure of (the caller passes the best reading only).
+ */
+export function voiceOpticsOpen(text, { cameraAllowed = 'unknown', ios = false, hidden = false } = {}) {
+  if (!isOpticsOpenRequest(text)) return null;
+  return openRule({ cameraAllowed, ios, hidden }, 'open');
+}
+
+/**
+ * v8.1 (E2): what Jarvis says once Optics opened by voice knows how its camera started (optics.js
+ * cameraDone): "Optics is on." only once the camera is live; "I can't find a camera." when there is
+ * none; the camera's own message otherwise (in use, blocked); "The camera is starting." when it takes
+ * longer than the caller waits.
+ */
+export function opticsOpenLine(result) {
+  const r = result && typeof result === 'object' ? result : {};
+  if (r.ok) return 'Optics is on.';
+  if (r.timeout) return 'The camera is starting.';
+  if (r.code === 'no-camera') return 'I can’t find a camera.';
+  if (r.paused) return 'Optics is open. The camera waits until I’m on screen.';
+  const why = typeof r.error === 'string' ? r.error.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+  return why && why !== 'Closed.' ? why : 'The camera couldn’t start.';
+}
+
+/**
+ * v8.1: the camera a word names ("logitech", "macbook", "built-in", "iphone", "external" …), among
+ * cameras.js's described cameras ({ id, name, label, detail, kind }), or null.
+ */
+export function findNamedCamera(cameras, name) {
+  const list = Array.isArray(cameras) ? cameras.filter((c) => c && c.id) : [];
+  const want = String(name || '').toLowerCase();
+  const text = (c) => `${c.name || ''} ${c.label || ''} ${c.detail || ''}`.toLowerCase();
+  const byKind = { macbook: 'builtin', mac: 'builtin', 'built-in': 'builtin', iphone: 'continuity', continuity: 'continuity', external: 'usb', usb: 'usb', 'studio display': 'display' };
+  if (want === 'desk view') return list.find((c) => /desk view/.test(text(c))) || null;
+  if (want === 'iphone' || want === 'continuity') return list.find((c) => c.kind === 'continuity' && !/desk view/.test(text(c))) || list.find((c) => /iphone/.test(text(c))) || null;
+  const kind = byKind[want];
+  return (kind && list.find((c) => c.kind === kind)) || (want && list.find((c) => text(c).includes(want))) || null;
+}
+
+/** A label as the owner would say it: lower case, words only ("USB-C charger" -> "usb c charger"). */
+function labelWords(label) {
+  return normalizeOpticsText(label);
+}
+
+/**
+ * v8.1 (E1): a question while a Look sits in its card beside the live video. 'card' (a follow-up on
+ * that picture: no new frame is sent) or 'look' (a new Look with the newest frame).
+ *   - "look again", "new look", "what about now", "take a picture": always a new Look;
+ *   - "tell me more", "what's this part?", "about the picture …", or a question naming one of the
+ *     card's labels: the card;
+ *   - anything else: the card while the scene is the card's (sceneChanged false: the live picture's
+ *     64 × 36 thumbnail against the card's, at Watch's thresholds), else a new Look.
+ * `cmd`: matchOpticsCommand(text, { frozen: true }) for these words (or null).
+ */
+export function asideQuestionRoute(text, { cmd = null, labels = [], sceneChanged = false } = {}) {
+  if (cmd && cmd.action === 'look' && cmd.fresh) return 'look';
+  if (cmd && (cmd.action === 'more' || cmd.action === 'part')) return 'card';
+  const n = normalizeOpticsText(text);
+  if (/^(?:about|on|regarding|back to) (?:the|this|that) (?:picture|photo|image|look)\b/.test(n) || /\b(?:in|from|on|of) (?:the|this|that) (?:picture|photo|image)\b/.test(n)) return 'card';
+  const padded = ` ${n} `;
+  for (const label of Array.isArray(labels) ? labels : []) {
+    const w = labelWords(label);
+    if (w.length >= 3 && padded.includes(` ${w} `)) return 'card';
+  }
+  return sceneChanged ? 'look' : 'card';
 }
 
 /**
@@ -183,8 +341,15 @@ export function matchOpticsCommand(text, { frozen = false } = {}) {
   if (LIVE_VIEW_WATCHING.test(n)) return { action: 'liveview', on: true, watching: true };
   if (WATCH_OFF.test(n)) return { action: 'watch', on: false };
   if (WATCH_ON.test(n)) return { action: 'watch', on: true };
+  if (FRESH.test(n)) return { action: 'look', question: FRESH_LOOK_QUESTION, explicit: true, fresh: true };
+  if (FRESH_QUESTION.some((re) => re.test(n))) return { action: 'look', question: words, explicit: true, fresh: true };
+  if (EXPAND.test(n)) return { action: 'expand' };
+  if (ASIDE.test(n)) return { action: 'aside' };
+  if (CLOSE_CARD.test(n)) return { action: 'close-card' };
   for (const re of CLOSE) if (re.test(n)) return { action: 'close' };
   for (const re of LIVE) if (re.test(n)) return { action: 'live' };
+  const named = NAMED_CAMERA.exec(n);
+  if (named) return { action: 'camera', name: named[1].replace(/^built ?in$/, 'built-in') };
   for (const re of FLIP) {
     const m = re.exec(n);
     if (m) {

@@ -14,7 +14,9 @@
 //                               never "Live view on"
 //   optics-live-voice-words     Mac, Voice Mode over Optics: "live view" after a question goes back
 //                               to Live (not "I'm already watching"); "show me the live view" and
-//                               "resume live view" start it; "go live" is the camera's
+//                               "resume live view" start it; "go live" is the camera's. v8.1: on a Mac
+//                               the question's Look sits aside and the looks go on; the pause is for
+//                               the Look expanded ("expand the picture"), and "live view" puts it back
 //   optics-live-voice-notices   Mac, Voice Mode, a session shortened to 8 s: the pause at the limit
 //                               and the end of the session are said aloud, not only shown
 //   optics-live-bell            Mac, replies not read aloud: the notify cue at most once every 15 s,
@@ -362,10 +364,18 @@ export default [
       await waitRequests(t, 2);
       await t.step('"live view" after a question: back to Live, and the looks go on (never "I\'m already watching" while paused)', async () => {
         await sayInOptics(t, page, 'What am I looking at?');
-        await t.waitFor(async () => (await attr(page, 'liveview-paused')) === 'look', { timeout: 15000, message: 'paused for the Look' });
-        t.assert((await t.text(page.locator('.optics-pill-text'))) === 'VIEW PAUSED', `the pill says it is paused (${await t.text(page.locator('.optics-pill-text'))})`);
+        // v8.1 (changed on purpose): on a Mac the Look sits aside beside the live video, and the live
+        // view keeps looking; it pauses only while the Look fills the stage (expanded).
+        await t.waitFor(async () => (await attr(page, 'aside')) === 'true', { timeout: 15000, message: 'the Look aside' });
         await waitAnswer(t);
         await voiceIdle(t, page); // the Look's answer said first: only what comes after the words counts
+        t.assert((await attr(page, 'liveview-paused')) === '', `the live view did not pause for the Look aside (${await attr(page, 'liveview-paused')})`);
+        const during = liveReqs(t).length;
+        await waitRequests(t, during + 1, 8000);
+        await sayInOptics(t, page, 'Expand the picture.');
+        await t.waitFor(async () => (await attr(page, 'liveview-paused')) === 'look', { timeout: 15000, message: 'paused for the Look expanded' });
+        t.assert((await t.text(page.locator('.optics-pill-text'))) === 'VIEW PAUSED', `the pill says it is paused (${await t.text(page.locator('.optics-pill-text'))})`);
+        await voiceIdle(t, page);
         const n = (await said(page)).length;
         const before = liveReqs(t).length;
         await sayInOptics(t, page, 'Live view.');
@@ -376,6 +386,7 @@ export default [
         t.assert(!reply.some((s) => /already watching/i.test(s)), `not "I'm already watching" (${JSON.stringify(reply)})`);
         t.assert(reply.some((s) => /^Back to the live view\.$/.test(s)), `says so (${JSON.stringify(reply)})`);
         t.assert((await attr(page, 'frozen')) !== 'true', 'the Look is put away');
+        t.assert((await attr(page, 'aside')) === 'true', 'back in its card beside the live video');
       });
       for (const words of ['Show me the live view.', 'Resume live view.']) {
         await t.step(`"${words}" with the live view off: it starts`, async () => {
@@ -399,7 +410,11 @@ export default [
         await sayInOptics(t, page, 'Go live.');
         const reply = await nextSaid(t, page, n, '"go live"');
         note(t, `"go live": ${JSON.stringify(reply)}`);
-        t.assert(reply.some((s) => /^This is the camera\.$/.test(s)), `"This is the camera." (${JSON.stringify(reply)})`);
+        // v8.1 (changed on purpose): on a Mac the question's Look is still aside beside the live video,
+        // so the camera's words say that the live video is on and the picture stays beside it.
+        const camera = /^This is the camera\.$|^The live video is on\. The picture stays beside it\.$/;
+        t.assert(reply.some((s) => camera.test(s)), `the camera's words (${JSON.stringify(reply)})`);
+        t.assert(!reply.some((s) => /live view/i.test(s)), `never a claim about the live view (${JSON.stringify(reply)})`);
         t.assert((await attr(page, 'liveview')) === 'on', 'the live view goes on');
       });
       await page.locator(tid('optics-live-pill')).click();

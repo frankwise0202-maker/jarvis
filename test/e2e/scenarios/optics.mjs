@@ -271,10 +271,13 @@ export async function checkCard(t, label, kind, page = t.page) {
   return c;
 }
 
-/** The pinned labels' plates: pairs that overlap, and plates that cover another object's dot. */
+/**
+ * The pinned labels' plates: pairs that overlap, and plates that cover another object's dot. (v8.1:
+ * measured in the pins' own layer: the stage, or the Look's card while it sits aside on a Mac.)
+ */
 export function pinClashes(page) {
   return page.evaluate(() => {
-    const stage = document.querySelector('.optics-stage').getBoundingClientRect();
+    const stage = document.querySelector('.optics-pins').getBoundingClientRect();
     const plates = [...document.querySelectorAll('[data-testid="optics-pin"]')].map((e) => {
       const b = e.getBoundingClientRect();
       return { text: e.textContent, x: b.x, y: b.y, r: b.right, b: b.bottom, ax: stage.x + +e.dataset.x, ay: stage.y + +e.dataset.y };
@@ -295,12 +298,15 @@ export function pinClashes(page) {
   });
 }
 
-/** Checks the pins: exact frame coordinates from the scene, mapped through the frozen view. */
+/**
+ * Checks the pins: exact frame coordinates from the scene, mapped through the frozen view (v8.1: the
+ * pins' own layer, the stage or the Look's card aside).
+ */
 export async function checkPins(t, frame, page = t.page) {
   const pins = await page.locator(tid('optics-pin')).evaluateAll((els) => els.map((e) => ({ text: e.textContent, x: +e.dataset.x, y: +e.dataset.y, fx: +e.dataset.frameX, fy: +e.dataset.frameY })));
   const expected = sceneLabels(frame);
   t.assert(pins.length === expected.length, `${expected.length} pins expected, got ${pins.length}`);
-  const box = await page.locator('.optics-stage').evaluate((el) => {
+  const box = await page.locator('.optics-pins').evaluate((el) => {
     const r = el.getBoundingClientRect();
     return { w: r.width, h: r.height };
   });
@@ -964,7 +970,8 @@ export default [
         const follow = t.requests('lead').at(-1).body.messages.at(-1);
         const words = (Array.isArray(follow.content) ? follow.content : []).filter((b) => b.type === 'text').map((b) => b.text).join(' ');
         t.assert(/Tell me more/.test(words), `the follow-up is "Tell me more" (${words.slice(-80)})`);
-        t.assert(looks() === 1 && (await page.locator(tid('optics')).getAttribute('data-frozen')) === 'true', 'no new Look; the answer stays');
+        // v8.1: on a Mac the Look sits aside beside the live video (data-aside), still on screen.
+        t.assert(looks() === 1 && (await page.locator(tid('optics')).getAttribute('data-aside')) === 'true', 'no new Look; the answer stays (aside)');
         const body = page.locator(tid('optics-answer-text'));
         await body.evaluate((b) => (b.scrollTop = 0));
         const d0 = await body.evaluate((b) => ({ sh: b.scrollHeight, ch: b.clientHeight }));
@@ -973,7 +980,7 @@ export default [
         await page.keyboard.press('Space');
         await page.waitForTimeout(1200);
         t.assert(looks() === 1, `Space in the answer sends no Look (${looks()})`);
-        t.assert((await page.locator(tid('optics')).getAttribute('data-frozen')) === 'true', 'the answer is still on screen');
+        t.assert((await page.locator(tid('optics')).getAttribute('data-aside')) === 'true', 'the answer is still on screen (aside)');
         const top = await body.evaluate((b) => b.scrollTop);
         t.note(`answer ${d0.sh}/${d0.ch} px; Space scrolled it to ${top}`);
         if (d0.sh > d0.ch + 20) t.assert(top > 0, `Space scrolls a long answer (${top})`);

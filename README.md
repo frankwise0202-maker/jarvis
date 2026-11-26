@@ -857,6 +857,20 @@ browser asks for permission.
   picture; no new picture is taken. Each new question scrolls to the top of the answer so you
   can watch Jarvis answer it, and the answer's heading says **ANALYZING** while it works. **Live**
   takes you back to the camera (on a phone it's next to the question box).
+- **Beside the live camera** (computers). On a computer the camera doesn't freeze after a Look:
+  the picture, its labels and the answer move into a card at the side while the camera stays
+  live, so you can keep holding things up as you read (and the live view, when it's on, keeps
+  watching). **Expand** (or "expand the picture") shows the picture big with the live camera in a
+  small tile in the corner; **Live**, a click on the tile or "put the picture aside" puts it back
+  in its card; **Close** ("close the picture") puts the card away and the camera stays on (the
+  Look stays in the chat and in the Optics log).
+  - **The same picture or a new Look?** Tell me more, What's this part?, a question that names one
+    of the labels, and one "about this picture" are about the picture in the card. Any other
+    question goes by what the camera sees now: about the same scene (Watch's measure: no more than
+    6% of the picture changed) and it's a follow-up on that picture, with no new picture taken; a
+    new scene and Jarvis takes a new Look and says "New look." "Look again", "new look", "take a
+    picture" and "what about now?" always take a new one. Each answer is marked: **NEW LOOK** on
+    a new picture's answer, **ABOUT THIS PICTURE** on each follow-up.
 - **Which camera.** The button under **OPTICS** names the camera in use; click or tap it to see
   every camera this device has: your MacBook's own camera, a **Logitech webcam** or any other USB or
   Continuity camera, and on an iPhone **Back**, **Back Ultra Wide**, **Back Telephoto** and
@@ -890,19 +904,25 @@ browser asks for permission.
     is); on an iPhone Jarvis asks you to tap **Look**, and the live view starts with that tap.
     Jarvis says "Live view on" only once it is: if the hour's $1 is already spent, or another app is
     using the camera, he tells you that instead.
-  - **Questions** work as always ("what brand is this?"): a Look on your usual model, about 3¢.
-    While its picture and answer are on screen the live view pauses ("Paused while you look at
-    this") and goes on when you tap **Live** or say "live view".
-  - **$1 an hour for the looks.** The meter is always on screen ("LIVE VIEW · 12 min · 9¢ this hour
-    · limit $1"). The hour counts the last 60 minutes across every Jarvis tab and window on the
-    device, and a reload doesn't reset it (on an iPhone the Home Screen app and Safari keep separate
-    storage, so each counts its own hour). From 90¢ Jarvis looks only every 5 seconds, and his looks
-    never take the hour past $1: there the live view pauses and tells you when it can go on ("It
-    can go on at 2:41 PM"), with a **Resume** button that works from then (or say "resume live
-    view"). Questions you ask during the live view count in the hour too, even if you tap **Live**
-    or close Optics before the answer ends, but a question is always answered: after one at the
-    limit the meter can read a few cents over $1 ("$1.03 this hour"), and the live view waits until
-    the hour is back under it. The looks cost about 30–50¢ an hour; questions about 3¢ each.
+  - **Questions** work as always ("what brand is this?"): a Look on your usual model, about 3¢,
+    kept short while the live view is on (a quick answer). On a computer the Look sits in its card
+    beside the live camera and the live view keeps watching; it pauses only while a picture fills
+    Optics (one you expanded, or a Look on a phone): "Paused while you look at this", until you tap
+    **Live** or say "live view".
+  - **$1 an hour, questions included.** The meter is always on screen ("LIVE VIEW · 12 min · 9¢
+    this hour · limit $1"). The hour counts the last 60 minutes across every Jarvis tab and window
+    on the device, and a reload doesn't reset it (each device has its own hour, and on an iPhone the
+    Home Screen app and Safari keep separate storage, so each counts its own). From 90¢ Jarvis looks
+    only every 5 seconds, and his looks never take the hour past $1: there the live view pauses and
+    tells you when it can go on ("It can go on at 2:41 PM"), with a **Resume** button that works
+    from then (or say "resume live view"). Questions you ask while it's on count in the same hour,
+    even if you tap **Live** or close Optics before the answer ends. Before each request of an
+    answer Jarvis sets aside about the most it could cost (30¢ or so: a long answer with web
+    searches) and gives back what it didn't use as soon as the answer is in. When that would take
+    the hour past $1 (from about 70¢ spent) he doesn't send it and says so, out loud where he
+    speaks: "That would take the live view past its dollar this hour. It can go on at 2:41 PM, or
+    say 'stop live view' and ask again." With the live view off, questions are as usual. The looks
+    cost about 30–50¢ an hour; questions about 3¢ each.
   - **An hour at most.** After 60 minutes it stops by itself: tap **Live view** to keep going. In
     Voice Mode, or with replies read aloud, Jarvis also says it when the live view stops or pauses
     by itself (the hour is over, the $1 is reached, the camera was unplugged), so his silence never
@@ -925,9 +945,11 @@ browser asks for permission.
   so and offers **Try again** or **Use the camera**.
 - **On another screen.** "Put the camera on my other screen" or "float the camera" shows the live
   camera on your other monitor or in a floating panel (see Screens above). It's a view: Look,
-  Watch and the labels stay here in Optics. With a Look on screen (the frozen picture and its
-  labels), "put this on my other screen" sends that Look there, picture, labels and answer;
-  "bring it back" shows it here again.
+  Watch and the labels stay here in Optics. With a Look on screen (its picture and labels), "put
+  this on my other screen" (or the card's **Other screen**) sends that Look there, picture, labels
+  and answer, and Optics stays live here with the camera on: the card folds away and its row in
+  the Optics log says ON YOUR OTHER SCREEN. "Bring it back" opens its card here again. (A past
+  Look you reopened with the camera off goes there and Optics closes, as before.)
 - **In Voice Mode**, tap **Look** to open the camera over Voice Mode and just talk: "What am I
   looking at?", "What is this?", "Tell me more", "Hologram of this", "Flip", "Close the camera".
   Jarvis answers out loud and pins the labels too. On a Mac where you have allowed the camera,
@@ -936,7 +958,33 @@ browser asks for permission.
   seeing does this ("What do you see?", "Look at this", "What am I holding?"): a longer one that
   just starts the same way, like "What do you see as the biggest risk in my plan?", is an
   ordinary question for Jarvis, and the camera stays off. (While a hologram
-  is on screen, "what is this?" is about the hologram, not the camera.)
+  is on screen, "what is this?" is about the hologram, not the camera.) The same goes for "look"
+  in Optics: "look", "look here", "take a look" and "look at this" are a Look, while "look up the
+  weather", "look, I think we should wait" or "look at my calendar for Friday" go to Jarvis.
+- **Open by voice.** "Open optics", "open the camera" or "camera on" opens Optics without taking a
+  picture, so nothing is spent; "switch cameras" or "use the Logitech camera" opens it on that
+  camera. In Voice Mode on a Mac where you've allowed the camera, Optics opens over Voice Mode, and
+  Jarvis says "Optics is on." once the camera is live (or why not: "I can't find a camera.", or
+  that another app is using it). If Jarvis isn't on screen (another app is in front), the camera
+  can't run: he says so and shows a notification, and a click on it brings him up with Optics
+  open. On an iPhone, or before you've allowed the camera, he says "Tap Look to turn the camera
+  on." Typed in the chat, the words open Optics on any device. "Close the camera" closes it (with Optics
+  closed it turns off a camera you put on your other screen). "Video mode" is the live view:
+  "video mode", "go into video mode", "stop video mode". With a laptop hologram on screen, "open
+  the camera" shows the hologram's camera, and Jarvis reminds you to say "open Optics" for yours.
+- **Research this.** Hold something up and say or type "research this" (or "look this up", "dig
+  into this", "find out more about this"). Jarvis names it and says what each way costs before
+  anything is spent: "Research this coffee mug? A quick answer with a web search, about 10¢. A
+  research mission with 8 agents, about $1.70. Or the home base can do it in the background, up
+  to $1.25." Say or tap **Quick**, **Mission**, **Home base** or **Cancel** (no home base linked:
+  the first two). Mission and Home base go through the 2-second check first. The quick answer is
+  a follow-up in this conversation, so it sees the picture; the mission and the home base get the
+  thing in words (its label and the answer's first sentence). With nothing looked at yet, Jarvis
+  looks first ("Let me look first: about 3¢.") and then asks. "Research this in the background"
+  offers only the home base. Outside Optics, "this" is the hologram on screen or what you were
+  just asking about. With the live view on, the quick answer counts in its $1 an hour and the
+  mission and the home base don't (the offer says so); when a quick answer wouldn't fit in the
+  hour, the offer says that instead of offering it.
 - **Off means off.** The camera runs only while Optics (or a camera view you put on another
   screen) is open and on screen: the red **LIVE** pill shows it (tap it to turn the camera off),
   and it turns off by itself when you switch apps, lock the phone, minimize that window, or when a
@@ -1067,7 +1115,9 @@ from the credit in your account. Rough examples:
 | A follow-up about the same picture (Tell me more, What's this part?) | about the same as a quick question |
 | Hologram of this | the price of a hologram, about 10–30¢ (shown on the button) |
 | Watch | about 0.6¢ each time Jarvis looks again, at most about 17¢ for a 5-minute session; up to 60 looks a day |
-| Live view (Optics) | about 30–50¢ an hour for the looks (one a second on Claude Haiku 5.5), which never take the hour past $1; questions about 3¢ each, counted in the hour and always answered (so a question at the limit can take the hour a few cents over $1) |
+| Live view (Optics) | about 30–50¢ an hour for the looks (one a second on the small, cheap model), which never take the hour past $1; questions asked while it's on (about 3¢ each, kept short) count in the same hour, and one whose worst case (about 30¢, set aside while it's answered) would take it past $1 isn't sent: Jarvis says so. Each device has its own hour (on an iPhone the Home Screen app and Safari each have their own) |
+| Research this (Optics) | the price is said first, and nothing is spent until you pick: a quick answer with a web search about 10¢ (6–16¢); a research mission at your team size and depth (8 agents at Balanced, about $1.70); the home base up to $1.25 a job ($3 in depth). With the live view on, only the quick answer counts in its hour |
+| Opening Optics by voice ("open optics", "camera on") | free (no picture is taken) |
 | The natural voice | free (it runs on your device) |
 
 For example, $200 of credit a month covers roughly 100 Balanced swarm missions (more if some
