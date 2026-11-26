@@ -2,10 +2,18 @@
 // (assets/wake-worklet.js: 16 kHz, the clap detector, frames for the "Hey Jarvis" worker), or a
 // ScriptProcessor running the same code on the page where AudioWorklet is missing.
 //
-//   const cap = createStandbyCapture({ onClap, onState, processed });
+//   const cap = createStandbyCapture({ onClap, onState, processed, device, onRelease });
 //                            processed (v7.7, hearing through the home base): ask the browser for its
 //                            processed sound (echo cancellation, noise suppression, auto gain), as for a
 //                            call; Standby's detectors keep the raw sound (the default)
+//                            device (v8.1, Settings → Voice → Microphone and speaker): () -> { id, processing }
+//                            | null, asked at each start: the microphone (deviceId exact; '' = the default)
+//                            and its echo cancellation, noise suppression and auto gain; null = as before.
+//                            A chosen microphone that isn't there (NotFoundError, OverconstrainedError) falls
+//                            back to the default one (state info and cap.device say fellBack: true) instead
+//                            of 'no-mic'
+//                            onRelease({ id, label }) (v8.1): the microphone was let go (a Bluetooth one makes
+//                            George wait a moment: the speakerphone switches back to its music mode)
 //   cap.prepare()            inside a tap: create/resume the AudioContext (iOS starts audio only there)
 //   await cap.start({ clap, sensitivity, word })  -> { ok: true } | { ok: false, reason }
 //                            reason: 'unsupported' | 'denied' | 'no-mic' | 'busy' | 'error'
@@ -16,6 +24,7 @@
 //                            off); the AudioContext stays for the next start (no tap needed then)
 //   cap.close()              everything
 //   cap.state                'off' | 'starting' | 'live' | 'error'; cap.live: a track is live now
+//   cap.device               v8.1: the live track's microphone { id, label, fellBack }, or null
 //
 // Nothing is recorded: the audio exists only as it flows through the detector and, with the wake
 // word on, the worker's models. Echo cancellation, noise suppression and auto gain are asked off
@@ -23,8 +32,12 @@
 
 import { WAKE_WORKLET_PATH } from '../../lib/wake/catalog.js';
 import { createWakeTap } from '../../lib/wake/tap.js';
+import { audioConstraints } from '../../lib/audio-devices.js';
 
-export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WORKLET_PATH, onClap = () => {}, onState = () => {}, processed = false } = {}) {
+const RAW = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+const PROCESSED = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+
+export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WORKLET_PATH, onClap = () => {}, onState = () => {}, processed = false, device = null, onRelease = null } = {}) {
   let ctx = null;
   let moduleReady = null; // Promise of addModule (per context)
   let stream = null;
@@ -36,6 +49,23 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
   let cfg = { clap: true, sensitivity: 'normal', word: false };
   let state = 'off';
   let gen = 0; // a start that is overtaken by stop() is undone
+  let fellBack = false; // v8.1: the chosen microphone wasn't there: the default one listens
+
+  /** v8.1: the microphone asked for (Settings → Voice → Microphone and speaker), or null: as before. */
+  function wanted() {
+    if (typeof device !== 'function') return null;
+    try {
+      const w = device();
+      return w && typeof w === 'object' ? w : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function audioRequest(want) {
+    if (!want) return { ...(processed ? PROCESSED : RAW), channelCount: { ideal: 1 } };
+    return audioConstraints(want.id ? { id: want.id } : null, want.processing || (processed ? PROCESSED : RAW));
+  }
 
   const Ctor = () => scope.AudioContext || scope.webkitAudioContext || null;
 
@@ -84,17 +114,31 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
     setState('starting');
     if (!ctx || ctx.state === 'closed') prepare();
     let media;
+    const audio = audioRequest(wanted());
+    fellBack = false;
     try {
-      media = await scope.navigator.mediaDevices.getUserMedia({
-        audio: processed ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: { ideal: 1 } } : { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 1 } },
-        video: false,
-      });
+      media = await scope.navigator.mediaDevices.getUserMedia({ audio, video: false });
     } catch (err) {
-      if (my !== gen) return { ok: false, reason: 'stopped' };
-      const name = String((err && err.name) || '');
-      const reason = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : name === 'NotFoundError' || name === 'OverconstrainedError' ? 'no-mic' : name === 'NotReadableError' || name === 'AbortError' ? 'busy' : 'error';
-      setState('error', { reason });
-      return { ok: false, reason };
+      let failure = err;
+      let name = String((err && err.name) || '');
+      if (my === gen && audio.deviceId && (name === 'NotFoundError' || name === 'OverconstrainedError')) {
+        // v8.1: the chosen microphone isn't there (unplugged, turned off): the default one listens meanwhile.
+        const { deviceId, ...rest } = audio;
+        try {
+          media = await scope.navigator.mediaDevices.getUserMedia({ audio: rest, video: false });
+          fellBack = true;
+          failure = null;
+        } catch (err2) {
+          failure = err2;
+          name = String((err2 && err2.name) || '');
+        }
+      }
+      if (failure) {
+        if (my !== gen) return { ok: false, reason: 'stopped' };
+        const reason = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : name === 'NotFoundError' || name === 'OverconstrainedError' ? 'no-mic' : name === 'NotReadableError' || name === 'AbortError' ? 'busy' : 'error';
+        setState('error', { reason });
+        return { ok: false, reason };
+      }
     }
     if (my !== gen) {
       stopTracks(media);
@@ -162,8 +206,8 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
         }
       });
     }
-    setState('live');
-    return { ok: true };
+    setState('live', fellBack ? { fellBack: true } : {});
+    return fellBack ? { ok: true, fellBack: true } : { ok: true };
   }
 
   function fireClap(ev) {
@@ -242,11 +286,39 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
         /* closed */
       }
     }
-    if (stream) stopTracks(stream);
+    let released = null;
+    if (stream) {
+      released = trackInfo(stream);
+      stopTracks(stream);
+    }
     node = source = sink = tap = channel = stream = null;
+    if (released && typeof onRelease === 'function') {
+      try {
+        onRelease(released);
+      } catch {
+        /* decoration */
+      }
+    }
     const was = state;
     state = 'off';
     if (!quiet && was !== 'off') setState('off');
+  }
+
+  /** v8.1: the live track's microphone: { id, label, fellBack }. */
+  function trackInfo(s) {
+    try {
+      const t = s && s.getAudioTracks()[0];
+      if (!t) return null;
+      let id = '';
+      try {
+        id = String((t.getSettings && t.getSettings().deviceId) || '');
+      } catch {
+        id = '';
+      }
+      return { id, label: String(t.label || ''), fellBack };
+    } catch {
+      return null;
+    }
   }
 
   function close() {
@@ -276,6 +348,9 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
     },
     get live() {
       return !!stream && stream.getAudioTracks().some((t) => t.readyState === 'live');
+    },
+    get device() {
+      return stream ? trackInfo(stream) : null;
     },
     get context() {
       return ctx;

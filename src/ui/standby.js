@@ -5,7 +5,13 @@
 //
 //   const standby = createStandby({ getSettings, onSettingsChange, createCore, wakeLock,
 //                                   createCapture, createWakeWord, statusLine, stateWord, chronometer,
-//                                   onWake, onExit, unlock, pauseWhenHidden, isIOS, createLock, bargeIn });
+//                                   onWake, onExit, unlock, pauseWhenHidden, isIOS, audio, createLock, bargeIn });
+//   audio (v8.1, a computer; src/platform/audio-devices.js through app.js): { pill(captureDevice) -> { name,
+//                         gone } | null, wakeKey(fellBack) -> string, subscribe(fn) -> off, check(),
+//                         onWoke(fn) -> off, firstTimeLine() -> Promise<string> }: the pill names the
+//                         microphone ("LISTENING ON THE MAC’S MICROPHONE · SPEAKERPHONE DISCONNECTED"), the
+//                         capture moves when the chosen microphone goes and comes back, and starts again after
+//                         the Mac slept; once, a line about setting up a Bluetooth speakerphone
 //   standby.enter()       inside a tap where possible (iOS starts audio only there): show it, listen
 //   standby.enter({ again: true })   v7.8.1: entered again without a tap (Voice Mode closed into Standby):
 //                         unlock({ tap: false }), so what the voice knows about stuck audio stays
@@ -21,6 +27,8 @@
 //
 // The page hidden: on a phone (pauseWhenHidden) listening pauses and comes back when Jarvis is on
 // screen again (iOS stops it anyway); on a Mac it keeps listening in a background tab or window.
+// v8.1: a capture that fails (the microphone busy or gone, its track ended) is tried again with back-off:
+// 2 s, 5 s, 15 s, 60 s, then every 5 minutes (src/lib/audio-devices.js), also in the background on a Mac.
 //
 // v8.1 (SPEC §28.4, §28.5):
 //   createLock(onChange)  one Jarvis per Mac answers (A9): platform/standby-lock.js. Standby takes the lock
@@ -37,6 +45,7 @@
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
 import { CLAP_SENSITIVITIES } from '../lib/wake/clap.js';
+import { createBackoff, captureRetryable } from '../lib/audio-devices.js';
 
 const SHIFT_MS = 60000;
 const DEEP_DIM_MS = 5 * 60000;
@@ -67,6 +76,7 @@ export function createStandby(deps = {}) {
     unlock = () => {},
     pauseWhenHidden = false,
     isIOS = false,
+    audio = null,
     createLock = null,
     bargeIn = null,
   } = deps;
@@ -90,6 +100,12 @@ export function createStandby(deps = {}) {
   let prevFocus = null;
   let kept = false; // v8.1: the microphone stayed on through the woken session (barge-in)
   const els = {};
+  // v8.1: the capture's retries (2 s, 5 s, 15 s, 60 s, then every 5 minutes), the microphone it started on,
+  // and the watchers of the chosen devices and of the Mac's sleep while Standby is open.
+  const retry = createBackoff(() => retryCapture());
+  let startedKey = null;
+  let audioOffs = [];
+  let tipAsked = false;
   const lock = typeof createLock === 'function' ? safeLock(() => createLock((st) => onLockChange(st))) : null;
 
   const settings = () => {
@@ -120,9 +136,10 @@ export function createStandby(deps = {}) {
     els.pillText = h('span', { class: 'standby-pill-text' });
     els.pill = h('p', { class: 'standby-pill', attrs: { 'data-testid': 'standby-pill', role: 'status' } }, els.pillDot, els.pillText);
     els.hint = h('p', { class: 'standby-hint', attrs: { 'data-testid': 'standby-hint' } });
+    els.tip = h('p', { class: 'standby-hint standby-tip', hidden: true, attrs: { 'data-testid': 'standby-tip' } });
     els.useHere = h('button', { class: 'btn btn-sm standby-use-here', type: 'button', hidden: true, attrs: { 'data-testid': 'standby-use-here' }, on: { click: onUseHere } }, h('span', { text: 'Use this window' }));
     els.leave = h('span', { class: 'standby-leave', attrs: { 'aria-hidden': 'true' } }, icon('moon', { size: 14 }), h('span', { text: 'Tap anywhere to leave Standby' }));
-    const foot = h('div', { class: 'standby-foot' }, els.pill, els.hint, els.useHere, els.leave);
+    const foot = h('div', { class: 'standby-foot' }, els.pill, els.hint, els.tip, els.useHere, els.leave);
     els.live = h('p', { class: 'visually-hidden', attrs: { 'aria-live': 'polite', 'data-testid': 'standby-announcer' } });
     root = h(
       'div',
@@ -247,6 +264,7 @@ export function createStandby(deps = {}) {
       offs = [listenOn(document, 'visibilitychange', onVisibility), listenOn(window, 'pagehide', onPageHide), listenOn(document, 'keydown', onKey, true)];
     }
     if (typeof onSettingsChange === 'function' && !unsubSettings) unsubSettings = onSettingsChange(() => applySettings());
+    watchAudio();
     if (lock) lock.acquire(); // v8.1: one window listens (its answer starts listening: onLockChange)
     render();
     announce(`Standby. ${listenSummary()}`);
@@ -295,6 +313,15 @@ export function createStandby(deps = {}) {
     clockTimer = shiftTimer = dimTimer = 0;
     for (const off of offs) off();
     offs = [];
+    retry.cancel();
+    for (const off of audioOffs) {
+      try {
+        off();
+      } catch {
+        /* ignore */
+      }
+    }
+    audioOffs = [];
     if (unsubSettings) {
       try {
         unsubSettings();
@@ -429,9 +456,12 @@ export function createStandby(deps = {}) {
       return;
     }
     if (kept) {
-      // Back from a session that kept the microphone (barge-in): the same capture listens on.
+      // Back from a session that kept the microphone (barge-in): the same capture listens on, unless the
+      // chosen microphone moved meanwhile (then it starts again on the right one).
       kept = false;
-      if (capture.live === true && listen === 'live') {
+      const key = audio ? safeCall(() => audio.wakeKey(false), null) : null;
+      const moved = startedKey !== null && key !== null && key !== startedKey;
+      if (capture.live === true && listen === 'live' && !moved) {
         capture.configure({ clap: wantClap, sensitivity: sensitivity() });
         if (wantWord) {
           ensureWord();
@@ -471,6 +501,7 @@ export function createStandby(deps = {}) {
     if (!res.ok) {
       if (res.reason !== 'stopped') {
         listen = res.reason === 'needs-tap' ? 'needs-tap' : res.reason || 'error';
+        if (captureRetryable(listen)) retry.failed(); // v8.1: busy or gone: tried again with back-off
         render();
       }
       return;
@@ -484,20 +515,72 @@ export function createStandby(deps = {}) {
       return;
     }
     listen = 'live';
+    retry.succeeded();
+    startedKey = audio ? safeCall(() => audio.wakeKey(!!res.fellBack), null) : null;
     connectWord();
     render();
+    firstTimeTip();
   }
 
   function onCaptureState(info) {
     if (phase !== 'open' || !info) return;
     if (info.state === 'off' && info.reason === 'ended' && listen === 'live') {
-      // The system took the microphone (a call, another app): try again when it is ours again.
+      // The system took the microphone (a call, another app) or it went away (the speakerphone turned
+      // off): try again with back-off (v8.1; before, once after 1.5 s and only on screen).
       listen = 'paused';
       render();
-      setTimeout(() => {
-        if (phase === 'open' && listen === 'paused' && !document.hidden) startListening();
-      }, 1500);
+      if (audio) safeCall(() => audio.check()); // gone? the device watcher decides (two enumerations)
+      retry.failed();
     }
+  }
+
+  /** v8.1: a retry is due: start again unless Standby closed, listens already, or waits for the page (a phone). */
+  function retryCapture() {
+    if (phase !== 'open') return;
+    if (listen !== 'paused' && !captureRetryable(listen)) return;
+    if (pauseWhenHidden && document.hidden) return; // a phone: onVisibility starts it again
+    startListening();
+  }
+
+  /**
+   * v8.1: while Standby is open, follow the chosen microphone (gone: the default at once; back: the chosen
+   * one), say on the pill which one listens, and start the capture again after the Mac slept.
+   */
+  function watchAudio() {
+    if (!audio || audioOffs.length) return;
+    const restartIfMoved = () => {
+      if (phase !== 'open') return;
+      const key = safeCall(() => audio.wakeKey(false), null);
+      const moved = startedKey !== null && key !== null && key !== startedKey;
+      if (moved && (listen === 'live' || captureRetryable(listen) || listen === 'paused')) {
+        startListening();
+        return;
+      }
+      render();
+    };
+    const off1 = safeCall(() => audio.subscribe(restartIfMoved), null);
+    const off2 = safeCall(
+      () =>
+        audio.onWoke(() => {
+          // The Mac slept: whatever the capture held may be stale; start it again (a phone pauses instead).
+          if (phase === 'open' && (listen === 'live' || listen === 'paused' || captureRetryable(listen)) && !(pauseWhenHidden && document.hidden)) startListening();
+        }),
+      null,
+    );
+    audioOffs = [off1, off2].filter((f) => typeof f === 'function');
+  }
+
+  /** v8.1: once on this device, nothing chosen and a Bluetooth output: how to set it up. */
+  function firstTimeTip() {
+    if (!audio || tipAsked) return;
+    tipAsked = true;
+    Promise.resolve(safeCall(() => audio.firstTimeLine(), ''))
+      .then((line) => {
+        if (!line || !els.tip || phase === 'closed') return;
+        setText(els.tip, line);
+        els.tip.hidden = false;
+      })
+      .catch(() => {});
   }
 
   function ensureWord() {
@@ -693,8 +776,13 @@ export function createStandby(deps = {}) {
     let tone = 'off';
     const micOn = !!capture && capture.live === true;
     const wordComing = wordOn() && (!ws || ws.state === 'loading' || ws.state === 'off' || (ws.state === 'ready' && !wordPortGiven));
-    if (what.length) {
-      pill = `LISTENING ON THIS DEVICE · ${what.join(' · ')}`;
+    // v8.1: the microphone it listens on, when one is chosen (else "this device", as before).
+    const named = audio && micOn ? safeCall(() => audio.pill(capture.device), null) : null;
+    if (what.length && named && named.gone) {
+      pill = `LISTENING ON ${named.name} · ${named.gone} DISCONNECTED`;
+      tone = 'live';
+    } else if (what.length) {
+      pill = `LISTENING ON ${named ? named.name : 'THIS DEVICE'} · ${what.join(' · ')}`;
       tone = 'live';
     } else if (listen === 'starting') {
       pill = 'STARTING THE MICROPHONE…';
@@ -745,7 +833,9 @@ export function createStandby(deps = {}) {
     if (listen === 'denied') return 'Allow the microphone for Jarvis in your browser’s settings to wake him by clapping or by voice.';
     if (listen === 'no-mic') return 'Connect a microphone to wake Jarvis by clapping or by voice.';
     if (listen === 'needs-tap') return 'This browser needs one tap before it listens.';
+    if (listen === 'paused' && retry.pending) return 'The microphone stopped. Jarvis tries it again by himself.';
     if (listen === 'paused') return isIOS ? 'Jarvis listens only while he is open on screen.' : 'Listening resumes when Jarvis is on screen again.';
+    if ((listen === 'busy' || listen === 'error') && retry.pending) return 'The microphone is busy. Jarvis tries it again by himself.';
     if (!clapOn() && !wordOn()) return 'Turn on Clap twice or Say “Hey Jarvis” in Settings → Voice → Wake Jarvis.';
     if (wordOn() && ws && ws.state === 'loading') {
       const pct = ws.total ? Math.round((ws.loaded / ws.total) * 100) : 0;
@@ -755,6 +845,14 @@ export function createStandby(deps = {}) {
     if (!what.length) return '';
     const how = both && what.length === 2 ? 'Clap twice or say “Hey Jarvis”' : what[0] === 'TWO CLAPS' ? 'Clap twice' : 'Say “Hey Jarvis”';
     return `${how} to wake Jarvis.${isIOS ? ' He listens only while he is open on screen.' : ''}`;
+  }
+
+  function safeCall(fn, fallback) {
+    try {
+      return fn();
+    } catch {
+      return fallback;
+    }
   }
 
   function safeText(fn) {
