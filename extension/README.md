@@ -239,8 +239,8 @@ or sent anywhere. Linking works only with your home base's Tailscale address, as
   a walkthrough is on screen, the window moves next to it and Jarvis keeps the focus). Nothing
   acts there: Jarvis for Chrome doesn't take control of the tab, and a task that later works there
   asks for the site as always. An address that looks like it does something (like
-  `?add-to-cart=42` or `/orders/7/cancel`, an installer, or one with hidden or disguised
-  characters) waits for your click: its card shows the whole address in the side panel, and it
+  `?add-to-cart=42` or `/orders/7/cancel`, an installer or another file, or one with hidden or
+  disguised characters) waits for your click: its card shows the whole address in the side panel, and it
   opens only when you press **Open it**. Chrome's own pages, files, the Chrome Web Store and
   addresses with a user name or password are never opened.
 - **Start a task**, from your own spoken words (never from a web page or from Claude): only
@@ -273,8 +273,9 @@ mouth.
   it comes once its own security review has passed. Until then every approval is a click here,
   and from Jarvis you can only say no.
 - An answer from Jarvis counts only for the question it names, while that question is still open
-  and exactly as it was shown (its card and its choices), and not in the first 1.5 seconds after
-  it appeared. Otherwise it is refused, Jarvis says why, and the question stays open here.
+  and exactly as it was shown (its card and its choices); a yes also not in the first 1.5 seconds
+  after the question appeared (a no counts at once). Otherwise it is refused, Jarvis says why, and
+  the question stays open here.
 - An answer from Jarvis goes through the same card as your click: one **Approve** still covers that
   one step, on that one element, once (see [Approving steps](#approving-steps)). The step list
   says **Approved by voice from Jarvis**.
