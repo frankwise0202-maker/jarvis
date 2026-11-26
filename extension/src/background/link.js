@@ -20,9 +20,11 @@
 // To Jarvis: reply, hello, status (on every change, every 60 s while a task runs), task and done
 // (tasks from Jarvis only; no pictures), prompt (every prompt the side panel shows), prompt-closed.
 //
-// A task from Jarvis pauses itself, as Take over does, when the home base has been unreachable for
-// 20 s: a Stop said to Jarvis must never be lost on the way. The side panel's Stop and ⌘⇧. always
-// work. When no side panel is open, a question that needs a click opens a small approval window.
+// A task from Jarvis pauses itself, as Take over does, when Jarvis's box at the home base hasn't
+// been read for 20 s (the extension's own posts getting through don't count), and when the link
+// ends mid-task (REDTEAM-LINK-3): a Stop said to Jarvis must never be lost on the way. The side
+// panel's Stop and ⌘⇧. always work. When no side panel is open, a question that needs a click opens
+// a small approval window.
 
 import { ALARM, ALARM_PERIOD_MIN, Relay, UNREACHABLE_MS } from './relay.js';
 import { VOICE_APPROVALS_AVAILABLE, approvalsOn, promptFields, promptHash, spokenLine, voiceDecision, voiceSummary } from './voice-policy.js';
@@ -186,6 +188,7 @@ export class JarvisLink {
   async useLink(link) {
     const same = link && this.link && link.core === this.link.core && link.key === this.link.key;
     if (same) return this.ensureRunning();
+    if (this.link) this.pauseForLinkEnd(); // a new link, or none: the old one can't bring a Stop any more
     this.relay?.stop();
     this.relay = null;
     this.link = link;
@@ -221,6 +224,7 @@ export class JarvisLink {
     const link = this.link;
     if (!link) return;
     if (tell) await this.send('unlinked', {});
+    this.pauseForLinkEnd();
     this.relay?.stop();
     this.relay = null;
     this.link = null;
@@ -570,9 +574,10 @@ export class JarvisLink {
   }
 
   /**
-   * A task from Jarvis pauses itself (as Take over does) once the home base has been unreachable
-   * for UNREACHABLE_MS: a Stop said to Jarvis could be lost on the way. Once per outage: if the
-   * owner presses Continue in the side panel, it goes on.
+   * A task from Jarvis pauses itself (as Take over does) once Jarvis's box hasn't been read for
+   * UNREACHABLE_MS (REDTEAM-LINK-3: reads, not the extension's own posts): a Stop said to Jarvis
+   * could be lost on the way. Once per outage: if the owner presses Continue in the side panel, it
+   * goes on.
    */
   checkRelay() {
     const run = this.controller.run;
@@ -585,10 +590,21 @@ export class JarvisLink {
     const relay = this.relay;
     if (!relay || run.task.from !== 'voice' || run.takeover || run.stopping) return;
     const now = this.now();
-    if (relay.unreachableFor(now) < UNREACHABLE_MS) return;
-    if (run.relayPausedAt && relay.lastOkAt <= run.relayPausedAt) return;
+    if (relay.unreadFor(now) < UNREACHABLE_MS) return;
+    if (run.relayPausedAt && relay.lastReadAt <= run.relayPausedAt) return;
     run.relayPausedAt = now;
     run.task.steps.push({ id: uid('s'), at: now, kind: 'notice', level: 'warn', label: 'Paused: Jarvis for Chrome couldn’t reach your home base for 20 seconds, so a Stop said to Jarvis might not arrive. Press Continue here to go on, or Stop.', status: 'done' });
+    this.controller.takeover();
+  }
+
+  /**
+   * The link ended (Unlink, `unlinked` from Jarvis) or changed (a new link) while a task from Jarvis
+   * runs: nothing can bring its Stop any more, so it pauses as Take over does (REDTEAM-LINK-3).
+   */
+  pauseForLinkEnd() {
+    const run = this.controller.run;
+    if (!run || run.task.from !== 'voice' || run.takeover || run.stopping || FINAL_STATUSES.has(run.task.status)) return;
+    run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: 'Paused: the link with Jarvis ended, so a Stop said to Jarvis can’t arrive. Press Continue here to go on, or Stop.', status: 'done' });
     this.controller.takeover();
   }
 

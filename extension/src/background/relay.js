@@ -10,8 +10,10 @@
 //
 // The service worker long-polls `to-ext` with a 20-s wait (a fetch longer than 30 s can end a
 // worker), each poll after one extension API call (it resets the worker's idle timer); while a
-// task from Jarvis runs it waits 10 s, so 20 s without an answer means the home base can't be
-// reached (link.js then pauses that task). A chrome.alarms tick every 30 s starts the loop again
+// task from Jarvis runs it waits 10 s, so 20 s without a read of the box means a Stop said to
+// Jarvis can't arrive (link.js then pauses that task). A read counts when it waited or brought
+// messages: the extension's own posts getting through don't (REDTEAM-LINK-3), nor does an answer at
+// once with nothing in it. A chrome.alarms tick every 30 s starts the loop again
 // when Chrome stopped the worker. While the home base can't be reached the loop backs off (1 s up
 // to 30 s). A poll answered in under a second with nothing in it is followed by a pause of at least
 // 1.5 s (REDTEAM-LINK-2: a home base that answers at once must not make the loop spin). Where it
@@ -57,7 +59,8 @@ export class Relay {
     this.running = false;
     this.after = '';
     this.seen = new SeenIds();
-    this.lastOkAt = 0;
+    this.lastOkAt = 0; // the home base last answered anything (the side panel's "reachable")
+    this.lastReadAt = 0; // the box to-ext was last really read: the poll waited or brought messages (the pause)
     this.failures = 0;
     this.appSeenAt = 0;
     // When a message from the app last opened with this link's key (saved): until then the key isn't
@@ -96,6 +99,14 @@ export class Relay {
   /** ms since the home base last answered (Infinity before it ever did). */
   unreachableFor(now = this.now()) {
     return this.lastOkAt ? Math.max(0, now - this.lastOkAt) : Infinity;
+  }
+
+  /**
+   * ms since Jarvis's box was last really read (Infinity before): what the pause of a task from
+   * Jarvis watches (REDTEAM-LINK-3). Posts that get through don't count: they can't bring a Stop.
+   */
+  unreadFor(now = this.now()) {
+    return this.lastReadAt ? Math.max(0, now - this.lastReadAt) : Infinity;
   }
 
   /**
@@ -179,6 +190,7 @@ export class Relay {
       if (data && Array.isArray(data.messages)) {
         // An answer at once with nothing in it: the poll didn't wait (REDTEAM-LINK-2).
         const quickEmpty = !data.messages.length && this.now() - asked < QUICK_EMPTY_MS;
+        if (!quickEmpty) this.lastReadAt = this.now();
         this.answered();
         for (const m of data.messages.slice(0, MAX_MESSAGES)) {
           if (!this.running) break;

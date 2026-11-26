@@ -296,10 +296,11 @@ purchase."*) and that it needs a click in the Jarvis window.
 - When no side panel is open, a question that needs a click opens a small Jarvis for Chrome
   window with the same card, and **Stop**. Its answers take a click only after a second, so a
   click meant for another window can't answer it; it closes by itself once nothing waits.
-- If Jarvis for Chrome can't reach your home base for 20 seconds while a task from Jarvis runs,
-  the task pauses itself (as **Take over** does), so a *"stop"* said to Jarvis can't be lost on the
-  way; press **Continue** in the side panel to go on. **⌘⇧.** and the side panel's **Stop** always
-  work.
+- If Jarvis for Chrome can't read what Jarvis sends it through your home base for 20 seconds
+  while a task from Jarvis runs (its own messages getting through to Jarvis don't count), or the
+  link with Jarvis ends mid-task (Unlink on either side, or a new link), the task pauses itself (as
+  **Take over** does), so a *"stop"* said to Jarvis is never lost on the way; press **Continue** in
+  the side panel to go on. **⌘⇧.** and the side panel's **Stop** always work.
 
 Opening pages and the relay cost nothing; a task costs what any task costs (see [Costs](#costs)).
 

@@ -5190,9 +5190,14 @@ prompt. One approval from Jarvis still covers one step on one element, once (the
 Development builds can make voice approvals available for the tests (`jarvis.dev.voiceApprovals`); the build refuses
 a release that contains that marker.
 
-**32.2.8 The pause.** While a task from Jarvis runs, once the home base hasn't answered for 20 s the task pauses itself
-as Take over does, with a notice (critique M4: a "stop" said to Jarvis must not be lost); once per outage: Continue in
-the panel goes on. The panel's Stop and ⌘⇧. are unchanged.
+**32.2.8 The pause.** While a task from Jarvis runs, once Jarvis's box (`to-ext`) hasn't been read for 20 s the task
+pauses itself as Take over does, with a notice (critique M4: a "stop" said to Jarvis must not be lost). A read counts
+when the poll waited or brought messages (`lastReadAt`); the extension's own posts to `to-app` getting through don't
+count, nor does a poll answered at once with nothing (REDTEAM-LINK-3: a flooded or refused box with posts still going
+in used to keep a task running). Once per outage: Continue in the panel goes on. When the link ends mid-task (Unlink in
+the panel, `unlinked` from Jarvis, or a new link), the task pauses the same way at once ("Paused: the link with Jarvis
+ended, …"). The panel's Stop and ⌘⇧. are unchanged; `lastOkAt` (anything answered) only feeds the panel's
+"reachable".
 
 **32.2.9 The approval window** (G7). When no side panel is connected and a task from Jarvis shows a prompt that voice
 may not answer, or an address waits for a click, the worker opens `approve.html` (`chrome.windows.create({ type:

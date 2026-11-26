@@ -633,6 +633,43 @@ test('a task from Jarvis pauses when the relay has been unreachable for 20 s (on
   assert.equal(run.task.status, 'stopped');
 });
 
+test('LINK-3: the pause watches reads of Jarvis’s box, not posts: reads refused while posts go in, 20 s later the task pauses', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  await untilStepPrompt(s);
+  const run = s.controller.run;
+  s.relay.refuseReads = true; // to-ext answers 429; to-app still takes the extension’s messages
+  s.clock.offset += 10_000;
+  assert.equal(await s.link.relay.send('status', { online: true }), true, 'a post goes in');
+  s.link.checkRelay();
+  assert.equal(run.takeover, false, '10 s: not yet');
+  s.clock.offset += 11_000;
+  assert.equal(await s.link.relay.send('status', { online: true }), true, 'posts keep going in');
+  s.link.checkRelay();
+  assert.equal(run.takeover, true, 'no read for 21 s: paused, whatever the posts');
+  assert.ok(run.task.steps.some((st) => /^Paused: Jarvis for Chrome couldn’t reach your home base for 20 seconds/.test(st.label)));
+  s.relay.refuseReads = false;
+  await s.controller.stop('panel');
+});
+
+test('LINK-3: the link ending mid-task pauses a task from Jarvis (an unlinked from Jarvis, the panel’s Unlink, a new link)', async (t) => {
+  for (const how of ['from-jarvis', 'panel', 'new-link']) {
+    const s = await setup();
+    try {
+      await untilStepPrompt(s);
+      const run = s.controller.run;
+      if (how === 'from-jarvis') await s.app.post('unlinked', {});
+      else if (how === 'panel') await s.link.unlink({ tell: true });
+      else await s.store.setLink({ core: CORE, key: newLinkKey() }).then(() => s.store.getLink()).then((l) => s.link.useLink(l));
+      await s.waitFor(() => run.takeover, 3000, `the pause (${how})`);
+      assert.ok(run.task.steps.some((st) => /^Paused: the link with Jarvis ended/.test(st.label)), how);
+      assert.notEqual(run.task.status, 'stopped', 'paused, not stopped: Continue in the panel goes on');
+    } finally {
+      await s.done();
+    }
+  }
+});
+
 test('a task from the side panel never pauses for the relay', async (t) => {
   const s = await setup();
   t.after(s.done);
