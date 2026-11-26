@@ -4730,17 +4730,17 @@ export async function startApp(rootEl) {
       s.optics.sceneChanged = look && look.aside ? safe(() => optics.sceneChanged(), null) : null;
     }
     // ---- optics ◂
+    // ---- fix-routing ▸ (REGRESS-2: what else a bare "stop" stops: the chat's turn, an answer, a mission or a
+    // Look's answer, as its Stop button does; and Optics' Watch)
+    s.running = currentRunning();
+    if (s.optics) s.optics.watch = !!opticsLive.watch;
+    // ---- fix-routing ◂
     // ---- chrome-relay ▸ (s.chrome)
     if (chromeLink) {
       const c = safe(() => chromeLink.state(), null);
       if (c) s.chrome = { ...(s.chrome || {}), linked: c.linked, online: c.online, task: c.task };
     }
     // ---- chrome-relay ◂
-    // ---- fix-routing ▸ (REGRESS-2: what else a bare "stop" stops: the chat's turn, an answer, a mission or a
-    // Look's answer, as its Stop button does; and Optics' Watch)
-    s.running = currentRunning();
-    if (s.optics) s.optics.watch = !!opticsLive.watch;
-    // ---- fix-routing ◂
     return local ? Object.assign(s, local) : s;
   }
 
