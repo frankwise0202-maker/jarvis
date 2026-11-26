@@ -322,6 +322,15 @@ export default [
         await t.waitFor(async () => (await A(t)).sinks.slice(before.sinks.length).some((s) => s.kind === 'george' && s.id === ''), { timeout: 8000, message: 'the default speaker after about 3 s' });
         await pillIs(t, /SPEAKERPHONE DISCONNECTED$/, 3000);
       });
+      await t.step('the next wake: one short line before the greeting, once (never said by itself before)', async () => {
+        const said = async () => [...t.core.senses.speaks.map((x) => x.text), ...(await t.page.evaluate(() => window.__voice.said))].join(' | ');
+        t.assert(!/speakerphone isn’t connected/.test(await said()), 'Nothing was said while Standby waited');
+        await play(t, DOUBLE_CLAP);
+        await t.visible('voice-mode', { timeout: 8000, message: 'two claps wake Jarvis' });
+        await t.waitFor(async () => /I’m on the Mac’s speakers; the speakerphone isn’t connected\./.test(await said()) && /Good (morning|afternoon|evening)/.test(await said()), { timeout: 20000, message: async () => `the line, then the greeting (${await said()})` });
+        const all = await said();
+        t.assert(all.indexOf('the speakerphone isn’t connected') < all.search(/Good (morning|afternoon|evening)/), `before the greeting (${all})`);
+      });
     },
   },
   {
