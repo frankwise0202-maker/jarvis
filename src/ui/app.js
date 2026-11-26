@@ -1790,9 +1790,13 @@ export async function startApp(rootEl) {
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
           const reason = info && info.reason;
           // v8.1: a sheet the owner asked for by voice ("open settings") is what they look at next.
-          const back = reason === 'standby' || (reason !== 'command' && info && info.wakeSession && safe(() => getSettings().wakeReturn !== false, true));
+          const woken = !!(info && info.wakeSession) && safe(() => getSettings().wakeReturn !== false, true);
+          const back = reason === 'standby' || (reason !== 'command' && woken);
+          // MAC-2: ...but a woken session never leaves Standby for good: it comes back after the sheet.
+          const afterSheet = reason === 'command' && woken && !state.demo;
           setTimeout(() => {
             if (back && !state.demo) enterStandby({ again: true });
+            else if (afterSheet && standby && safe(() => standby.isAwaiting(), false)) returnAfterSheet();
             else if (standby) safe(() => standby.release());
           }, 0);
           // Optics opened from Voice Mode goes with it (its mic and its turns were Voice Mode's).
@@ -1929,6 +1933,7 @@ export async function startApp(rootEl) {
   function enterStandby({ again = false } = {}) {
     if (state.demo) return false;
     if (isVoiceModeOpen()) return false; // Voice Mode closes itself into Standby ("go to sleep")
+    cancelSheetReturn();
     if (state.listening) safe(() => state.listening.stop());
     safe(() => composer.cancelCountdown());
     if (settingsSheet) settingsSheet.close('navigate');
@@ -1937,6 +1942,67 @@ export async function startApp(rootEl) {
     if (again && standby.isAwaiting()) standby.resume();
     else standby.enter({ again }); // v7.8.1: again = no tap behind it
     return true;
+  }
+
+  // MAC-2: a woken session that left for a sheet ("open settings", history, the library, Mission Control, the home
+  // base) never leaves Standby for good. Standby keeps its place meanwhile (the lock stays with this window; a
+  // microphone kept for barge-in is let go) and comes back by itself: once that sheet is closed, after a quiet spell
+  // (no click, key, scroll or touch for a minute), or at once while Jarvis is in the background, where nobody looks
+  // at the sheet. It comes back above a sheet still open, which stays underneath.
+  const SHEET_RETURN_MS = 60000;
+  let sheetReturn = null; // { sheet, last, timer, offs }
+
+  function returnAfterSheet() {
+    cancelSheetReturn();
+    safe(() => standby.rest());
+    const R = { sheet: safe(() => anySheetOpen(), false), last: Date.now(), timer: 0, offs: [] };
+    sheetReturn = R;
+    const input = () => {
+      R.last = Date.now();
+    };
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+      window.addEventListener(type, input, { capture: true, passive: true });
+      R.offs.push(() => window.removeEventListener(type, input, { capture: true, passive: true }));
+    }
+    const quiet = sheetReturnMs();
+    const tick = () => {
+      R.timer = 0;
+      if (sheetReturn !== R) return;
+      // Back already (the Standby key), let go of, or a new conversation: nothing left to do.
+      if (!standby || !safe(() => standby.isAwaiting(), false) || isVoiceModeOpen()) {
+        cancelSheetReturn();
+        return;
+      }
+      const closed = R.sheet && !safe(() => anySheetOpen(), false);
+      if (document.hidden || closed || Date.now() - R.last >= quiet) {
+        cancelSheetReturn();
+        safe(() => standby.resume());
+        return;
+      }
+      R.timer = setTimeout(tick, 1000);
+    };
+    tick();
+  }
+
+  function cancelSheetReturn() {
+    const R = sheetReturn;
+    sheetReturn = null;
+    if (!R) return;
+    clearTimeout(R.timer);
+    for (const off of R.offs) safe(off);
+  }
+
+  /** MAC-2's quiet spell (tests on localhost: 'jarvis.dev.voice' { sheetReturnMs }, shorter only, 2 s at least). */
+  function sheetReturnMs() {
+    try {
+      const host = location.hostname;
+      if (host !== 'localhost' && host !== '127.0.0.1') return SHEET_RETURN_MS;
+      const raw = JSON.parse(localStorage.getItem('jarvis.dev.voice') || 'null');
+      const v = raw && typeof raw === 'object' ? Number(raw.sheetReturnMs) : Number.NaN;
+      return Number.isFinite(v) ? Math.min(SHEET_RETURN_MS, Math.max(2000, v)) : SHEET_RETURN_MS;
+    } catch {
+      return SHEET_RETURN_MS;
+    }
   }
 
   /** "standby" / "go to sleep" typed (or dictated) in the chat. */

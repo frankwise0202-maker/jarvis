@@ -732,4 +732,64 @@ export default [
       });
     },
   },
+  // ---- review fixes (v8.1) ----------------------------------------------------------------------------------
+  {
+    name: 'standby-woken-sheet',
+    title: 'MAC-2: a woken session ended by "open settings" keeps Standby’s place: Standby comes back by itself once Settings is closed, or after a quiet spell (shortened to 6 s) over the sheet, which stays underneath',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 180000,
+    async run(t) {
+      await setup(t, { devVoice: { sheetReturnMs: 6000 } });
+      await enterStandby(t);
+      await t.step('woken by claps, "open settings": the line, then Settings', async () => {
+        await queue(t.page, '', 'Open settings.');
+        await wakeByClaps(t);
+        await waitSaid(t, /Settings are open\./);
+        await t.visible('settings-sheet', { message: 'Settings opens' });
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 10000 });
+      });
+      await t.step('Settings closed: Standby comes back and listens', async () => {
+        await t.page.keyboard.press('Escape');
+        await t.visible('standby', { timeout: 5000, message: 'Standby comes back once Settings is closed' });
+        await waitListening(t);
+      });
+      await t.step('two claps wake him again; "open settings", then nobody touches anything: Standby comes back over the sheet', async () => {
+        await t.page.waitForTimeout(1600); // past Standby's own 1.5 s guard
+        await queue(t.page, '', 'Open settings.');
+        await wakeByClaps(t);
+        await t.visible('settings-sheet', { timeout: 20000, message: 'Settings opens again' });
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 10000 });
+        await t.visible('standby', { timeout: 15000, message: 'Standby comes back after the quiet spell' });
+        await waitListening(t);
+        await t.page.locator(tid('standby')).click(); // a tap leaves Standby: Settings is still there
+        await t.page.locator(tid('standby')).waitFor({ state: 'detached', timeout: 5000 });
+        await t.visible('settings-sheet', { message: 'Settings stayed open under Standby' });
+      });
+    },
+  },
+  {
+    name: 'standby-woken-sheet-hidden',
+    title: 'MAC-2: Jarvis in the background, a woken session ended by "open settings" (nobody looks at the sheet there) goes back to Standby at once, listening; claps wake him again',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 150000,
+    async run(t) {
+      await setup(t);
+      await enterStandby(t);
+      await setHidden(t.page, true);
+      await queue(t.page, '', 'Open settings.');
+      await wakeByClaps(t);
+      await waitSaid(t, /Settings are open\./);
+      await t.step('back to Standby at once, listening, still hidden', async () => {
+        await backInStandby(t, t.page, 10000);
+        t.assert(await t.page.evaluate(() => document.hidden), 'still in the background');
+      });
+      await t.step('two claps wake him again there', async () => {
+        await t.page.waitForTimeout(1600);
+        await queue(t.page, '');
+        await wakeByClaps(t);
+      });
+    },
+  },
 ];

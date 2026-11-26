@@ -351,6 +351,26 @@ test('barge-in not allowed (keep() false, or none): the microphone is released a
   }
 });
 
+test('MAC-2: the woken session left for a sheet ("open settings"): Standby rests — still woken and holding the lock, the kept microphone let go — and resume() listens again', async (t) => {
+  const { make, locks } = await setup(t);
+  const a = make('A', { bargeIn: { keep: () => true, detected: () => assert.fail('nothing to interrupt behind a sheet') } });
+  a.sb.enter();
+  await settle();
+  a.cap().clap();
+  assert.equal(a.cap().live, true, 'kept for barge-in during the session');
+  a.sb.rest();
+  assert.equal(a.cap().live, false, 'let go while the owner looks at the sheet');
+  assert.equal(a.sb.isAwaiting(), true, 'still woken: Standby keeps its place');
+  assert.equal(locks.holder('jarvis-standby'), 'A', 'and its lock: no other window takes over meanwhile');
+  await new Promise((r) => setTimeout(r, 1600));
+  a.cap().clap(); // a bang behind the sheet: nothing listens for it
+  a.sb.resume();
+  await settle();
+  assert.equal(a.sb.listening, 'live', 'back on Standby, listening');
+  assert.equal(a.cap().live, true);
+  assert.equal(a.cap().starts, 2, 'a fresh start');
+});
+
 test('Standby taken by another window during a kept session: the barge-in microphone goes too', async (t) => {
   const { make, shown } = await setup(t);
   const a = make('A', { bargeIn: { keep: () => true, detected: () => true } });

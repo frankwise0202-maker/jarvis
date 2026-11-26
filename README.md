@@ -328,8 +328,9 @@ on screen first, and costs what a question costs.
 - **While he talks** he can't hear you, except "Hey Jarvis" or two claps on a Mac (see
   [Hands-free on a Mac](#hands-free-on-a-mac)): interrupt him first, then say the command.
 - **Opening something to look at** ("open settings", "open the library") from Voice Mode: Jarvis says
-  so, Voice Mode closes, and it opens as if you had tapped it (it doesn't go back to Standby, since you
-  asked to look at it).
+  so, Voice Mode closes, and it opens as if you had tapped it. If Standby woke him, Standby comes back by
+  itself once you close it, or after a minute with no click or key (it comes back above it, and what you
+  opened stays underneath); with Jarvis in the background, right away.
 
 #### Hands-free on a Mac
 

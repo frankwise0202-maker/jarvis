@@ -16,6 +16,8 @@
 //   standby.enter({ again: true })   v7.8.1: entered again without a tap (Voice Mode closed into Standby):
 //                         unlock({ tap: false }), so what the voice knows about stuck audio stays
 //   standby.resume()      after the wake routine (Voice Mode closed): show it again, listen again
+//   standby.rest()        MAC-2: the woken session left for a sheet: still woken (resume() later), but a microphone
+//                         kept for barge-in is let go meanwhile
 //   standby.exit()        leave (a tap on the screen, Escape): the microphone is released
 //   standby.isOpen() / standby.isAwaiting()   on screen / woken (Voice Mode up, coming back after)
 //   standby.update()      the app's state changed (the status line)
@@ -381,6 +383,19 @@ export function createStandby(deps = {}) {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * MAC-2: the woken session left Voice Mode for a sheet ("open settings"): Standby keeps its place (woken, the lock
+   * held) until resume(), but a microphone kept for barge-in is let go meanwhile (nothing could be interrupted).
+   */
+  function rest() {
+    if (phase !== 'awaiting' || !kept) return;
+    kept = false;
+    if (capture) capture.stop();
+    if (word) word.reset();
+    wordPortGiven = false;
+    listen = 'off';
   }
 
   /** v8.1: two claps or "Hey Jarvis" heard during the woken session (the microphone kept): Voice Mode decides. */
@@ -1015,6 +1030,7 @@ export function createStandby(deps = {}) {
     release: () => {
       if (phase === 'awaiting') exit({ silent: true });
     },
+    rest,
     get listening() {
       return listen;
     },
