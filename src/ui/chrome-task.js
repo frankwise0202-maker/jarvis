@@ -21,7 +21,8 @@
 
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
-import '../styles/chrome-task.css';
+// (Its stylesheet, src/styles/chrome-task.css, comes in through app.css: a stylesheet imported from a JS module
+// would break the Node unit tests that load this file's importers.)
 import {
   CHROME_CONTEXT_MS,
   DEFAULT_TASK_LIMIT_USD,

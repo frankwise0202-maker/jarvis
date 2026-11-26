@@ -35,7 +35,8 @@ import { matchChromeAnswer, matchNothingAsked } from '../../lib/chrome-prompt-wo
  * @param {{ register: Function }} router  the app's command router
  * @param {object} deps  shared: { getSettings, saveSettings, toast, voice() (the open Voice Mode's api,
  *   or null), routerState(surface, local), phone, demo }, plus this module's own (app.js):
- *   chromeVoice() → the controller (createChromeVoice) or null
+ *   chromeVoice() → the controller (createChromeVoice, built on app.chromeLink) or null
+ *   chromeLink    app.chromeLink (contract (f)) or null: here only for what to say with no controller
  */
 export function register(router, deps = {}) {
   const controller = () => {
@@ -50,7 +51,14 @@ export function register(router, deps = {}) {
     const surface = ctx && typeof ctx.surface === 'string' ? ctx.surface : 'voice';
     const c = controller();
     if (!c) {
-      const r = taskRefusal('unlinked');
+      // (No controller: the link may still say why nothing can go to Chrome.)
+      let st = null;
+      try {
+        st = deps && deps.chromeLink && typeof deps.chromeLink.state === 'function' ? deps.chromeLink.state() : null;
+      } catch {
+        st = null;
+      }
+      const r = taskRefusal(st && st.linked ? (st.online ? 'other' : 'offline') : 'unlinked');
       return { say: surface === 'voice' ? r.say : r.show };
     }
     const out = c.run(action, { surface });

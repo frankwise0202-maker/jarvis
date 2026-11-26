@@ -4512,7 +4512,7 @@ export async function startApp(rootEl) {
   const chromeVoice = safe(
     () =>
       createChromeVoice({
-        link: () => chromeLinkForVoice(),
+        link: () => chromeLink, // app.chromeLink (contract (f), chrome-relay's), or null (demo, a phone)
         voice: () => voiceAdapter(voiceApi && safe(() => isVoiceModeOpen(), false) ? voiceApi : null),
         dock: chromeDock,
         notify: (n) => notifyAttention(n),
@@ -4523,10 +4523,6 @@ export async function startApp(rootEl) {
       }),
     null,
   );
-  /** app.chromeLink (contract (f)): chrome-relay's installChromeLink made it (`chromeLink`), or null (demo, a phone). */
-  function chromeLinkForVoice() {
-    return chromeLink || null;
-  }
   // Tests on localhost only ('jarvis.dev.chromeVoice' = '1'): window.__jarvisChromeVoice.question(spec) asks an owner
   // question in the open Voice Mode (the chrome-voice-stack E2E: a stand-in for a tour's decision beside a prompt).
   safe(() => {
@@ -4564,7 +4560,7 @@ export async function startApp(rootEl) {
     // voice (src/ui/commands/voice.js):
     register('voice', registerVoiceCommands, { ...shared, ...voiceCommandDeps() });
     // chrome-voice (src/ui/commands/chrome-voice.js):
-    register('chrome-voice', registerChromeVoiceCommands, { ...shared, chromeVoice: () => chromeVoice });
+    register('chrome-voice', registerChromeVoiceCommands, { ...shared, chromeLink, chromeVoice: () => chromeVoice });
     // windows (src/ui/commands/windows.js):
     register('windows', registerWindowCommands, { ...shared, screens: screensCtl, tabs: browserTabs, thisInputs: () => thisInputs(), links: () => newestReplyLinks(), closeViewers: () => closeViewers() });
     // optics (src/ui/commands/optics.js):
