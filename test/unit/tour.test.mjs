@@ -1133,3 +1133,116 @@ test('startTurn({ viewer }): one line in the new message\'s <turn_context>; the 
   assert.deepEqual(plain.api.requests[1].body.messages, plain.api.requests[0].body.messages);
   assert.doesNotMatch(plain.api.requests[0].body.messages[0].content[0].text, /On screen/);
 });
+
+// ---- the router's tour matchers (src/ui/commands/tours.js) -------------------------------------
+
+import { createRouter, emptyState, registerTodayCommands } from '../../src/lib/command-router.js';
+import { register as registerTours, matchTourWords, matchTourStartWords } from '../../src/ui/commands/tours.js';
+
+/** A fake viewer with the tour host's surface; it records what it was asked. */
+function fakeViewer({ status = 'playing', atChoice = false } = {}) {
+  const calls = [];
+  const v = {
+    calls,
+    state: { active: true, atChoice, choices: atChoice ? CHOICES : [], defaultId: atChoice ? 'enclosed' : null, stepId: atChoice ? 'ask' : 'apart', status, paused: status === 'paused', waits: status === 'waiting' },
+    tour: () => v.state,
+    tourCommand(action) {
+      calls.push(['tourCommand', action.do, action.choice || action.partId || action.view || '']);
+      if (action.do === 'tour-pause') return status === 'playing';
+      return true;
+    },
+    startTour(opts) {
+      calls.push(['startTour', opts.partId]);
+      return { ok: true };
+    },
+    showView(view, partId) {
+      calls.push(['showView', view, partId]);
+      return { say: `Here's the battery, ${view}.` };
+    },
+  };
+  return v;
+}
+
+function tourRouter(viewer, openReply = () => null) {
+  const r = createRouter();
+  registerTodayCommands(r);
+  registerTours(r, { tours: { viewer: () => viewer, openReply } });
+  return r;
+}
+
+const HOLO_STATE = (extra = {}) => ({ ...emptyState('voice'), voiceOpen: true, hologram: { open: true, inWindow: false, parts: LAPTOP_PARTS, selected: null, title: '14-inch laptop' }, ...extra });
+
+test('the router: tour words only while a tour runs, before the hologram\'s; start words while a hologram is shown or the newest reply showed one', () => {
+  const viewer = fakeViewer();
+  const r = tourRouter(viewer);
+  const startId = r.has('tour.start') ? 'tour.start' : 'tour-start';
+  const route = (text, state) => {
+    const hit = r.route([text], state);
+    return hit ? `${hit.id}:${hit.action.do}` : null;
+  };
+  const touring = HOLO_STATE({ tour: viewer.state });
+  assert.equal(route('next', touring), 'tour:tour-next');
+  assert.equal(route('back', touring), 'tour:tour-back');
+  assert.equal(route('go back', touring), 'tour:tour-back');
+  assert.equal(route("that's enough", touring), 'tour:tour-end');
+  assert.equal(route('what does that do', touring), null);
+  // no tour: the same words do what they did
+  assert.equal(route('back', HOLO_STATE()), 'hologram:hologram');
+  assert.equal(route('next', HOLO_STATE()), null);
+  // starting one
+  assert.equal(route('walk me through the battery', HOLO_STATE()), `${startId}:tour-start`);
+  assert.equal(route('walk me through it', { ...emptyState('voice'), tourReply: { title: '14-inch laptop', parts: LAPTOP_PARTS } }), `${startId}:tour-start`);
+  assert.equal(route('walk me through it', emptyState('voice')), null);
+  assert.equal(route('walk me through it', emptyState('chat')), null);
+  assert.equal(route('walk me through it', { ...emptyState('chat'), tourReply: { title: '14-inch laptop', parts: LAPTOP_PARTS } }), `${startId}:tour-start`);
+  assert.equal(route('walk me through how to replace the battery', HOLO_STATE()), null);
+  // "show it enclosed" on the selected part, outside a tour; at a tour's decision it is a choice
+  assert.equal(route('show it enclosed', HOLO_STATE({ hologram: { open: true, parts: LAPTOP_PARTS, selected: 'battery', title: '' } })), `${startId}:tour-view`);
+  assert.equal(route('show it enclosed', HOLO_STATE()), null);
+  assert.equal(route('enclosed', HOLO_STATE({ tour: fakeViewer({ status: 'choice', atChoice: true }).state })), 'tour:tour-choice');
+  // the state may carry only the choices' ids (voice's corpus does)
+  assert.deepEqual(matchTourWords('opened', HOLO_STATE({ tour: { active: true, atChoice: true, choices: ['enclosed', 'opened'] } })), { do: 'tour-choice', choice: 'opened' });
+  assert.equal(matchTourStartWords('walk me through it', HOLO_STATE({ tour: { active: true } })), null);
+});
+
+test('the router: what each tour word does to the viewer, and the line it says', async () => {
+  const run = async (viewer, text, state) => {
+    const r = tourRouter(viewer);
+    const hit = r.route([text], state);
+    assert.ok(hit, `"${text}" routed`);
+    return r.run(hit, { surface: state.surface, via: 'voice' });
+  };
+  const playing = fakeViewer();
+  assert.deepEqual(await run(playing, 'next', HOLO_STATE({ tour: playing.state })), { say: '' });
+  assert.deepEqual(playing.calls.at(-1), ['tourCommand', 'tour-next', '']);
+  assert.deepEqual(await run(playing, 'pause', HOLO_STATE({ tour: playing.state })), { say: 'Paused. Say continue when you’re ready.' });
+  assert.deepEqual(await run(playing, 'skip to the fan', HOLO_STATE({ tour: playing.state })), { say: '' });
+  assert.deepEqual(playing.calls.at(-1), ['tourCommand', 'tour-jump', 'fan']);
+  assert.deepEqual(await run(playing, 'stop the tour', HOLO_STATE({ tour: playing.state })), { say: 'Okay, that’s the end of the tour.' });
+  const deciding = fakeViewer({ status: 'choice', atChoice: true });
+  assert.deepEqual(await run(deciding, 'wait', HOLO_STATE({ tour: deciding.state })), { say: 'I’ll wait.' });
+  assert.deepEqual(await run(deciding, 'you pick', HOLO_STATE({ tour: deciding.state })), { say: '' });
+  assert.deepEqual(deciding.calls.at(-1), ['tourCommand', 'tour-choice', 'pick']);
+  const done = fakeViewer({ status: 'done' });
+  assert.match((await run(done, 'next', HOLO_STATE({ tour: done.state }))).say, /^That was the last step\./);
+  assert.equal(done.calls.length, 0, 'next at the end does nothing');
+  // starting: the part tour, and the newest reply's hologram opened first
+  const none = fakeViewer();
+  assert.deepEqual(await run(none, 'walk me through the battery', HOLO_STATE()), { say: '' });
+  assert.deepEqual(none.calls.at(-1), ['startTour', 'battery']);
+  const opened = fakeViewer();
+  let reopened = 0;
+  const r = createRouter();
+  registerTours(r, { tours: { viewer: () => null, openReply: () => (reopened++, opened) } });
+  const hit = r.route(['walk me through it'], { ...emptyState('voice'), tourReply: { title: '14-inch laptop', parts: LAPTOP_PARTS } });
+  assert.deepEqual(await r.run(hit, { surface: 'voice' }), { say: '' });
+  assert.equal(reopened, 1);
+  assert.deepEqual(opened.calls.at(-1), ['startTour', null]);
+  // a viewer that can't (still building): its line
+  const building = { ...fakeViewer(), startTour: () => ({ ok: false, reason: 'building' }) };
+  assert.deepEqual(await run(building, 'walk me through it', HOLO_STATE()), { say: 'I’ll walk you through it once it’s built.' });
+  // "show it enclosed" on the selected part
+  const picked = fakeViewer();
+  assert.deepEqual(await run(picked, 'show it enclosed', HOLO_STATE({ hologram: { open: true, parts: LAPTOP_PARTS, selected: 'battery', title: '' } })), { say: "Here's the battery, enclosed." });
+  assert.deepEqual(picked.calls.at(-1), ['showView', 'enclosed', 'battery']);
+});
