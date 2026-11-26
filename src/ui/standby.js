@@ -29,6 +29,7 @@
 // screen again (iOS stops it anyway); on a Mac it keeps listening in a background tab or window.
 // v8.1: a capture that fails (the microphone busy or gone, its track ended) is tried again with back-off:
 // 2 s, 5 s, 15 s, 60 s, then every 5 minutes (src/lib/audio-devices.js), also in the background on a Mac.
+// So is "Hey Jarvis" when its download or its worker fails (A12), and at once when the network comes back.
 //
 // v8.1 (SPEC §28.4, §28.5):
 //   createLock(onChange)  one Jarvis per Mac answers (A9): platform/standby-lock.js. Standby takes the lock
@@ -107,6 +108,7 @@ export function createStandby(deps = {}) {
   let audioOffs = [];
   let tipAsked = false;
   const lock = typeof createLock === 'function' ? safeLock(() => createLock((st) => onLockChange(st))) : null;
+  const wordRetry = createBackoff(() => restartWord()); // v8.1 (A12): "Hey Jarvis" started again after a failure
 
   const settings = () => {
     try {
@@ -261,7 +263,7 @@ export function createStandby(deps = {}) {
     }, SHIFT_MS);
     resetDim();
     if (!offs.length) {
-      offs = [listenOn(document, 'visibilitychange', onVisibility), listenOn(window, 'pagehide', onPageHide), listenOn(document, 'keydown', onKey, true)];
+      offs = [listenOn(document, 'visibilitychange', onVisibility), listenOn(window, 'pagehide', onPageHide), listenOn(document, 'keydown', onKey, true), listenOn(window, 'online', onOnline)];
     }
     if (typeof onSettingsChange === 'function' && !unsubSettings) unsubSettings = onSettingsChange(() => applySettings());
     watchAudio();
@@ -277,6 +279,7 @@ export function createStandby(deps = {}) {
     const was = phase;
     phase = 'closed';
     kept = false;
+    wordRetry.cancel();
     teardown();
     stopWord({ terminate: true });
     if (lock) lock.release();
@@ -594,6 +597,10 @@ export function createStandby(deps = {}) {
     }
     wordUnsubs = [
       word.subscribe(() => {
+        // v8.1 (A12): a failed download or worker is tried again with back-off; ready resets it.
+        const state = word ? word.status().state : 'off';
+        if (state === 'error' && wordOn() && !wordRetry.pending) wordRetry.failed();
+        else if (state === 'ready') wordRetry.succeeded();
         if (phase === 'open') {
           if (wordReady() && listen === 'live') connectWord();
           else if (wordReady() && listen === 'waiting') startListening(); // its download is done
@@ -608,6 +615,18 @@ export function createStandby(deps = {}) {
 
   function wordReady() {
     return !!word && word.status().state === 'ready';
+  }
+
+  /** v8.1 (A12): its retry is due (or the network came back): start "Hey Jarvis" again if it is still wanted. */
+  function restartWord() {
+    if (phase === 'closed' || !word || !wordOn() || word.status().state !== 'error') return;
+    word.start().catch(() => render()); // a new failure comes back through subscribe: the next, longer wait
+  }
+
+  function onOnline() {
+    if (phase !== 'open' || !word || word.status().state !== 'error') return;
+    wordRetry.cancel();
+    restartWord();
   }
 
   /**
@@ -841,7 +860,7 @@ export function createStandby(deps = {}) {
       const pct = ws.total ? Math.round((ws.loaded / ws.total) * 100) : 0;
       return `Getting “Hey Jarvis” ready… ${pct}%${clapOn() ? ' Two claps work meanwhile.' : ''}`;
     }
-    if (wordOn() && ws && ws.state === 'error') return `“Hey Jarvis” couldn’t load${ws.error && ws.error.code === 'network' ? ' (offline?)' : ''}.${clapOn() ? ' Two claps still work.' : ''}`;
+    if (wordOn() && ws && ws.state === 'error') return `“Hey Jarvis” couldn’t load${ws.error && ws.error.code === 'network' ? ' (offline?)' : ''}.${clapOn() ? ' Two claps still work.' : ''}${wordRetry.pending ? ' Jarvis tries again by himself.' : ''}`;
     if (!what.length) return '';
     const how = both && what.length === 2 ? 'Clap twice or say “Hey Jarvis”' : what[0] === 'TWO CLAPS' ? 'Clap twice' : 'Say “Hey Jarvis”';
     return `${how} to wake Jarvis.${isIOS ? ' He listens only while he is open on screen.' : ''}`;

@@ -190,11 +190,12 @@ async function setup(t) {
   const locks = createFakeLocks();
   const log = [];
   log.caps = {};
-  const make = (who, { bargeIn = null, lock = true } = {}) => {
+  const make = (who, { bargeIn = null, lock = true, settings = { wakeClap: true, wakeWord: false }, createWakeWord = null } = {}) => {
     const woken = [];
     const sb = createStandby({
-      getSettings: () => ({ wakeClap: true, wakeWord: false }),
+      getSettings: () => settings,
       createCapture: fakeCapture(log, who),
+      createWakeWord,
       onWake: (w) => woken.push(w.trigger),
       createLock: lock ? (onChange) => createStandbyLock({ locks: locks.as(who), onChange }) : null,
       bargeIn,
@@ -366,4 +367,70 @@ test('Standby taken by another window during a kept session: the barge-in microp
   a.sb.resume();
   await settle();
   assert.equal(a.sb.listening, 'elsewhere', 'A comes back to Standby waiting behind B');
+});
+
+/** A "Hey Jarvis" client whose start() fails `fails` times (a download that fails), then works. */
+function flakyWord(fails) {
+  const listeners = new Set();
+  let st = { state: 'off', error: null };
+  const set = (patch) => {
+    st = { ...st, ...patch };
+    for (const fn of [...listeners]) fn(st);
+  };
+  const w = {
+    starts: 0,
+    start() {
+      w.starts += 1;
+      set({ state: 'loading', error: null });
+      if (w.starts <= fails) {
+        set({ state: 'error', error: { code: 'network', message: 'offline' } });
+        return Promise.reject({ code: 'network' });
+      }
+      set({ state: 'ready' });
+      return Promise.resolve();
+    },
+    status: () => st,
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    onDetect: () => () => {},
+    attach: () => true,
+    reset() {},
+    stop() {
+      set({ state: 'off' });
+    },
+  };
+  return w;
+}
+
+test('A12: "Hey Jarvis" whose download failed is started again by itself (back-off: 2 s first), and the hint says so', async (t) => {
+  const { make, shown } = await setup(t);
+  const w = flakyWord(1);
+  const a = make('A', { lock: false, settings: { wakeClap: true, wakeWord: true }, createWakeWord: () => w });
+  a.sb.enter();
+  await settle();
+  assert.equal(w.starts, 1);
+  assert.equal(w.status().state, 'error');
+  assert.match(hint(shown().at(-1)), /couldn’t load \(offline\?\)\. Two claps still work\. Jarvis tries again by himself\./);
+  await new Promise((r) => setTimeout(r, 2100));
+  await settle();
+  assert.equal(w.starts, 2, 'started again after 2 s');
+  assert.equal(w.status().state, 'ready');
+});
+
+test('A12: the network coming back starts a failed "Hey Jarvis" again at once; leaving Standby stops the retries', async (t) => {
+  const { make } = await setup(t);
+  const w = flakyWord(2);
+  const a = make('A', { lock: false, settings: { wakeClap: true, wakeWord: true }, createWakeWord: () => w });
+  a.sb.enter();
+  await settle();
+  assert.equal(w.starts, 1);
+  globalThis.window.dispatch('online');
+  await settle();
+  assert.equal(w.starts, 2, 'at once when back online');
+  assert.equal(w.status().state, 'error', 'still failing');
+  a.sb.exit();
+  await new Promise((r) => setTimeout(r, 2200));
+  assert.equal(w.starts, 2, 'no retry after Standby closed');
 });
