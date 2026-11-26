@@ -3714,7 +3714,7 @@ function createVoiceMode(opts) {
   //   - A prompt is said once Voice Mode is free (askQuestion → sayPrompt), with one listen after it.
   //     Said to the end, it opens the 30-second window for a yes; cut short (barge-in), it is said again
   //     first. A prompt the wake greeting said ("Chrome is waiting for you: …") counts as said there.
-  //   - Its answers (the router's 'chrome-prompt', matchChromeAnswer): a no acts at once. A yes counts
+  //   - Its answers (the router's 'prompt' and 'chrome-prompt'): a no acts at once. A yes counts
   //     only from the best reading, within the window, and when no other reading is a no, cancel or
   //     stop word (else Jarvis says why and asks again); then the check ("Approving: … · say cancel"),
   //     and only then onAnswer, which sends it with the prompt's hash.
@@ -3785,8 +3785,8 @@ function createVoiceMode(opts) {
   }
 
   /**
-   * The open prompt answered by voice (router ids 'chrome-prompt' and 'prompt'), a word for the check
-   * that counts down, or a Chrome answer with nothing asked. True when the words were taken.
+   * The open prompt answered by voice (router ids 'prompt' and 'chrome-prompt'), a word for the check
+   * that counts down, or a bare yes (the hint: what to say). True when the words were taken.
    */
   function answerPrompt(hit, readings = [hit.reading], opts = {}) {
     let a = hit.action || {};
