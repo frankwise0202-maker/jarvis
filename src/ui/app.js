@@ -945,7 +945,8 @@ export async function startApp(rootEl) {
       }, false),
     hidden: () => !!document.hidden,
     standalone: () => safe(() => detectScreenEnv(window).standalone, false),
-    listensHidden: () => false,
+    // Voice Mode keeps listening while Jarvis is covered (mac-hf's A1 setting, on a computer).
+    listensHidden: () => safe(() => getSettings().handsFreeBackground === true, false),
     toast: (msg, opts) => toast(msg, opts),
   });
 
