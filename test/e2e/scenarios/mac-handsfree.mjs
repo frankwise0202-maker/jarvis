@@ -172,7 +172,7 @@ async function backInStandby(t, page = t.page, timeout = 20000) {
 }
 
 async function setup(t, { device = 'mac', speech = {}, settings = {}, george = false, bargeIn = false, wordStub = false, devVoice = null, page = null } = {}) {
-  const p = page || (await t.newPage({ device, settings: { ...(george ? GEORGE : {}), ...(bargeIn ? BARGE_IN : {}), ...settings } }));
+  const p = page || (await t.newPage({ device, settings: { ...(t.scenario.settings || {}), ...(george ? GEORGE : {}), ...(bargeIn ? BARGE_IN : {}), ...settings } }));
   await p.addInitScript(installFakeSpeech, speech);
   await p.addInitScript(installFakeMic, { wakeLock: true });
   await p.addInitScript(installNotifyProbe);
@@ -249,8 +249,8 @@ export default [
     device: 'mac',
     timeout: 120000,
     async run(t) {
-      await setup(t);
-      await queue(t.page, { parts: [{ at: 2500, text: 'What is the capital' }, { at: 3300, text: QUESTION }] });
+      await setup(t, { speech: { noSpeechMs: 6000 } }); // the recognizer waits for the words that come later
+      await queue(t.page, { parts: [{ at: 2500, text: 'What is the capital' }, { at: 3300, revise: QUESTION }] });
       await (await t.visible('voice-open')).click();
       await waitVoice(t, 'listening');
       const sessions = await t.page.evaluate(() => window.__voice.sessions.length);
@@ -586,6 +586,12 @@ export default [
         await t.waitFor(async () => (await t.page.evaluate(() => window.__selfFired.length)) > 0, { timeout: 30000, message: 'George to say "Jarvis"' });
         await t.page.waitForTimeout(600);
         t.assert((await voiceState(t.page)) === 'speaking', `still speaking (${await voiceState(t.page)})`);
+      });
+      await t.step('the same detection a few words later (outside the mask): he stops and listens', async () => {
+        await t.page.waitForTimeout(1900); // past about 1 s after "Jarvis"
+        t.assert((await voiceState(t.page)) === 'speaking', 'he is still answering');
+        await t.page.evaluate(() => window.__jarvisWake.say());
+        await waitVoice(t, 'listening', { timeout: 5000 });
       });
     },
   },
