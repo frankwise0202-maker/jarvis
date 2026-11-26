@@ -3194,7 +3194,9 @@ base, **Sync now**); a Core 1.0 (404 on `GET api/sync`) says to run `jarvis-core
   without `exportedAt`) and still listed on the Core: not sent; otherwise `PUT`. A device's mark moves
   only when its backup merged whole (a conversation running here waits for the next sync); a backup
   that can't be merged (damaged, a newer Jarvis) is said once and not downloaded again until that
-  device uploads anew.
+  device uploads anew. With no change noted, the export isn't built at all while the last upload or
+  the last comparison (`jarvis.sync.v1` `upload.checkedAt`, v8.1 A13) is under an hour old; before,
+  an idle device rebuilt it at every 10-minute sync once its last upload was an hour old.
 - *The merge* (vetted exactly like an import: `cleanConversation`, `importLibraryItems` in parts of
   2,000, `mergeMemory`). Only ever adds: missing here and never on this device → added; missing here
   but this device had it (`jarvis.sync.known.v1`: every id in its uploads and merges, facts by their
@@ -4162,11 +4164,22 @@ barge-in microphone too) and waits in line. When the holder leaves Standby or cl
 by itself. (The design had the holder asked to let go over a BroadcastChannel; `steal` needs no message and can't be
 missed.) No Web Locks (or a request that throws): `unsupported`, as before.
 
+**Standby at launch** (A11, SHOULD; u1 gap 4). Setting `standbyAtLaunch` (`''` automatic, `'on'`, `'off'`; Settings →
+Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)**, computers only): on a computer, set up, not the demo,
+`'on'` or automatic with "Hey Jarvis" on (`wakeWord`), the boot opens Standby (`enterStandby({ again: true })`) after
+the onboarding check, unless the address asks for something else (`?optics=1`, `?homebase=…` from a notification). Standby's `needsClick()` dep: not a phone, `navigator.userActivation.hasBeenActive` false, and
+George can't speak without a click (`georgeWithoutClick()`: his voice, the home base's or this Mac's, on and ready,
+and Jarvis installed, `isStandalone()`). While it holds, the state line says **CLICK ONCE SO JARVIS CAN SPEAK**. The
+line is asked once per opening when Standby renders (Chrome makes the page active before the click or key reaches
+Standby, so the handler can't ask again), and the next click or Enter/Space answers it: `unlock({ tap: true })`
+inside that gesture, the line goes, Standby stays; any later tap leaves as before. The E2E harness seeds
+`standbyAtLaunch: 'off'` so scenarios with "Hey Jarvis" on start on the home screen.
+
 **Tests.** Unit `hands-free` (`followUp`), `voice.handsfree` (the 8 s window and one try; a follow-up answered; the
 brake, woken and tapped, Return to standby off; a tap or a barge-in starts the count again), `standby.lock` (one, two
-and three windows, steal, withdrawing, no Web Locks), `standby.hands-free` (Standby with the lock). E2E
-`mac-handsfree-followup-window`, `mac-handsfree-hidden-tapped`, `standby-one-window` (two pages of one browser
-context).
+and three windows, steal, withdrawing, no Web Locks), `standby.hands-free` (Standby with the lock; the click-once
+line, its click and Enter in Chrome's order). E2E `mac-handsfree-followup-window`, `mac-handsfree-hidden-tapped`,
+`standby-one-window` (two pages of one browser context), `mac-standby-at-launch`.
 
 ## 29. v8.1: Walkthroughs
 

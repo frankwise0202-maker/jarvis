@@ -112,6 +112,10 @@ export function createStandby(deps = {}) {
   let audioOffs = [];
   let tipAsked = false;
   let muted = false; // v8.1 (A12): the live microphone has sent exact digital silence for 10 s
+  // v8.1 (A11): the screen says CLICK ONCE SO JARVIS CAN SPEAK (decided when shown: Chrome marks the page active
+  // before the click or key reaches Standby), and whether this opening already took that click.
+  let clickAsked = false;
+  let clickTaken = false;
   const lock = typeof createLock === 'function' ? safeLock(() => createLock((st) => onLockChange(st))) : null;
   const wordRetry = createBackoff(() => restartWord()); // v8.1 (A12): "Hey Jarvis" started again after a failure
 
@@ -256,6 +260,8 @@ export function createStandby(deps = {}) {
 
   function open() {
     phase = 'open';
+    clickAsked = false;
+    clickTaken = false;
     mount();
     shiftIndex = 0;
     applyShift();
@@ -438,6 +444,7 @@ export function createStandby(deps = {}) {
       event.stopPropagation(); // not the tap that leaves Standby
     }
     if (phase !== 'open' || !lock || lock.state !== 'elsewhere') return;
+    if (clickAsked) clickedOnce(); // v8.1 (A11): this click counts as the one speech needed too
     lock.take();
     render();
   }
@@ -717,7 +724,7 @@ export function createStandby(deps = {}) {
   function onTap(event) {
     if (phase !== 'open') return;
     if (event) event.preventDefault();
-    const forSpeech = clickNeeded();
+    const forSpeech = clickAsked; // as the screen asked: the page is already active inside this click
     if (forSpeech) clickedOnce(); // v8.1 (A11): this click is the one speech needed
     // iOS may want one tap before its microphone and audio start: this tap starts them.
     if (listen === 'needs-tap' && capture) {
@@ -745,7 +752,7 @@ export function createStandby(deps = {}) {
       }
       return;
     }
-    if ((event.key === 'Enter' || event.key === ' ') && clickNeeded()) {
+    if ((event.key === 'Enter' || event.key === ' ') && clickAsked) {
       event.preventDefault();
       event.stopPropagation();
       clickedOnce(); // v8.1 (A11): a key counts as the click speech needed
@@ -769,7 +776,19 @@ export function createStandby(deps = {}) {
     return safeCall(() => needsClick() === true, false);
   }
 
+  /**
+   * v8.1 (A11): whether the screen asks for the click. Once asked, the line stays until Standby takes a click or
+   * Enter/Space (the click that answers it has already made the page active); one per opening, so a later tap
+   * always leaves.
+   */
+  function askForClick() {
+    if (!clickAsked && !clickTaken && clickNeeded()) clickAsked = true;
+    return clickAsked;
+  }
+
   function clickedOnce() {
+    clickAsked = false;
+    clickTaken = true;
     try {
       unlock({ tap: true }); // inside this gesture: the voice that will greet the owner can speak from now on
     } catch {
@@ -882,7 +901,7 @@ export function createStandby(deps = {}) {
     els.pill.setAttribute('aria-label', micOn && muted ? 'The microphone is on but sends no sound at all: is it muted?' : what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : micOn ? `The microphone is on, on this device only${wordComing ? '; “Hey Jarvis” is getting ready' : ''}.` : pill.toLowerCase());
     setText(els.hint, hintText(what, ws));
     setText(els.status, safeText(statusLine));
-    const word0 = clickNeeded() ? 'CLICK ONCE SO JARVIS CAN SPEAK' : safeText(stateWord); // v8.1 (A11)
+    const word0 = askForClick() ? 'CLICK ONCE SO JARVIS CAN SPEAK' : safeText(stateWord); // v8.1 (A11)
     setText(els.word, word0 && word0 !== 'STANDING BY' ? word0 : '');
     els.word.hidden = !els.word.textContent;
   }

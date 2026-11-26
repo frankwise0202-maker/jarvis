@@ -439,21 +439,69 @@ test('A12: the network coming back starts a failed "Hey Jarvis" again at once; l
 
 test('A11: after a restart with no click yet (and George unavailable), Standby says CLICK ONCE SO JARVIS CAN SPEAK; that click unlocks speech and Standby stays; the next one leaves', async (t) => {
   const { make, shown } = await setup(t);
-  let clicked = false;
+  // Chrome's navigator.userActivation.hasBeenActive: the press makes the page active before its click (or the key
+  // before its keydown) reaches Standby.
+  let active = false;
   const unlocks = [];
-  const a = make('A', { lock: false, needsClick: () => !clicked, unlock: (o) => {
-    unlocks.push(o);
-    if (o && o.tap) clicked = true; // the page has had its click now
-  } });
+  const a = make('A', { lock: false, needsClick: () => !active, unlock: (o) => unlocks.push(o) });
   a.sb.enter({ again: true }); // opened by itself at launch: no tap behind it
   await settle();
   const root = shown().at(-1);
   assert.equal(root.find('standby-state').textContent, 'CLICK ONCE SO JARVIS CAN SPEAK');
   assert.equal(root.find('standby-state').hidden, false);
+  active = true;
   root.click();
   assert.equal(a.sb.isOpen(), true, 'Standby stays');
   assert.deepEqual(unlocks.at(-1), { tap: true }, 'speech unlocked inside the click');
   assert.equal(root.find('standby-state').textContent, '', 'the line goes');
   root.click();
   assert.equal(a.sb.isOpen(), false, 'an ordinary tap leaves, as before');
+});
+
+test('A11: Enter answers the click-once line the same way (Standby stays); with George able to speak there is no line and a tap leaves', async (t) => {
+  const { make, shown, dom } = await setup(t);
+  let active = false;
+  const unlocks = [];
+  const a = make('A', { lock: false, needsClick: () => !active, unlock: (o) => unlocks.push(o) });
+  a.sb.enter({ again: true });
+  await settle();
+  assert.equal(shown().at(-1).find('standby-state').textContent, 'CLICK ONCE SO JARVIS CAN SPEAK');
+  active = true;
+  const ev = dom.doc.dispatch('keydown', { key: 'Enter' });
+  assert.equal(ev.defaultPrevented, true);
+  assert.equal(a.sb.isOpen(), true, 'Standby stays');
+  assert.deepEqual(unlocks.at(-1), { tap: true });
+  assert.equal(shown().at(-1).find('standby-state').textContent, '');
+  dom.doc.dispatch('keydown', { key: 'Enter' });
+  assert.equal(a.sb.isOpen(), false, 'the next Enter leaves, as before');
+
+  const b = make('B', { lock: false, needsClick: () => false, unlock: () => {} }); // George can speak without a click
+  b.sb.enter({ again: true });
+  await settle();
+  const root = shown().at(-1);
+  assert.equal(root.find('standby-state').hidden, true, 'no click-once line');
+  root.click();
+  assert.equal(b.sb.isOpen(), false, 'a tap leaves');
+});
+
+test('A11: Use this window answers the click-once line too (its click made the page active)', async (t) => {
+  const { make, shown } = await setup(t);
+  const a = make('A');
+  a.sb.enter();
+  await settle();
+  let active = false;
+  const unlocks = [];
+  const b = make('B', { needsClick: () => !active, unlock: (o) => unlocks.push(o) });
+  b.sb.enter({ again: true });
+  await settle();
+  const rootB = shown().at(-1);
+  assert.equal(rootB.find('standby-state').textContent, 'CLICK ONCE SO JARVIS CAN SPEAK');
+  active = true;
+  rootB.find('standby-use-here').click();
+  await settle();
+  assert.equal(b.sb.listening, 'live', 'Standby moved here');
+  assert.deepEqual(unlocks.at(-1), { tap: true }, 'speech unlocked inside that click');
+  assert.equal(rootB.find('standby-state').textContent, '', 'the line goes');
+  rootB.click();
+  assert.equal(b.sb.isOpen(), false, 'the next tap leaves');
 });
