@@ -317,6 +317,24 @@ export const CHROME_VOICE = {
     ['yes', 'CV-check', 'chrome-prompt'],
     ['okay', 'CV-check', 'chrome-prompt'],
     ['okay, thanks', 'CV-check', 'chrome-prompt'],
+    // the short words that sound like a withdraw word only let it count on (REDTEAM-VOICE-3), and a sentence that
+    // starts with a no word withdraws it (REDTEAM-VOICE-14)
+    ['go', 'CV-check', 'chrome-prompt'],
+    ['start it', 'CV-check', 'chrome-prompt'],
+    ['no no', 'CV-check', 'chrome-prompt'],
+    ['wait, no', 'CV-check', 'chrome-prompt'],
+    // a sentence with "approve" that isn't a reserved one: the hint, never Claude (REDTEAM-VOICE-14)
+    ['yes I approve', 'CV-prompt', 'chrome-prompt:chrome-hint'],
+    // "how's it going?" is Chrome's only while a task runs (REDTEAM-VOICE-13)
+    ["how's it going", 'CV-run', 'chrome-status'],
+    // typed: a countdown in the chat takes the check's words (REDTEAM-VOICE-5); a prompt's card waiting takes a
+    // typed no as its button would, and points a typed yes to its button (REDTEAM-VOICE-14)
+    ['cancel', 'CV-typed', 'chrome-typed'],
+    ['no', 'CV-typed', 'chrome-typed'],
+    ['stop', 'CV-typed', 'chrome-typed'],
+    ['start now', 'CV-typed', 'chrome-typed'],
+    ['deny', 'CV-card', 'chrome-typed'],
+    ['approve', 'CV-card', 'chrome-typed'],
   ],
   not: [
     'how do I clear my cookies in Chrome',
@@ -330,6 +348,9 @@ export const CHROME_VOICE = {
     'should I approve the budget',
     'deny everything',
     'what does allow once mean',
+    // an everyday greeting, no task running (REDTEAM-VOICE-13)
+    "how's it going",
+    "how's it going, Jarvis",
   ],
   states: {
     'CV-ctx': { surface: 'voice', chrome: CV_CONTEXT },
@@ -342,6 +363,9 @@ export const CHROME_VOICE = {
     'CV-budget': { surface: 'voice', prompt: { ...CV_PROMPT, id: 'chrome:p3', kind: 'budget', choices: [{ id: 'continue', label: 'Continue' }, { id: 'stop', label: 'Stop' }] } },
     'CV-check': { surface: 'voice', chromeCheck: { kind: 'task' } },
     'CV-prompt-tour': { surface: 'voice', prompt: CV_PROMPT, tour: { active: true, atChoice: false, choices: [], stepId: 's2' } },
+    // typed in the chat: a task's countdown (Voice Mode closed), and a prompt's card waiting
+    'CV-typed': { surface: 'chat', via: 'typed', chrome: { ...CV_CONTEXT, task: { id: '', status: 'starting', text: 'find a USB-C hub' }, checking: true } },
+    'CV-card': { surface: 'chat', via: 'typed', chrome: { ...CV_CONTEXT, task: { id: 't1', status: 'waiting', text: 'find a 4K monitor' }, waiting: 1 } },
   },
 };
 

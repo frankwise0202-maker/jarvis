@@ -345,7 +345,7 @@ export function matchTypedChrome(text, state = {}) {
     if (!said) return null;
     const kind = reservedKind(text);
     if (kind === 'deny' || isBareNo(text)) return answerAction({ do: 'chrome-check-typed', how: 'deny' });
-    if (kind === 'approve' || kind === 'once' || kind === 'budget' || kind === 'steps' || /(?:^|\s)(?:approve|approved)(?:\s|$)/.test(said)) {
+    if (kind === 'approve' || kind === 'once' || kind === 'budget' || kind === 'steps' || (/(?:^|\s)(?:approve|approved)(?:\s|$)/.test(said) && !ASKING.test(said))) {
       return answerAction({ do: 'chrome-check-typed', how: 'card' });
     }
   }

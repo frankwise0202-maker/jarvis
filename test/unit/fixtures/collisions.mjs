@@ -240,6 +240,22 @@ export const CHROME_VOICE = {
     // A hologram open in a Chrome context: today's hologram and screen takes stay (R10, C3).
     { words: 'stop that', state: 'CV-holo', winner: 'hologram', why: 'holds the model still (free, undoable), as with any hologram open' },
     { words: 'expand this in a different window', state: 'CV-holo', winner: 'screens', why: 'a window (C3), as with any hologram open' },
+    // REDTEAM-VOICE-13: "how's it going?" asks about the Chrome task only while one runs, waits or is starting (with
+    // nothing running it is a greeting for Jarvis: the section's `not` rows).
+    ...['H4', 'H4O', 'CV-run', 'CV-prompt', 'CV-typed', 'CV-card'].flatMap((state) =>
+      ["how's it going", "how's it going, Jarvis"].map((words) => ({ words, state, winner: 'chrome-status', why: 'a Chrome task runs (or waits): the question is about it (free, local)' })),
+    ),
+    // REDTEAM-VOICE-5: typed during a countdown, the check's own words come first (the answer layer): "stop" withdraws
+    // it (and stops a task that runs) before voice's bare stop.
+    { words: 'stop', state: 'CV-typed', winner: 'chrome-typed', why: 'the countdown in the chat is withdrawn: nothing goes to Chrome' },
+    { words: 'okay stop', state: 'CV-typed', winner: 'chrome-typed', why: 'the countdown in the chat is withdrawn: nothing goes to Chrome' },
+    { words: 'stop Chrome', state: 'CV-typed', winner: 'chrome-typed', why: 'the countdown in the chat is withdrawn, and a task that runs stops (as by voice during a check)' },
+    { words: 'cancel Chrome', state: 'CV-typed', winner: 'chrome-typed', why: 'the countdown in the chat is withdrawn: nothing goes to Chrome' },
+    // REDTEAM-VOICE-14: typed with a prompt's card waiting (SPEC §32.3.5): a no goes out as the card's would, a yes
+    // points to the card's button.
+    { words: 'cancel Chrome', state: 'CV-card', winner: 'chrome-typed', why: "the card's no, as its button (Voice Mode's prompt takes it the same way)" },
+    { words: 'spend more in Chrome', state: 'CV-card', winner: 'chrome-typed', why: "a yes typed: the card's button answers it (typing isn't the check)" },
+    { words: 'allow once in Chrome', state: 'CV-card', winner: 'chrome-typed', why: "a yes typed: the card's button answers it (typing isn't the check)" },
   ],
 };
 
