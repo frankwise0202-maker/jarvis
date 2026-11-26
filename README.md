@@ -361,13 +361,14 @@ other windows, minimized, or with the display asleep.
 - **Chrome's red dot and the Mac's orange dot** are on whenever Standby listens, so they can't tell you whether he
   is waiting for "Hey Jarvis" or hearing your question. The chimes and the title can.
 - **After an answer he listens about 8 seconds** for a follow-up. If nobody speaks, he goes back to Standby.
-- **The brake.** While his window is in the background, he takes at most 3 questions in a row without "Hey
-  Jarvis" (to wake him, or at the start of a question), a tap or a key. Then he says "Say “Hey Jarvis” when you
-  need me." and goes back to Standby (or just stops listening, if you started with a tap). A TV left on can't run
-  up paid questions. Two claps can still stop him while he talks, but they don't start the count again (a door or
-  a bang on TV sounds like claps), not even by waking him again: after the brake, a wake by claps in the background
-  takes only his free answers ("play it", "go back to sleep"), until "Hey Jarvis", a tap or a key, or Jarvis on
-  screen.
+- **The brake.** While his window is in the background, he takes at most 3 paid questions in a row without "Hey
+  Jarvis" (to wake him, or at the start of a question), a tap or a key. Free commands ("stop the music", "play Back
+  in Black") don't count. Then he says "Say “Hey Jarvis” when you need me." and goes back to Standby (or just stops
+  listening, if you started with a tap). A TV left on can't run up paid questions. Two claps can still stop him
+  while he talks, but they don't start the count again (a door or a bang on TV sounds like claps), not even by
+  waking him again: after the brake, a wake by claps in the background still does free things ("play it", "go back
+  to sleep", "stop Chrome", "stop the music"), but anything that would cost money gets the brake line, until "Hey
+  Jarvis" (also said with the claps), a tap or a key, or Jarvis on screen.
 - **Interrupt him by voice.** While George is speaking, say "Hey Jarvis" or clap twice: he stops and listens (a
   walkthrough pauses at its step). It's free and stays on your Mac. It works with **Speakerphone speaks, Mac
   listens** and **Switch** (Settings → Voice → Microphone and speaker), once the second step of **Test hands-free**

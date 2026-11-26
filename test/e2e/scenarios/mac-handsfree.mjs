@@ -1146,6 +1146,67 @@ export default [
     },
   },
   {
+  {
+    name: 'mac-handsfree-brake-claps-free',
+    title: 'MAC-R3-3: after the brake (hidden, a TV), a claps wake still carries out a free command ("play Back in Black": the Music card, no Claude request, no brake line), and a question in the same braked state gets the brake line and is not sent',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 300000,
+    async run(t) {
+      await setup(t, { speech: { noSpeechMs: 6000 } });
+      await enterStandby(t);
+      await setHidden(t.page, true);
+      await t.page.evaluate(() => {
+        window.__voice.queue.length = 0;
+        window.__tv = true;
+        const proto = window.SpeechRecognition.prototype;
+        const start = proto.start;
+        proto.start = function tv(...args) {
+          if (window.__tv && !window.__voice.queue.length) window.__voice.queue.push('What is the capital of Spain?');
+          return start.apply(this, args);
+        };
+      });
+      await waitListening(t, t.page, 60000);
+      await t.page.waitForTimeout(1700);
+      await play(t.page, DOUBLE_CLAP);
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
+      const afterBrake = leadCount(t);
+      const brakes1 = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+      t.assert(afterBrake <= 3 && brakes1 >= 1, `the TV braked him (${afterBrake} paid, ${brakes1} brake lines)`);
+      await t.step('braked, claps and "play Back in Black" in the offer’s listen: the Music card, nothing paid, no brake line', async () => {
+        await waitListening(t, t.page, 60000);
+        await t.page.waitForTimeout(1700);
+        await t.page.evaluate(() => {
+          window.__tv = false;
+          window.__voice.queue.length = 0;
+          window.__voice.queue.push('', 'Play Back in Black.');
+        });
+        await play(t.page, DOUBLE_CLAP);
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+        await t.page.locator(tid('music-card')).last().waitFor({ state: 'attached', timeout: 30000 });
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
+        const brakes = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+        t.assert(leadCount(t) === afterBrake, `nothing paid (${leadCount(t) - afterBrake})`);
+        t.assert(brakes === brakes1, `no brake line for a free command (${brakes1} -> ${brakes})`);
+      });
+      await t.step('still braked: claps and a question get the brake line, nothing sent', async () => {
+        await waitListening(t, t.page, 60000);
+        await t.page.waitForTimeout(1700);
+        await t.page.evaluate(() => {
+          window.__voice.queue.length = 0;
+          window.__voice.queue.push('', 'What is the capital of Italy?');
+        });
+        const brakes0 = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+        await play(t.page, DOUBLE_CLAP);
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
+        const brakes = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+        t.assert(leadCount(t) === afterBrake, `nothing paid (${leadCount(t) - afterBrake})`);
+        t.assert(brakes > brakes0, 'the brake line');
+      });
+    },
+  },
     name: 'mac-handsfree-owner-10x',
     title: 'The owner’s setup, ten rounds: setup 1 (the speakerphone speaks, the Mac’s microphone listens), the Test passed, George, Jarvis hidden the whole time; wake by claps or "Hey Jarvis", ask, answer, barge-in by "Hey Jarvis", claps or none, follow-up, back to Standby: never deaf, never stuck, never two listens at once, never talking over himself',
     device: 'mac',
