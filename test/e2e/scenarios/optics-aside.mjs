@@ -84,37 +84,6 @@ function videoBox(page) {
   });
 }
 
-/**
- * How different the live picture is from the card's picture now: the share of a 64 × 36 gray
- * thumbnail's pixels that moved by more than 25 (Watch's own measure), drawn in the page.
- */
-function sceneDiff(page) {
-  return page.evaluate(() => {
-    const gray = (src, w, h) => {
-      const c = document.createElement('canvas');
-      c.width = 64;
-      c.height = 36;
-      const g = c.getContext('2d', { willReadFrequently: true });
-      g.drawImage(src, 0, 0, w, h, 0, 0, 64, 36);
-      const d = g.getImageData(0, 0, 64, 36).data;
-      const out = new Uint8Array(64 * 36);
-      for (let i = 0, j = 0; j < out.length; i += 4, j++) out[j] = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
-      return out;
-    };
-    const v = document.querySelector('[data-testid="optics-video"]');
-    const card = document.querySelector('[data-testid="optics-aside-picture"] .optics-frozen-media');
-    if (!v || !card || !v.videoWidth) return 1;
-    // An <img>'s width is its size on screen; its picture is naturalWidth × naturalHeight (a canvas has width).
-    const cw = card.naturalWidth || card.width;
-    const ch = card.naturalHeight || card.height;
-    const a = gray(v, v.videoWidth, v.videoHeight);
-    const b = gray(card, cw, ch);
-    let n = 0;
-    for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 25) n++;
-    return n / a.length;
-  });
-}
-
 async function seedSpend(page, usd) {
   await page.evaluate((usd) => localStorage.setItem('jarvis.liveView.spend', JSON.stringify([{ t: Date.now() - 60000, usd }])), usd);
 }
@@ -226,23 +195,41 @@ export default [
       await page.context().grantPermissions(['camera']);
       await t.goto('/?optics=1');
       await waitLive(t);
-      await lookAside(t);
-      // The feed's two scenes differ in about 9% of the thumbnail (Watch's measure: more than 6% is a
-      // change); the same scene, well under 2%.
+      // The live picture's 64 × 36 gray thumbnail, drawn as the app draws Watch's: the same pipeline every
+      // time, so one scene compares as equal (the card's JPEG would add its own noise). The feed's two
+      // scenes differ in about 9% of it; the app calls more than 6% a change.
+      const thumb = () =>
+        page.evaluate(() => {
+          const v = document.querySelector('[data-testid="optics-video"]');
+          const c = document.createElement('canvas');
+          c.width = 64;
+          c.height = 36;
+          const g = c.getContext('2d', { willReadFrequently: true });
+          g.drawImage(v, 0, 0, 64, 36);
+          const d = g.getImageData(0, 0, 64, 36).data;
+          const out = [];
+          for (let i = 0; i < d.length; i += 4) out.push((d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8);
+          return out;
+        });
+      const differ = (a, b) => a.filter((x, i) => Math.abs(x - b[i]) > 25).length / a.length;
       let lastDiff = 0;
-      const sceneIs = async (same) =>
+      const sceneIs = (ref, same) =>
         t.waitFor(async () => {
-          const d = (lastDiff = await sceneDiff(page));
+          const d = (lastDiff = differ(await thumb(), ref));
           return same ? d < 0.02 : d > 0.06;
         }, { timeout: 12000, interval: 100, message: () => `the scene to be ${same ? 'the card\'s' : 'a new one'} (difference ${lastDiff.toFixed(3)})` });
       // The feed shows each scene for 4 s: wait for the change into the one wanted, so the question is
       // asked near the start of its 4 s (never as it is about to change again).
-      const waitScene = async (same) => {
-        await sceneIs(!same);
-        await sceneIs(same);
+      const waitScene = async (ref, same) => {
+        await sceneIs(ref, !same);
+        await sceneIs(ref, same);
       };
+      // The first Look right after the scene changes, and the scene it shows.
+      await sceneIs(await thumb(), false);
+      let card = await thumb();
+      await lookAside(t);
       await t.step('the same scene: "What is this?" is a follow-up on the card, no frame sent', async () => {
-        await waitScene(true);
+        await waitScene(card, true);
         const before = leads(t).length;
         await typed(t, 'What is this?');
         await t.waitFor(() => leads(t).length > before, { timeout: 8000, message: 'the follow-up to be sent' });
@@ -254,9 +241,10 @@ export default [
         t.assert(marks.includes('ABOUT THIS PICTURE'), `marked ABOUT THIS PICTURE (${marks.join(', ')})`);
       });
       await t.step('a changed scene: "What is this?" takes a new Look, marked NEW LOOK', async () => {
-        await waitScene(false);
+        await waitScene(card, false);
         const before = leads(t).length;
         await typed(t, 'What is this?');
+        card = await thumb(); // the new Look's scene (it holds for the next 4 s)
         await t.waitFor(() => leads(t).length > before, { timeout: 8000, message: 'the new Look to be sent' });
         t.assert(hasImage(leads(t).at(-1)), 'a new frame');
         await waitAside(t);
@@ -265,7 +253,7 @@ export default [
         t.assert((await t.count('optics-log-item')) === 2, 'the first Look folded into the log');
       });
       await t.step('"look again" always takes a new Look, even with the card\'s scene', async () => {
-        await waitScene(true);
+        await waitScene(card, true);
         const before = leads(t).length;
         await typed(t, 'Look again');
         await t.waitFor(() => leads(t).length > before, { timeout: 8000, message: 'the Look' });
