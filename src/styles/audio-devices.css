@@ -151,6 +151,7 @@
 
 .ad-field {
   display: grid;
+  align-content: start; /* the two pickers keep their own height when one's help wraps */
   gap: 6px;
   min-width: 0;
 }
