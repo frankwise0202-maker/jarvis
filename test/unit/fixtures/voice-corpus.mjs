@@ -170,7 +170,9 @@ export const CHROME_VOICE = {
     ['yes', 'CV-prompt', 'chrome-prompt:chrome-hint'],
     ['continue', 'CV-prompt', 'chrome-prompt:chrome-hint'],
     ['go ahead', 'CV-prompt', 'chrome-prompt:chrome-hint'],
-    ['continue', 'CV-prompt-tour', null],
+    // with a tour going too, "continue" is the tour's (never the prompt's, never the hint); the row waits
+    // (T2's `waiting`) until tours' 'tour' entry is registered
+    ['continue', 'CV-prompt-tour', 'tour'],
     // nothing asked: a yes that names Chrome is still Chrome's (every surface)
     ['spend more in Chrome', 'V0', 'chrome-answer'],
     ['allow once in Chrome', 'V0', 'chrome-answer'],
