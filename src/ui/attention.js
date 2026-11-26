@@ -8,6 +8,8 @@
 //   if (info) missionFinished(info)             // on the TurnRun 'end' event
 //   await requestNotifyPermission()             // ONLY from a tap/click handler
 //   notifyPermission(), explainNotifyPermission(state)       // for the Settings UI
+//   const note = notify({ tag, title, body, onClick })       // v8.1: a tagged notification
+//   note.close() / closeNotify(tag)
 //   sessionTitle(state)                         // v8.1: a hands-free session's state in the tab title
 //                                               // while Jarvis is in the background (see below)
 //
@@ -24,6 +26,9 @@ let unseen = 0;
 let titleMark = null; // { base, marked } while the tab title carries our "(n) " marker
 const fallbackNotes = new Set(); // Notifications made with the constructor (no service worker)
 let warned = false;
+const NOTE_PREFIX = 'jarvis-note-';
+const notes = new Map(); // notify(): tag -> { onClick, n (a Notification made here) }
+let noteClicks = false; // listening for the service worker's NOTIFY_CLICK
 
 // ---- public API ---------------------------------------------------------------------------------
 
@@ -65,6 +70,78 @@ export function missionFinished(info) {
     warnOnce('missionFinished failed', err);
     return false;
   }
+}
+
+/**
+ * v8.1 (Phase 0 item 6): a tagged system notification ("Jarvis is listening.", "Chrome asks: …"),
+ * apart from the "finished" ones and never cleared with them. Shown only once notifications are
+ * allowed (it never asks). The same tag replaces the one shown before; closeNotify(tag), or the
+ * handle's close(), removes it. A click brings Jarvis forward, then runs onClick(). Returns
+ * { shown, close() } (shown: it was asked for; it is delivered asynchronously).
+ */
+export function notify({ tag = 'note', title = '', body = '', onClick = null } = {}) {
+  const handle = { shown: false, close: () => closeNotify(tag) };
+  try {
+    const key = noteTag(tag);
+    closeNotify(tag);
+    if (notifyPermission() !== 'granted') return handle;
+    const heading = plainText(title, 80) || 'Jarvis';
+    const text = plainText(body, 180);
+    const entry = { onClick: typeof onClick === 'function' ? onClick : null, n: null };
+    notes.set(key, entry);
+    const base = appBase();
+    const options = { body: text, tag: key, icon: new URL('icons/icon-192.png', base).href, data: { url: base, notifyTag: key }, timestamp: Date.now() };
+    // Made here, its click runs here (Chrome on a computer); else the service worker shows it, and its
+    // click focuses Jarvis and tells this page (NOTIFY_CLICK).
+    if (typeof Notification === 'function') {
+      try {
+        const n = new Notification(heading, options);
+        n.onclick = () => {
+          noteClicked(key);
+          try {
+            n.close();
+          } catch {
+            /* ignore */
+          }
+        };
+        n.onclose = () => {
+          if (entry.n === n) entry.n = null;
+        };
+        entry.n = n;
+        handle.shown = true;
+        return handle;
+      } catch {
+        /* e.g. Android Chrome only allows notifications from a service worker */
+      }
+    }
+    listenForNoteClicks();
+    serviceWorkerRegistration()
+      .then((reg) => {
+        if (!reg || typeof reg.showNotification !== 'function' || notes.get(key) !== entry) return null;
+        return reg.showNotification(heading, { ...options, data: { url: reg.scope || base, notifyTag: key } });
+      })
+      .catch((err) => warnOnce('notification failed', err));
+    handle.shown = true;
+    return handle;
+  } catch (err) {
+    warnOnce('notify failed', err);
+    return handle;
+  }
+}
+
+/** v8.1: close the notification notify() showed with this tag (made here or by the service worker). */
+export function closeNotify(tag = 'note') {
+  const key = noteTag(tag);
+  const entry = notes.get(key);
+  notes.delete(key);
+  if (entry && entry.n) {
+    try {
+      entry.n.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  closeServiceWorkerNotifications(key);
 }
 
 /** Clear the badge, the title marker and any notification Jarvis is still showing. */
@@ -211,6 +288,49 @@ export function describeFinishedTurn(turn, conversation, { minDurationMs = 20000
 
 // ---- internals ----------------------------------------------------------------------------------
 
+function noteTag(tag) {
+  const t = String(tag ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return NOTE_PREFIX + (t || 'note');
+}
+
+/** A notify() notification was clicked: Jarvis comes forward, then its onClick runs (once). */
+function noteClicked(key) {
+  const entry = notes.get(key);
+  notes.delete(key);
+  try {
+    window.focus();
+  } catch {
+    /* ignore */
+  }
+  if (entry && entry.onClick) {
+    try {
+      entry.onClick();
+    } catch (err) {
+      warnOnce('a notification click failed', err);
+    }
+  }
+}
+
+/** The service worker tells the page which notify() notification was clicked (public/sw.js). */
+function listenForNoteClicks() {
+  if (noteClicks) return;
+  try {
+    const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : null;
+    if (!sw || typeof sw.addEventListener !== 'function') return;
+    noteClicks = true;
+    sw.addEventListener('message', (event) => {
+      const data = event && event.data;
+      if (data && typeof data === 'object' && data.type === 'NOTIFY_CLICK' && typeof data.tag === 'string' && data.tag.startsWith(NOTE_PREFIX)) noteClicked(data.tag);
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 function notifyEnabled() {
   let s = null;
   try {
@@ -340,12 +460,12 @@ async function showNotification(title, body) {
   }
 }
 
-function closeServiceWorkerNotifications() {
+function closeServiceWorkerNotifications(tag = TAG) {
   try {
     const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : null;
     if (!sw || typeof sw.getRegistration !== 'function') return;
     sw.getRegistration()
-      .then((reg) => (reg && typeof reg.getNotifications === 'function' ? reg.getNotifications({ tag: TAG }) : []))
+      .then((reg) => (reg && typeof reg.getNotifications === 'function' ? reg.getNotifications({ tag }) : []))
       .then((list) => {
         for (const n of list || []) n.close();
       })
