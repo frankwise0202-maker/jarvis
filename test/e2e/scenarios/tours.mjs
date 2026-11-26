@@ -395,6 +395,12 @@ export default [
         const said = (await voice(t)).said.length;
         await sayNow(t, 'Say that again.');
         await t.waitFor(async () => (await voice(t)).said.slice(said).some((x) => /^Next to it:/.test(norm(x))), { timeout: 30000, message: 'that step said again' });
+        // ROUTING-R2-9: "say that again" there says that step and waits there again (it doesn't play on to the end).
+        await waitStatus(t, 'waiting', { timeout: 30000 });
+        t.assert((await viewerAttr(t, 'tour-step')) === 'neighbours', 'it waits on the same step again');
+        t.assert(!(await voice(t)).said.slice(said).some((x) => /^That's the battery\./.test(norm(x))), 'the end step is not said');
+        await sayNow(t, 'Next.');
+        await t.waitFor(async () => (await voice(t)).said.slice(said).some((x) => /^That's the battery\./.test(norm(x))), { timeout: 30000, message: '"next" goes on to the end' });
       });
       await t.step('"skip to the fan": the battery\'s tour has no fan step, so the camera goes to it, paused, and Jarvis says how to go on', async () => {
         await waitStatus(t, 'done', { timeout: 60000 });

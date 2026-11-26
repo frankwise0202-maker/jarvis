@@ -380,8 +380,11 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     if (!live() || status === 'starting') return false;
     const s = current();
     if (!s) return false;
+    // On a step the tour waits at (after "back", or a wait step), or while "back" says it: that step again, then it
+    // waits again (B5: "repeat" says the step again; ROUTING-R2-9).
+    const only = status === 'waiting' || !!(run && run.only);
     if (isDecision(s) && !s.say) askAt(s, { replay: true });
-    else playFrom(s.id, { replay: true });
+    else playFrom(s.id, { replay: true, only });
     return true;
   }
 
