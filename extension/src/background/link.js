@@ -34,6 +34,7 @@
 import { ALARM, ALARM_PERIOD_MIN, Relay, UNREACHABLE_MS } from './relay.js';
 import { VOICE_APPROVALS_AVAILABLE, approvalsOn, promptFields, promptHash, spokenLine, voiceDecision, voiceSummary } from './voice-policy.js';
 import { addressAction } from './actions.js';
+import { fileKind } from './controller.js';
 import { MAX_NAVIGATE_URL, addressConcern, blockedReason, cardAddress, siteOf } from './sites.js';
 import { FINAL_STATUSES } from '../shared/protocol.js';
 import { VOICE_TASKS_PER_DAY } from '../shared/storage.js';
@@ -52,6 +53,7 @@ export const FRESH_KINDS = Object.freeze(new Set(['open', 'start', 'answer']));
 export const STALE_MS = 60 * 1000; // a message to Jarvis not sent within this long is dropped
 export const REPLY_RETRY_MS = 10 * 1000; // a reply to a start or a stop is tried this long after the request (MISSED-LINK-A)
 export const REKEY_GRACE_MS = 10 * 60 * 1000; // the code's key is still opened this long after a rekey (REDTEAM-LINK-4)
+export const OPEN_HOLD_MS = 30 * 1000; // downloads an address opened for Jarvis starts are held this long (REDTEAM-LINK-9)
 const KEY_TEXT = /^[A-Za-z0-9_-]{43}$/;
 
 const STOPPED_AT_LIMIT = /^Stopped at (your budget|the step limit)\b/;
@@ -146,6 +148,8 @@ export class JarvisLink {
     this.relay = null;
     this.cards = [];
     this.openedSites = new Map(); // site -> when Jarvis opened it (the voice policy's "Allow once")
+    this.openHolds = []; // { url, site, until }: addresses opened for Jarvis whose downloads wait for a click (LINK-9)
+    this.heldDownloads = new Map(); // card id -> { item, suggest, settled }
     this.sentTask = new Map(); // taskId -> { status, at } of the last `task` message
     this.doneSent = new Set();
     this.statusSig = '';
@@ -334,8 +338,9 @@ export class JarvisLink {
 
   sendCards(port = null) {
     const now = this.now();
+    for (const c of this.cards) if (c.kind === 'download' && now - c.at >= CARD_LIFE_MS) this.settleDownload(c.id, false); // unanswered: not saved
     this.cards = this.cards.filter((c) => now - c.at < CARD_LIFE_MS);
-    this.controller.post({ type: 'cards', cards: this.cards.map(({ id, shown, site, detail, at }) => ({ id, shown, site, detail, at })) }, port);
+    this.controller.post({ type: 'cards', cards: this.cards.map(({ id, kind, shown, site, detail, name, at }) => ({ id, ...(kind ? { kind } : {}), shown, site, detail, ...(name ? { name } : {}), at })) }, port);
   }
 
   // -------------------------------------------------------------------------------------------
@@ -417,9 +422,67 @@ export class JarvisLink {
       return { ok: false, reason: 'needs-click', why: v.why };
     }
     if (!v.ok) return { ok: false, reason: v.reason, why: v.why };
+    this.holdDownloadsFrom(v.url, v.site);
     await this.openTab(v.url, { rect, focus });
     this.noteOpened(v.site);
     return { ok: true, url: v.url, site: v.site };
+  }
+
+  /** For OPEN_HOLD_MS, a download from this address (or its site's pages) waits for a click (LINK-9). */
+  holdDownloadsFrom(url, site) {
+    const now = this.now();
+    this.openHolds = [...this.openHolds.filter((h) => h.until > now), { url, site, until: now + OPEN_HOLD_MS }].slice(-5);
+  }
+
+  /**
+   * A download that starts while no task runs (controller.holdDownload left it): if it comes, within
+   * OPEN_HOLD_MS, from an address opened for Jarvis or a page of its site (a redirect to an installer,
+   * a Content-Disposition: attachment), it is held on a card like an address that acts (REDTEAM-LINK-9):
+   * saved only on the owner's Save, in the side panel or the approval window. Returns true when held.
+   */
+  holdDownload(item, suggest) {
+    const now = this.now();
+    this.openHolds = this.openHolds.filter((h) => h.until > now);
+    if (!this.openHolds.length || typeof suggest !== 'function') return false;
+    const url = String(item?.url || '');
+    const finalUrl = String(item?.finalUrl || url);
+    const referrer = String(item?.referrer || '');
+    const hold = this.openHolds.find((h) => url === h.url || referrer === h.url || (h.site && (siteOf(url) === h.site || siteOf(referrer) === h.site)));
+    if (!hold) return false;
+    const name = String(item?.filename || '').split(/[\\/]/).pop() || (() => {
+      try {
+        return new URL(finalUrl).pathname.split('/').pop() || 'a file';
+      } catch {
+        return 'a file';
+      }
+    })();
+    const kind = fileKind(name);
+    const card = { id: uid('card_'), kind: 'download', url: finalUrl, shown: cardAddress(finalUrl), site: siteOf(finalUrl) || hold.site, name: truncate(name, 120), detail: kind.warn || '', at: now };
+    this.heldDownloads.set(card.id, { item, suggest, settled: false });
+    this.cards = [...this.cards, card].slice(-5);
+    this.sendCards();
+    this.showApprovalWindow();
+    return true;
+  }
+
+  /** The owner's answer to a held download: Save lets Chrome go on; anything else cancels it. */
+  async settleDownload(cardId, save) {
+    const held = this.heldDownloads.get(cardId);
+    if (!held || held.settled) return;
+    held.settled = true;
+    this.heldDownloads.delete(cardId);
+    if (!save) {
+      try {
+        await this.chrome.downloads?.cancel?.(held.item?.id);
+      } catch {
+        /* already gone */
+      }
+    }
+    try {
+      held.suggest();
+    } catch {
+      /* Chrome stopped waiting */
+    }
   }
 
   /** The site Jarvis opened by voice counts as "opened by voice" for the task it is part of. */
@@ -471,10 +534,12 @@ export class JarvisLink {
     if (!card) return;
     this.cards = this.cards.filter((c) => c !== card);
     this.sendCards();
+    if (card.kind === 'download') return this.settleDownload(card.id, msg.choice === 'save');
     if (msg.choice !== 'open') return;
     // Checked again: what opens is exactly the address the card showed, and still not refused.
     const v = openVerdict(card.url);
     if (!v.ok && v.reason !== 'needs-click') return;
+    this.holdDownloadsFrom(card.url, card.site);
     await this.openTab(card.url, { rect: card.rect, focus: card.focus });
     this.noteOpened(card.site);
   }

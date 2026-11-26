@@ -349,6 +349,38 @@ test('linked: hello and the status go to Jarvis; the alarm is set; ping answers 
   assert.equal((await s.app.request('nonsense')).reason, 'bad', 'an unknown request is refused, still with one reply');
 });
 
+test('LINK-9: for 30 s after an open from Jarvis, a download that address (or its page) starts is held on a card: saved only on Save', async (t) => {
+  const s = await setup({ panel: false });
+  t.after(s.done);
+  const cancelled = [];
+  s.fb.chrome.downloads = { cancel: async (id) => cancelled.push(id) };
+  const opened = await s.app.request('open', { url: 'https://shop.example/r', rect: null, focus: true });
+  assert.equal(opened.ok, true);
+  // The clean address answers 302 to an installer: Chrome starts a download with no task running.
+  const suggested = [];
+  const item = { id: 41, url: 'https://shop.example/r', finalUrl: 'https://shop.example/files/setup.dmg', filename: 'setup.dmg', referrer: '' };
+  assert.equal(s.controller.holdDownload(item, () => suggested.push(41)), false, 'no task: the controller leaves it');
+  assert.equal(s.link.holdDownload(item, () => suggested.push(41)), true, 'held');
+  assert.deepEqual(suggested, [], 'nothing saved yet');
+  const card = s.link.cards.find((c) => c.kind === 'download');
+  assert.ok(card && card.name === 'setup.dmg' && card.site === 'shop.example', JSON.stringify(card));
+  await s.waitFor(() => s.calls.windows.some((c) => c.op === 'create'), 2000, 'the approval window (no panel open)');
+  await s.link.onPanelMessage({ type: 'open-card', cardId: card.id, choice: 'dismiss' });
+  assert.deepEqual(cancelled, [41], 'Don’t save: cancelled');
+  assert.deepEqual(suggested, [41], 'and Chrome stops waiting');
+  // Another one, saved.
+  const item2 = { id: 42, url: 'https://shop.example/files/manual.pdf', referrer: 'https://shop.example/r', filename: 'manual.pdf' };
+  assert.equal(s.link.holdDownload(item2, () => suggested.push(42)), true);
+  const card2 = s.link.cards.find((c) => c.kind === 'download');
+  await s.link.onPanelMessage({ type: 'open-card', cardId: card2.id, choice: 'save' });
+  assert.deepEqual(suggested, [41, 42]);
+  assert.deepEqual(cancelled, [41], 'Save: not cancelled');
+  // Another site's download, or one 30 s later, is left alone (as Chrome does).
+  assert.equal(s.link.holdDownload({ id: 43, url: 'https://elsewhere.example/a.zip', referrer: '' }, () => {}), false);
+  s.clock.offset += 31_000;
+  assert.equal(s.link.holdDownload({ id: 44, url: 'https://shop.example/r', referrer: '' }, () => {}), false);
+});
+
 test('open: a tab in the Jarvis window, no debugger; with a place, the window goes there unfocused', async (t) => {
   const s = await setup();
   t.after(s.done);

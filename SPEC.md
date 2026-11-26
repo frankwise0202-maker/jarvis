@@ -5171,7 +5171,10 @@ the envelope's 120 s.
   disguised characters) or `addressAction` (`classifyAddress`, an installer, a file) says the address acts: a card
   with the whole address waits in the side panel (or the approval window) and opens only on **Open it** (checked
   again then); otherwise a tab in the last focused normal window of the Jarvis profile (or a new window), with no
-  debugger and no task. A `rect` of whole pixels, at least 100 × 100 (the app's own bounds), moves that window there
+  debugger and no task; for 30 s after, a download that address (a redirect to an installer, an attachment) or a page
+  of its site starts is held on a card ("Save this download?", Save / Don't save) in the side panel or the approval
+  window, and saved only on Save (REDTEAM-LINK-9; unanswered in 5 minutes: not saved). A `rect` of whole pixels, at
+  least 100 × 100 (the app's own bounds), moves that window there
   (`state: 'normal'`) without focusing it; without one the window is focused unless `focus` is false. → `{ url,
   site }` (`site` the registrable domain). The site counts as opened by voice for the next task from Jarvis (10
   minutes).

@@ -52,6 +52,7 @@ export function promptCard(prompt, { onChoose }) {
  * something). It opens only with the owner's click on Open. card: { id, shown, site, detail }.
  */
 export function openCard(card, { onChoose }) {
+  if (card.kind === 'download') return downloadCard(card, { onChoose });
   const buttons = h(
     'div',
     { class: 'prompt__choices' },
@@ -68,6 +69,33 @@ export function openCard(card, { onChoose }) {
     'div',
     { class: 'prompt prompt--open', attrs: { 'data-testid': 'open-card', 'data-card-id': card.id, role: 'alertdialog', 'aria-label': 'Open this address?' } },
     h('div', { class: 'prompt__head' }, h('span', { class: 'prompt__icon' }, icon('globe', { size: 18 })), h('span', { class: 'prompt__title', text: 'Open this address?' })),
+    body,
+    h('div', { class: 'prompt__meta' }, card.site ? h('span', { class: 'chip', text: card.site }) : null, h('span', { class: 'chip chip--voice', text: 'From Jarvis (voice)' })),
+    buttons,
+  );
+}
+
+/**
+ * Voice from Jarvis: a download that an address opened for Jarvis started, with no task running
+ * (REDTEAM-LINK-9). It is saved only with the owner's click on Save. card: { id, name, shown, site, detail }.
+ */
+export function downloadCard(card, { onChoose }) {
+  const buttons = h(
+    'div',
+    { class: 'prompt__choices' },
+    h('button', { class: 'btn btn--primary', type: 'button', attrs: { 'data-testid': 'open-card-choice', 'data-choice': 'save' }, on: { click: (e) => choose(e, 'save') } }, 'Save'),
+    h('button', { class: 'btn btn--ghost', type: 'button', attrs: { 'data-testid': 'open-card-choice', 'data-choice': 'dismiss' }, on: { click: (e) => choose(e, 'dismiss') } }, 'Don’t save'),
+  );
+  function choose(e, choice) {
+    for (const b of e.currentTarget.parentElement.querySelectorAll('button')) b.disabled = true;
+    onChoose(choice);
+  }
+  const body = h('p', { class: 'prompt__body', attrs: { 'data-testid': 'open-card-body' } });
+  append(body, `A page Jarvis opened for you started a download: “${displayText(card.name || 'a file')}”, from`, h('code', { class: 'prompt__address', attrs: { 'data-testid': 'open-card-address' }, text: displayText(card.shown) }), `${card.detail ? `${displayText(card.detail)} ` : ''}It is saved only if you click Save.`);
+  return h(
+    'div',
+    { class: 'prompt prompt--open', attrs: { 'data-testid': 'open-card', 'data-card-kind': 'download', 'data-card-id': card.id, role: 'alertdialog', 'aria-label': 'Save this download?' } },
+    h('div', { class: 'prompt__head' }, h('span', { class: 'prompt__icon' }, icon('page', { size: 18 })), h('span', { class: 'prompt__title', text: 'Save this download?' })),
     body,
     h('div', { class: 'prompt__meta' }, card.site ? h('span', { class: 'chip', text: card.site }) : null, h('span', { class: 'chip chip--voice', text: 'From Jarvis (voice)' })),
     buttons,

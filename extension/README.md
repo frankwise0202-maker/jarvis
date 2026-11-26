@@ -251,7 +251,9 @@ or sent anywhere. Linking works only with your home base's Tailscale address, as
   `?add-to-cart=42` or `/orders/7/cancel`, an installer or another file, or one with hidden or
   disguised characters) waits for your click: its card shows the whole address in the side
   panel, and it opens only when you press **Open it**. Chrome's own pages, files, the Chrome Web
-  Store and addresses with a user name or password are never opened.
+  Store and addresses with a user name or password are never opened. For 30 seconds after Jarvis
+  opens a page, a download it starts (a link that turns out to be an installer, say) waits on a
+  card too, and is saved only when you press **Save**.
 - **Start a task**, from your own spoken words (never from a web page or from Claude): only
   while **Tasks from Jarvis** is on, at most 30 a day, and one at a time, as here. It runs with
   this extension's model, budget and step limit, and its card says **From Jarvis (voice)**.
