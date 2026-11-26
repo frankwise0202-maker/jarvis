@@ -413,6 +413,47 @@ test('MAC-8: the brake line cut by a tap (his own “Jarvis” in it masks the w
   assert.equal(env.log.listens.at(-1).noSpeechMs, 8000, 'the follow-up listen');
 });
 
+// MAC-V-1: the brake counts questions "since the last wake word, tap or key". Across the room, an owner who starts each
+// follow-up with "Hey Jarvis, …" was counted as room talk: after three, "Say “Hey Jarvis” when you need me." (which
+// they just did) and back to Standby.
+test('MAC-V-1: woken hidden by “Hey Jarvis”, five follow-ups each said “Hey Jarvis, …”: all five are taken, no brake', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  const qs = ['France', 'Spain', 'Italy', 'Peru', 'Chile'].map((c) => `hey Jarvis what is the capital of ${c}`);
+  env.say((n) => (n === 0 ? null : qs[n - 1] || null));
+  env.open({ wake: env.wakeHooks({ trigger: 'word' }), listenWhileHidden: () => true, answer: 'Here it is.' });
+  await until(env, () => env.log.closes.length > 0, 'the session to end', 240000);
+  assert.deepEqual(env.log.turns, qs, 'every question taken');
+  assert.ok(!env.log.spoken.some((s) => /when you need me/.test(s.text)), 'no brake');
+  assert.deepEqual(env.log.closes, [{ reason: 'standby', wakeSession: true }], 'Standby after the quiet follow-up');
+});
+
+test('MAC-V-1: “Hey Jarvis” heard by Standby’s kept detector while he listens: no barge-in (nothing to interrupt), but the hidden count starts again', async (t) => {
+  const env = await voiceEnv(t);
+  env.say(() => 'what is the capital of Spain'); // the TV, in every listen
+  const vm = env.open({ listenWhileHidden: () => true, answer: 'Madrid.' });
+  await env.advance(300);
+  env.setHidden(true);
+  await until(env, () => env.log.listens.length >= 3 && vm.state === 'listening', 'the third listen');
+  assert.equal(env.log.turns.length, 2);
+  assert.equal(vm.bargeIn('word'), false, 'nothing to interrupt');
+  await env.advance(120000);
+  assert.equal(env.log.turns.length, 5, `the count started again at the wake word: ${env.log.turns.length} questions`);
+  assert.ok(env.log.spoken.some((s) => s.text === 'Say “Hey Jarvis” when you need me.'), 'then the brake, three questions later');
+});
+
+test('MAC-V-1: two claps heard while he listens do nothing to the count', async (t) => {
+  const env = await voiceEnv(t);
+  env.say(() => 'what is the capital of Spain');
+  const vm = env.open({ listenWhileHidden: () => true, answer: 'Madrid.' });
+  await env.advance(300);
+  env.setHidden(true);
+  await until(env, () => env.log.listens.length >= 3 && vm.state === 'listening', 'the third listen');
+  assert.equal(vm.bargeIn('clap'), false);
+  await env.advance(120000);
+  assert.equal(env.log.turns.length, 3, 'the brake after three, as without them');
+});
+
 // ---- D3: wake.pending() --------------------------------------------------------------------------------------
 
 test('D3: the lines that waited for the owner (wake.pending()) come before the greeting', async (t) => {

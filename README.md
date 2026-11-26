@@ -348,7 +348,7 @@ other windows, minimized, or with the display asleep.
   is waiting for "Hey Jarvis" or hearing your question. The chimes and the title can.
 - **After an answer he listens about 8 seconds** for a follow-up. If nobody speaks, he goes back to Standby.
 - **The brake.** While his window is in the background, he takes at most 3 questions in a row without "Hey
-  Jarvis", a tap or a key. Then he says "Say “Hey Jarvis” when you need me." and goes back to Standby (or just
+  Jarvis" (to wake him, or at the start of a question), a tap or a key. Then he says "Say “Hey Jarvis” when you need me." and goes back to Standby (or just
   stops listening, if you started with a tap). A TV left on can't run up paid questions. Two claps can still stop
   him while he talks, but they don't start the count again (a door or a bang on TV sounds like claps).
 - **Interrupt him by voice.** While George is speaking, say "Hey Jarvis" or clap twice: he stops and listens (a
@@ -359,7 +359,8 @@ other windows, minimized, or with the display asleep.
   core or press Space, as before.
 - **One Jarvis per Mac answers.** If Jarvis is open in two windows (the installed app and a forgotten tab, say),
   only one listens on Standby. The other says "Standby is on in another Jarvis window"; click **Use this window** to
-  move Standby there. When the one listening leaves Standby or closes, the other takes over by itself.
+  move Standby there. When the one listening leaves Standby or closes, the other takes over by itself. While Voice
+  Mode is open in one window, Standby in another doesn't wake: "Hey Jarvis, …" said to Voice Mode gets one answer.
 - **Turn it off** with Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**.
   Then he greets you from the background and waits for you to switch to him, as before.
 - **Standby when Jarvis starts.** With "Hey Jarvis" on, Jarvis opens Standby by himself when he starts (after a

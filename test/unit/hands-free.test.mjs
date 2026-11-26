@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HANDS_FREE, followUp, bargeInAllowed, readHandsFreeTest, jarvisSpans, createSelfMask } from '../../src/lib/hands-free.js';
+import { HANDS_FREE, followUp, bargeInAllowed, readHandsFreeTest, jarvisSpans, createSelfMask, startsWithWakeWords } from '../../src/lib/hands-free.js';
 import { HANDS_FREE_TEST_KEY } from '../../src/lib/audio-devices.js';
 
 test('the owner’s numbers, each in one place: 8 s to start a follow-up, 3 questions in a row while hidden, barge-in in setups 1 and 3', () => {
@@ -138,5 +138,15 @@ test('the self-mask: no "Jarvis" in the text, never masked; bad events are ignor
   for (let i = 0; i < 40; i += 4) {
     m.mask.boundary({ charIndex: i });
     assert.equal(m.mask.masked(), false);
+  }
+});
+
+// MAC-V-1: "Hey Jarvis, …" said in a hidden follow-up listen is the owner calling him, not room talk.
+test('startsWithWakeWords: a sentence that starts with "Hey Jarvis" (as the recognizer writes it); not one that only mentions him', () => {
+  for (const s of ['hey Jarvis what is the capital of France', 'Hey, Jarvis, what time is it?', 'Hey Jarvis.', 'hi jarvis how are you', 'OK Jarvis, play some music', 'okay Jarvis what about Spain', 'A Jarvis what is the weather', 'hey Jervis turn it down', '  HEY JARVIS  ']) {
+    assert.equal(startsWithWakeWords(s), true, s);
+  }
+  for (const s of ['Jarvis, run a diagnostic', 'what is the capital of France', 'tell Jarvis hey', 'hey what is up Jarvis', 'they jarvis', 'hey jarvisx', 'hey', '', null, undefined, 42]) {
+    assert.equal(startsWithWakeWords(s), false, String(s));
   }
 });

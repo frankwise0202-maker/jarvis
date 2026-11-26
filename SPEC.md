@@ -4346,7 +4346,9 @@ by a tap with Jarvis on screen keeps Continuous as before; Continuous off: no li
 **The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last
 wake (the greeting resets it), "Hey Jarvis" barge-in, tap or key (a listen started with `gesture`). A claps barge-in
 keeps the count (MAC-4: claps are the weak signal), and at the limit while hidden it opens no listen (he finishes,
-then the brake). While hidden, from
+then the brake). A question that starts with the wake words ("Hey Jarvis, …": `startsWithWakeWords()`, src/lib/
+hands-free.js; not a bare "Jarvis, …") starts the count again, and so does "Hey Jarvis" heard by Standby's kept detector
+while he listens (MAC-V-1; nothing to interrupt there). While hidden, from
 `HANDS_FREE.hiddenQuestions` (3) on there is no follow-up listen: Jarvis says "Say “Hey Jarvis” when you need me." and
 goes back to Standby (woken, Return to standby on: `S.sleepAfter`) or stops listening (`S.braked`, until the owner calls
 him again). A TV left on can't run up paid questions. On screen the count doesn't matter. The claps' room-talk guard
@@ -4364,6 +4366,13 @@ ahead of any other window waiting). The holder's request then fails with AbortEr
 barge-in microphone too) and waits in line. When the holder leaves Standby or closes, the next window in line listens
 by itself. (The design had the holder asked to let go over a BroadcastChannel; `steal` needs no message and can't be
 missed.) No Web Locks (or a request that throws): `unsupported`, as before.
+
+**Voice Mode in another window** (MAC-6): the Standby lock keeps two Standbys apart, but the owner may talk to Voice
+Mode (opened by a tap) in one window while a forgotten tab is on Standby. Voice Mode open in any window holds the Web
+Lock `jarvis-voice` in shared mode for its life (`holdVoiceLock()`, app.js, computers only). Standby's `voiceElsewhere`
+dep (`voiceOpenSomewhere()`: an exclusive `ifAvailable` request that gets nothing while any window holds it) is asked
+before each wake: while Voice Mode is open somewhere, two claps or "Hey Jarvis" don't wake this Standby (it stays on,
+listening). A window that closes lets go of the lock with it. Not on a phone (no check: a wake is at once, as before).
 
 **Standby at launch** (A11, SHOULD; u1 gap 4). Setting `standbyAtLaunch` (`''` automatic, `'on'`, `'off'`; Settings →
 Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)**, computers only): on a computer, set up, not the demo,

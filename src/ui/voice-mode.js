@@ -174,7 +174,7 @@ import { createVoiceHold, HOLD_CAP_MS } from '../lib/voice-hold.js';
 import { ANSWER_WINDOW_MS, WITHDRAWN_LINE, againLine, chooseAnswer, matchChromeAnswer } from '../lib/chrome-prompt-words.js';
 import { TASK_CHECK_HIDDEN_MS, TASK_CHECK_MS } from '../lib/chrome-task-words.js';
 import { createRouter, registerTodayCommands, emptyState } from '../lib/command-router.js';
-import { followUp, createSelfMask, HANDS_FREE } from '../lib/hands-free.js';
+import { followUp, createSelfMask, HANDS_FREE, startsWithWakeWords } from '../lib/hands-free.js';
 import { sessionTitle, notify, closeNotify } from './attention.js';
 
 export { splitSentences };
@@ -1782,7 +1782,11 @@ function createVoiceMode(opts) {
     }
     if (text) {
       S.silentTries = 0;
-      if (!L.wakeWindow) S.asked += 1; // v8.1 (A6): one more question without the wake words or a tap
+      if (startsWithWakeWords(text)) {
+        // MAC-V-1: "Hey Jarvis, …": the owner calling him, not the room's talk: the hidden count starts again.
+        S.asked = 0;
+        S.braked = false;
+      } else if (!L.wakeWindow) S.asked += 1; // v8.1 (A6): one more question without the wake words or a tap
       play('listen-stop');
       // The check may keep this recognizer (to hear "cancel" or "no, I said …"); otherwise it stops.
       S.mic = reason === 'final' && L.review ? L : null;
@@ -4937,6 +4941,12 @@ function createVoiceMode(opts) {
    * he speaks: he stops and listens; a tour's narration ends ('cancelled') and the tour pauses at its step.
    */
   function bargeIn(trigger) {
+    if (trigger === 'word' && !S.closed && !S.speech && (S.listen || S.review)) {
+      // MAC-V-1: "Hey Jarvis" while he listens: nothing to interrupt, but it is the owner calling him.
+      S.asked = 0;
+      S.braked = false;
+      return false;
+    }
     if (S.closed || !S.speech || S.review || S.listen) return false;
     const voice = valueOf(() => (tts && typeof tts.voiceNow === 'function' ? tts.voiceNow() : null));
     if (voice !== 'natural' && voice !== 'homebase') return false;

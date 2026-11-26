@@ -9,6 +9,8 @@
 //   readHandsFreeTest(storage) -> { at, hiddenWords, selfTrigger, heardSpeaker } | null
 //                                     the hands-free Test's last results (Settings → Voice → Microphone and
 //                                     speaker writes them: src/lib/audio-devices.js normalizeHandsFreeTest)
+//   startsWithWakeWords(text) -> boolean      a heard sentence starts with "Hey Jarvis" (MAC-V-1: the owner calling
+//                                     him; the hidden count starts again)
 //   jarvisSpans(text) -> [{ start, end }]    where "Jarvis" is in a text he says
 //   createSelfMask({ cps, beforeMs, afterMs, now }) -> mask
 //                                     while he speaks, whether a "Hey Jarvis" heard now may be his own
@@ -67,6 +69,16 @@ export function readHandsFreeTest(storage) {
   } catch {
     return null;
   }
+}
+
+/**
+ * MAC-V-1: a heard sentence starts with the wake words: "Hey Jarvis, …" as the recognizer writes it ("hi", "OK",
+ * "okay" or "a" for "hey"; "Jervis"). A bare "Jarvis, …" doesn't count: a film or the TV says that more often.
+ */
+export function startsWithWakeWords(text) {
+  if (typeof text !== 'string') return false;
+  const s = text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}\s]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  return /^(?:hey|hi|ok|okay|a) (?:jarvis|jervis)(?: |$)/.test(s);
 }
 
 /** Where "Jarvis" is in `text`, as character offsets [{ start, end }] (any case; "Jarvis's" too). */
