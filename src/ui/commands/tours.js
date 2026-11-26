@@ -6,10 +6,10 @@
 //               "that's enough"), a choice at a decision ("enclosed", "opened", "both", "you pick"),
 //               "show it enclosed / opened", "skip to the fan". "Back" alone means the previous step
 //               here (outside a tour it still turns the model to its back view).
-//   tour.start  while a hologram is on screen, or the newest reply showed one (critique L3: not an older
+//   tour-start  while a hologram is on screen, or the newest reply showed one (critique L3: not an older
 //               one): "walk me through it" (the object tour), "walk me through the battery" (the part
 //               tour); and, with a part selected and no tour, "show it enclosed / opened" (that view of
-//               the part). Registered as tour-start while the router's ids can't hold a dot.
+//               the part).
 // A bare "stop" is the stop layer's (voice): it stops Jarvis's voice, and a tour whose narration is
 // cut pauses by itself.
 //
@@ -30,7 +30,6 @@ import { matchShowView, matchTourCommand, matchTourStart } from '../../lib/tour.
 
 const SURFACES = ['voice', 'hologram'];
 const START_SURFACES = ['voice', 'hologram', 'chat'];
-const START_IDS = ['tour.start', 'tour-start'];
 
 const LINES = {
   paused: 'Paused. Say continue when you’re ready.',
@@ -121,7 +120,8 @@ export function register(router, deps = {}) {
     },
   });
 
-  const start = {
+  router.register({
+    id: 'tour-start',
     layer: 'top',
     surfaces: START_SURFACES,
     match: (text, state) => matchTourStartWords(text, state),
@@ -144,16 +144,5 @@ export function register(router, deps = {}) {
       if (res && res.ok) return { say: '' }; // the tour's first step is its line
       return { say: LINES[res && res.reason] || LINES.none };
     },
-  };
-  // The router's ids may not hold a dot yet (voice's order names it tour.start).
-  let registered = false;
-  for (const id of START_IDS) {
-    if (registered) break;
-    try {
-      router.register({ ...start, id });
-      registered = true;
-    } catch (err) {
-      if (!/needs an id/.test(String(err && err.message))) throw err;
-    }
-  }
+  });
 }

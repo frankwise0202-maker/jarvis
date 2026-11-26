@@ -1175,7 +1175,7 @@ const HOLO_STATE = (extra = {}) => ({ ...emptyState('voice'), voiceOpen: true, h
 test('the router: tour words only while a tour runs, before the hologram\'s; start words while a hologram is shown or the newest reply showed one', () => {
   const viewer = fakeViewer();
   const r = tourRouter(viewer);
-  const startId = r.has('tour.start') ? 'tour.start' : 'tour-start';
+  const startId = 'tour-start';
   const route = (text, state) => {
     const hit = r.route([text], state);
     return hit ? `${hit.id}:${hit.action.do}` : null;

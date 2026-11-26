@@ -3925,8 +3925,8 @@ point to a later step (a plan can't loop by itself); a choice's `goto` must name
 **Starting one.** `matchTourStart(text, { parts, title })`: "walk me through it / this", "walk me through" alone,
 "give me a tour", "show me around", "take me through it", "start the walkthrough", and the same with the hologram's
 title (the object tour) or a part named plainly (score 0.8 or better, at most 5 words: the part tour). "Walk me
-through how to replace the battery" and "walk me through replacing it" stay questions. The matcher `tour.start`
-(registered as `tour-start` while the router's ids can't hold a dot) claims them only while a hologram is on screen
+through how to replace the battery" and "walk me through replacing it" stay questions. The matcher `tour-start`
+claims them only while a hologram is on screen
 (`state.hologram`) or when the newest reply showed one (`state.tourReply`, app.js `newestReplyHologram()`: never an
 older reply, critique L3); then `deps.tours.openReply()` opens it first. Surfaces: Voice Mode, the hologram's field,
 the chat box. With a part selected and no tour, it also takes "show it enclosed / opened" (`matchShowView`): the

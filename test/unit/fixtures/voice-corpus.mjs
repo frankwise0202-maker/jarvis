@@ -36,22 +36,13 @@ export const MAC_HF = {
 
 // ==== tours ===========================================================================================
 // Walkthroughs (SPEC §29.1): the tour's words while a tour runs (matcher `tour`), and the words that
-// start one or show a part enclosed or opened (`tour.start`, registered as tour-start while the
-// router's ids can't hold a dot). States: a tour playing (TOUR), at its decision (TOUR_AT, and
-// TOUR_ASKED with Voice Mode's question on the stack), a step waiting (TOUR_WAIT), paused
+// start one or show a part enclosed or opened (`tour-start`). States: a tour playing (TOUR), at its
+// decision (TOUR_AT, and TOUR_ASKED with Voice Mode's question on the stack), a step waiting (TOUR_WAIT), paused
 // (TOUR_PAUSED), typed in the hologram's field (TOUR_FIELD); a part selected (HOLO_PICKED); no viewer,
 // the newest reply showed a hologram (REPLY_HOLO, and CHAT_REPLY_HOLO in the chat box).
-import { createRouter as tourRouterForIds } from '../../../src/lib/command-router.js';
 import { choiceReply as tourChoiceReply } from '../../../src/lib/tour.js';
 
-export const TOUR_START = (() => {
-  try {
-    tourRouterForIds().register({ id: 'tour.start', layer: 'top', match: () => null });
-    return 'tour.start';
-  } catch {
-    return 'tour-start';
-  }
-})();
+const TOUR_START = 'tour-start';
 const TOUR_PARTS = [
   { id: 'battery', name: 'Battery (57 Wh)', aka: ['battery pack'] },
   { id: 'battery-connector', name: 'Battery connector', aka: [] },
