@@ -4344,7 +4344,9 @@ later (`SLEEP_SILENT_MS`). The wake routine's offer is listened for the same way
 by a tap with Jarvis on screen keeps Continuous as before; Continuous off: no listen.
 
 **The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last
-wake (the greeting resets it), barge-in, tap or key (a listen started with `gesture`). While hidden, from
+wake (the greeting resets it), "Hey Jarvis" barge-in, tap or key (a listen started with `gesture`). A claps barge-in
+keeps the count (MAC-4: claps are the weak signal), and at the limit while hidden it opens no listen (he finishes,
+then the brake). While hidden, from
 `HANDS_FREE.hiddenQuestions` (3) on there is no follow-up listen: Jarvis says "Say “Hey Jarvis” when you need me." and
 goes back to Standby (woken, Return to standby on: `S.sleepAfter`) or stops listening (`S.braked`, until the owner calls
 him again). A TV left on can't run up paid questions. On screen the count doesn't matter. The claps' room-talk guard

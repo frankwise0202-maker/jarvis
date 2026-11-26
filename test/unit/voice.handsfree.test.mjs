@@ -318,7 +318,7 @@ test('A8 (critique M8): George says “Jarvis” and the detector hears it — m
   }
 });
 
-test('A8: a barge-in counts as the owner calling him: the hidden count starts again', async (t) => {
+test('A8: a "Hey Jarvis" barge-in counts as the owner calling him: the hidden count starts again', async (t) => {
   const env = await voiceEnv(t, { speechMs: 6000 });
   env.voice('natural');
   env.say(() => 'what is the capital of Spain');
@@ -328,9 +328,49 @@ test('A8: a barge-in counts as the owner calling him: the hidden count starts ag
   await until(env, () => env.log.turns.length >= 3, 'three questions');
   await until(env, () => vm.state === 'speaking', 'the third answer');
   await env.advance(1000);
-  assert.equal(vm.bargeIn('clap'), true);
+  assert.equal(vm.bargeIn('word'), true);
   await env.advance(8000);
   assert.equal(env.log.turns.length, 4, 'a fourth question after the barge-in');
+});
+
+// MAC-4: claps are the weak signal (a door, knocks, a TV's bang): they may stop George, but only the wake words, a
+// tap or a key start the hidden count again. Before, a double bang during each answer let a TV run up questions.
+test('MAC-4: woken hidden by claps, the TV heard in every listen, two claps during each answer: he stops each time, yet at most 3 questions, then the brake and Standby', async (t) => {
+  for (const tapped of [false, true]) {
+    const env = await voiceEnv(t, { speechMs: 6000 });
+    env.voice('natural');
+    if (!tapped) env.setHidden(true);
+    env.say((n) => (n === 0 && !tapped ? null : 'what is the capital of Spain'));
+    const vm = tapped ? env.open({ listenWhileHidden: () => true, answer: LONG }) : env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: LONG });
+    if (tapped) {
+      await env.advance(300);
+      env.setHidden(true);
+    }
+    const clapped = new Set();
+    const acted = [];
+    const end = env.clock.now() + 300000;
+    while (env.clock.now() < end && !env.log.closes.length && env.log.turns.length < 8) {
+      await env.advance(250);
+      const sp = env.log.spoken.at(-1);
+      if (vm.state === 'speaking' && sp && sp.text.startsWith('Here is the plan') && !sp.cancelled && !clapped.has(sp)) {
+        clapped.add(sp);
+        await env.advance(1000);
+        acted.push(vm.bargeIn('clap'));
+      }
+      if (tapped && env.log.spoken.some((s) => s.text === 'Say “Hey Jarvis” when you need me.')) break;
+    }
+    assert.equal(env.log.turns.length, 3, `${tapped ? 'tapped' : 'woken'}: ${env.log.turns.length} questions taken (claps acted: ${JSON.stringify(acted)})`);
+    assert.deepEqual(acted.slice(0, 2), [true, true], 'the claps stopped him during the first two answers');
+    assert.ok(env.log.spoken.some((s) => s.text === 'Say “Hey Jarvis” when you need me.'), 'the brake was said');
+    if (!tapped) assert.deepEqual(env.log.closes, [{ reason: 'standby', wakeSession: true }], 'then Standby');
+  }
+});
+
+test('MAC-4: on screen, two claps during an answer still stop him and he listens (the brake is for the background)', async (t) => {
+  const { env, vm } = await speakingGeorge(t);
+  assert.equal(vm.bargeIn('clap'), true);
+  await env.advance(50);
+  assert.equal(vm.state, 'listening');
 });
 
 // ---- D3: wake.pending() --------------------------------------------------------------------------------------

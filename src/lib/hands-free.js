@@ -16,8 +16,8 @@
 // The follow-up window (A6, owner question 3): after an answer, a woken session, and every session while
 // Jarvis is in the background, listens once for HANDS_FREE.followUpMs; nobody speaks: back to Standby (or
 // idle). While he is in the background, at most HANDS_FREE.hiddenQuestions questions in a row are taken
-// without "Hey Jarvis", claps, a tap or a key; then no more follow-up listens (the brake: a TV left on can't
-// run up paid questions). On screen, a session the owner tapped keeps today's Continuous rule.
+// without "Hey Jarvis", a tap or a key (claps are the weak signal: they don't count); then no more follow-up
+// listens (the brake: a TV left on can't run up paid questions). On screen, a session the owner tapped keeps today's Continuous rule.
 //
 // Barge-in (A8): only on a computer, only in the setups where the wake microphone is the Mac's own
 // (HANDS_FREE.bargeInSetups; owner question 10), and only once the hands-free Test's self-trigger step has
@@ -40,7 +40,7 @@ export const HANDS_FREE = Object.freeze({
  * After an answer: listen for a follow-up, and how. `woken`: a session opened from Standby; `away`: Jarvis
  * is not on screen and listens there (a computer, the setting on); `continuous`: Settings (Continuous);
  * `asking`: the wake routine just made its offer (it listens for the answer, Continuous or not); `asked`:
- * the questions taken since the last wake words, claps, tap or key.
+ * the questions taken since the last wake words, tap or key.
  *   { listen: false, brake: false }       today's rule says no (Continuous off)
  *   { listen: false, brake: true }        the brake: hidden, and `asked` reached HANDS_FREE.hiddenQuestions
  *   { listen: true, noSpeechMs, tries }   noSpeechMs 0 and tries 0 mean today's (two tries of up to 12 s)
