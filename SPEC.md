@@ -4353,36 +4353,35 @@ watchdog, and `oneTry` (before: two tries of up to 12 s). Nobody speaks: a woken
 later (`SLEEP_SILENT_MS`). The wake routine's offer is listened for the same way (Continuous or not). A session opened
 by a tap with Jarvis on screen keeps Continuous as before; Continuous off: no listen.
 
-**The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last
-wake (the greeting resets it), "Hey Jarvis" barge-in, tap or key (a listen started with `gesture`). A claps barge-in
-keeps the count (MAC-4: claps are the weak signal), and at the limit while hidden it opens no listen (he finishes,
-then the brake). A question that starts with the wake words ("Hey Jarvis, …": `startsWithWakeWords()`, src/lib/
-hands-free.js; not a bare "Jarvis, …") starts the count again, and so does "Hey Jarvis" heard by Standby's kept detector
-while he listens (MAC-V-1; nothing to interrupt there). While hidden, from
-`HANDS_FREE.hiddenQuestions` (3) on there is no follow-up listen: Jarvis says "Say “Hey Jarvis” when you need me." and
-goes back to Standby (woken, Return to standby on: `S.sleepAfter`) or stops listening (`S.braked`, until the owner calls
-him again). A TV left on can't run up paid questions. On screen the count doesn't matter. The claps' room-talk guard
-stays.
+**The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last wake
+(the greeting resets it), "Hey Jarvis" barge-in, tap or key (a listen started with `gesture`). A claps barge-in keeps
+the count (MAC-4: claps are the weak signal), and at the limit while hidden it opens no listen (he finishes, then the
+brake). A question that starts with the wake words ("Hey Jarvis, …": `startsWithWakeWords()`, src/lib/hands-free.js;
+not a bare "Jarvis, …") starts the count again, and so does "Hey Jarvis" heard by Standby's kept detector while he
+listens (MAC-V-1; nothing to interrupt there). While hidden, from `HANDS_FREE.hiddenQuestions` (3) on there is no
+follow-up listen: Jarvis says "Say “Hey Jarvis” when you need me." and goes back to Standby (woken, Return to standby
+on: `S.sleepAfter`) or stops listening (`S.braked`, until the owner calls him again). A TV left on can't run up paid
+questions. On screen the count doesn't matter. The claps' room-talk guard stays.
 
 **One Jarvis per Mac** (A9, critique M6; src/platform/standby-lock.js `createStandbyLock({ onChange, locks, name })` →
 `{ acquire(), take(), release(), state }`, state `off` | `asking` | `held` | `elsewhere` | `left` | `unsupported`;
-Standby's `createLock` dep): Standby asks for the Web Lock `jarvis-standby` when it opens (`ifAvailable` first; held elsewhere:
-`elsewhere`, and it waits in line) and listens only while it holds it; it keeps it through a woken session and lets go
-on `exit()`/`release()` (or when the window closes). While another window has it: `data-listening="elsewhere"`, the
-pill "NOT LISTENING IN THIS WINDOW", the hint "Standby is on in another Jarvis window.", and **Use this window**
-(`standby-use-here`; Tab reaches it, Enter or Space presses it; its click is not the tap that leaves Standby) →
-`take()`: a request with `steal: true` (the browser takes the lock from the holder at once, also from a frozen page,
-ahead of any other window waiting). The holder's request then fails with AbortError: it stops listening (a kept
-barge-in microphone too) and waits in line. When the holder's window closes (the browser lets go of its locks), the
-next window in line listens by itself. When the owner leaves Standby there (`exit()`, `release()`), it doesn't
-(PRIVACY-7: leaving Standby turns the microphone off): the holder first holds `jarvis-standby-off` (shared) for 10 s,
-then lets go; a window granted the lock from the line checks it (an exclusive `ifAvailable` request) and, when it is
-held, holds it too for the next in line, lets go and is told `left`: its Standby leaves as well. The lock manager
-orders both requests, so no message can come too late. `acquire()` and `take()` (the owner's own) clear an earlier
-mark (a `steal` of `jarvis-standby-off`). (The design had the holder asked to let go over a BroadcastChannel; `steal` needs no message and can't be
-missed.) No Web Locks (or a request that throws): `unsupported`, as before. Not on a phone (MAC-10: app.js passes no
-`createLock`, and Standby ignores one with `pauseWhenHidden`): a phone's Standby listens only on screen, so its windows
-can't both listen; a hidden, paused one holding the lock kept a second window on screen deaf.
+Standby's `createLock` dep): Standby asks for the Web Lock `jarvis-standby` when it opens (`ifAvailable` first; held
+elsewhere: `elsewhere`, and it waits in line) and listens only while it holds it; it keeps it through a woken session
+and lets go on `exit()`/`release()` (or when the window closes). While another window has it:
+`data-listening="elsewhere"`, the pill "NOT LISTENING IN THIS WINDOW", the hint "Standby is on in another Jarvis
+window.", and **Use this window** (`standby-use-here`; Tab reaches it, Enter or Space presses it; its click is not the
+tap that leaves Standby) → `take()`: a request with `steal: true` (the browser takes the lock from the holder at once,
+also from a frozen page, ahead of any other window waiting). The holder's request then fails with AbortError: it stops
+listening (a kept barge-in microphone too) and waits in line. When the holder's window closes (the browser lets go of
+its locks), the next window in line listens by itself. When the owner leaves Standby there (`exit()`, `release()`), it
+doesn't (PRIVACY-7: leaving Standby turns the microphone off): the holder first holds `jarvis-standby-off` (shared) for
+10 s, then lets go; a window granted the lock from the line checks it (an exclusive `ifAvailable` request) and, when it
+is held, holds it too for the next in line, lets go and is told `left`: its Standby leaves as well. The lock manager
+orders both requests, so no message can come too late. `acquire()` and `take()` (the owner's own) clear an earlier mark
+(a `steal` of `jarvis-standby-off`). (The design had the holder asked to let go over a BroadcastChannel; `steal` needs
+no message and can't be missed.) No Web Locks (or a request that throws): `unsupported`, as before. Not on a phone
+(MAC-10: app.js passes no `createLock`, and Standby ignores one with `pauseWhenHidden`): a phone's Standby listens only
+on screen, so its windows can't both listen; a hidden, paused one holding the lock kept a second window on screen deaf.
 
 **Voice Mode in another window** (MAC-6): the Standby lock keeps two Standbys apart, but the owner may talk to Voice
 Mode (opened by a tap) in one window while a forgotten tab is on Standby. Voice Mode open in any window holds the Web
@@ -4713,7 +4712,8 @@ reason `'command'` and the sheet opens. A woken session isn't over for good then
 held, a microphone kept for barge-in let go: `standby.rest()`) and app.js resumes it once the sheet that opened is
 closed, after a minute without a click, key, scroll or touch, or at once while Jarvis is hidden (nobody looks at the
 sheet there); it comes back above a sheet still open. A tapped session, or Return to standby off: as before. From a
-hologram's or Optics' field the viewers close first and the line is a toast. The model and the mode stay in Settings (they change costs).
+hologram's or Optics' field the viewers close first and the line is a toast. The model and the mode stay in Settings
+(they change costs).
 
 **Tests.** test/unit/command-router.test.mjs registers today's matchers and every src/ui/commands module (with fake deps),
 as app.js does, and runs over every builder's section of test/unit/fixtures/voice-corpus.mjs and collisions.mjs and
