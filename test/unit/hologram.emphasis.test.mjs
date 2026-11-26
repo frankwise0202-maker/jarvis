@@ -478,7 +478,8 @@ test('reduced motion: flights and explodes are cuts, and a glow does not pulse',
   await page.clock.runFor(20); // one frame
   const after = await debug(page);
   assert.deepEqual([partOf(after, 'battery').selGoal, partOf(after, 'battery').pulseGoal, after.pulseLive], [1, 0, false]);
-  assert.deepEqual([partOf(after, 'bottom-cover').vis, partOf(after, 'fan').vis], [0.5, 0.15], 'no fades either');
+  const [cover, fan] = [partOf(after, 'bottom-cover').vis, partOf(after, 'fan').vis];
+  assert.ok(near(cover, 0.5, 1e-9) && near(fan, 0.15, 1e-9), `no fades either (${cover}, ${fan})`);
   assert.deepEqual(page.problems, []);
 });
 
