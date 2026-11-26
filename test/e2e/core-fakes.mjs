@@ -550,8 +550,12 @@ export const CHROME_LINK_STORAGE_KEY = 'jarvis.chromeLink.v1';
 /** One home base's relay: the Core's own store, plus the fake's mode and counts. */
 export function fakeRelay(seed = {}) {
   const sd = seed && typeof seed === 'object' ? seed : {};
+  let store = null; // made on first use: a scenario that never links starts no timer
   const relay = {
-    store: createRelayStore(),
+    get store() {
+      if (!store) store = createRelayStore();
+      return store;
+    },
     mode: sd.mode || 'ok',
     posts: { 'to-ext': 0, 'to-app': 0 },
     reads: { 'to-ext': 0, 'to-app': 0, status: 0 },
