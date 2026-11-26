@@ -120,17 +120,17 @@ test('shapes: refused on their lengths and alphabet before any decoding, whateve
   const good = { id: 'A'.repeat(22), iv: 'B'.repeat(16), ct: 'C'.repeat(100) };
   assert.equal(E.isEnvelopeShape(good), true);
   const huge = 'A'.repeat(8 * 1024 * 1024);
-  const t0 = process.hrtime.bigint();
-  for (const bad of [
+  const bad = [
     null, 'text', [], { ...good, ct: huge }, { ...good, id: huge }, { ...good, iv: huge },
     { id: good.id, iv: good.iv }, { ...good, extra: 1 }, { ...good, id: 42 }, { ...good, ct: 'C'.repeat(23) },
     { ...good, ct: `${'C'.repeat(99)}=` }, { ...good, ct: 'C'.repeat(E.CT_MAX_CHARS + 1) }, { ...good, ct: 'C'.repeat(101) /* length 1 mod 4 */ },
     Object.assign(Object.create({ id: good.id }), { iv: good.iv, ct: good.ct, x: 1 }),
-  ]) {
-    assert.equal(E.isEnvelopeShape(bad), false, JSON.stringify(bad)?.slice(0, 80));
-  }
+  ];
+  const t0 = process.hrtime.bigint();
+  const results = bad.map((v) => E.isEnvelopeShape(v));
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 200, `refusing a huge value costs nothing (${ms.toFixed(1)} ms)`);
+  results.forEach((r, i) => assert.equal(r, false, `case ${i}`));
+  assert.ok(ms < 100, `refusing a huge value costs nothing: its length is checked first (${ms.toFixed(2)} ms for ${bad.length})`);
 });
 
 test('base64url: canonical, no padding, nothing outside the alphabet', () => {
