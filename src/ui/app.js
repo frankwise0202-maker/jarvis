@@ -4220,7 +4220,7 @@ export async function startApp(rootEl) {
     // mac-hf (src/ui/commands/mac.js):
     register('mac', registerMacCommands, { ...shared });
     // mac-dev (src/ui/commands/audio.js):
-    register('audio', registerAudioCommands, { ...shared });
+    register('audio', registerAudioCommands, { ...shared, audio: audioDevices });
     // tours (src/ui/commands/tours.js):
     register('tour', registerTourCommands, { ...shared });
     // voice (src/ui/commands/voice.js):

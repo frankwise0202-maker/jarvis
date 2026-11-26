@@ -28,6 +28,7 @@
 //   trackStartSupport(env)                 the recognizer hears a given track (recognition.start(track))
 //   HANDS_FREE_TEST_KEY, normalizeHandsFreeTest(raw), handsFreeLines(result)
 //   alwaysOnChecks(env), ALWAYS_ON_TOLD     A10's "Always on" card: what is checked, and what is only told
+//   audioStatusLine(plan, devices)         "which microphone are you using?" (src/ui/commands/audio.js)
 //
 // Labels on a Mac carry the transport (Chromium media/audio/mac/core_audio_util_mac.cc): "MacBook Pro
 // Microphone (Built-in)", "<speakerphone> (Bluetooth)", "(Bluetooth LE)", "(Virtual)", "(Aggregate)", and
@@ -674,4 +675,31 @@ export function alwaysOnChecks(env = {}) {
   for (const l of handsFreeLines(e.test)) add(`test-${l.step}`, l.ok, `Hands-free Test: ${l.text}`);
   if (!normalizeHandsFreeTest(e.test)) add('test', null, 'Hands-free Test: not run yet (Microphone and speaker → Test hands-free).');
   return out;
+}
+
+// ---- "Which microphone are you using?" -----------------------------------------------------------------------
+
+/**
+ * What Jarvis says when asked where he listens and speaks (src/ui/commands/audio.js): from the plan of the
+ * moment and the devices listed. Plain, one sentence; never names more than it knows.
+ */
+export function audioStatusLine(plan, devices) {
+  const p = plan && typeof plan === 'object' ? plan : null;
+  const list = devices && typeof devices === 'object' ? devices : {};
+  const micName = (d) => (!d ? '' : d.transport === 'builtin' ? 'the Mac’s microphone' : d.name);
+  const speakerName = (d) => (!d ? '' : d.transport === 'builtin' ? 'the Mac’s speakers' : d.name);
+  if (!p || p.none) {
+    const mic = micName(list.defaultInput);
+    const out = speakerName(list.defaultOutput);
+    if (mic && out) return `I’m following the Mac’s sound settings: listening on ${mic} and speaking on ${out}.`;
+    return 'I’m using this device’s own microphone and speaker.';
+  }
+  if (p.missing && (p.missing.input || p.missing.output)) {
+    const which = p.missing.input && p.missing.output ? 'microphone and speakers' : p.missing.input ? 'microphone' : 'speakers';
+    return `The speakerphone isn’t connected: I’m on the Mac’s ${which} until it’s back.`;
+  }
+  const mic = micName(p.questionMic) || micName(list.defaultInput) || 'the default microphone';
+  const out = speakerName(p.speaker) || speakerName(list.defaultOutput) || 'the default speaker';
+  const wake = p.setup === 'switch' && p.wakeMic && p.wakeMic !== p.questionMic ? ` “Hey Jarvis” and claps are heard on ${micName(p.wakeMic)}.` : '';
+  return mic === out ? `I’m listening and speaking on ${mic}.${wake}` : `I’m listening on ${mic} and speaking on ${out}.${wake}`;
 }

@@ -8,6 +8,7 @@ import {
   ALWAYS_ON_TOLD,
   AUDIO_SETUPS,
   alwaysOnChecks,
+  audioStatusLine,
   RECOMMENDED_SETUP,
   SETUP_IDS,
   audioConstraints,
@@ -363,4 +364,24 @@ test('A10, the "Always on" card: each line checked from what the page can see, o
   assert.equal(none.power, null);
   assert.equal('recognizer' in none, false, 'no question microphone chosen: nothing to say about it');
   assert.ok(ALWAYS_ON_TOLD.some((t) => /Prevent automatic sleeping on power adapter when the display is off/.test(t)) && ALWAYS_ON_TOLD.some((t) => /Always keep these sites active/.test(t)));
+});
+
+test('"Which microphone are you using?": the line from the plan, the matcher takes whole sentences only', async () => {
+  const { matchAudioStatus, register } = await import('../../src/ui/commands/audio.js');
+  const l = listAudioDevices(MAC_BT);
+  const chosen1 = { input: { id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)' }, output: { id: 'sp-out', label: 'Desk Speakerphone (Bluetooth)' } };
+  const chosen2 = { input: { id: 'sp-mic', label: 'Desk Speakerphone (Bluetooth)' }, output: chosen1.output };
+  assert.equal(audioStatusLine(planSetup('speaker-mac-mic', l, chosen1), l), 'I’m listening on the Mac’s microphone and speaking on Desk Speakerphone.');
+  assert.equal(audioStatusLine(planSetup('switch', l, chosen2), l), 'I’m listening and speaking on Desk Speakerphone. “Hey Jarvis” and claps are heard on the Mac’s microphone.');
+  assert.equal(audioStatusLine(planSetup('speakerphone-both', l, chosen2, { input: true, output: true }), l), 'The speakerphone isn’t connected: I’m on the Mac’s microphone and speakers until it’s back.');
+  assert.equal(audioStatusLine(planSetup('', l, {}), l), 'I’m following the Mac’s sound settings: listening on the Mac’s microphone and speaking on Desk Speakerphone.');
+  assert.equal(audioStatusLine(null, null), 'I’m using this device’s own microphone and speaker.', 'an iPhone, or no device list');
+  for (const yes of ['Which microphone are you using?', 'Hey Jarvis, which mic are you using', 'what speaker are you using', 'Is the speakerphone connected?', 'where are you listening and speaking']) assert.ok(matchAudioStatus(yes), yes);
+  for (const no of ['which microphone should I buy', 'what microphone does the iPhone use', 'where are you from', 'which speaker is better for a living room', '']) assert.equal(matchAudioStatus(no), null, no);
+  assert.deepEqual(matchAudioStatus('which mic are you using'), { do: 'audio-status', free: true, undo: true });
+  // Registered on Voice Mode and the chat; run says the line (no controller: this device's own).
+  const got = [];
+  register({ register: (e) => got.push(e) }, { audio: null });
+  assert.deepEqual([got[0].id, got[0].layer, got[0].surfaces], ['audio-status', 'app', ['voice', 'chat']]);
+  assert.deepEqual(got[0].run(), { say: 'I’m using this device’s own microphone and speaker.' });
 });
