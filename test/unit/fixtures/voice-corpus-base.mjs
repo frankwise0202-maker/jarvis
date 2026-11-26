@@ -213,9 +213,11 @@ export const MUST_BASE = Object.freeze(
     ['turn on the camera', 'V0', 'app', 'optics', null, 'opens Optics'],
     ['camera on', 'V0', 'app', 'optics', null, 'opens Optics'],
     ['close the camera', 'V0', 'app', 'optics', null, 'closes Optics'],
-    ['take a picture', 'V0', 'app', 'optics', null, 'a Look', { should: true }],
-    ['take a photo of this', 'V0', 'app', 'optics', null, 'a Look', { should: true }],
-    ['snap a picture', 'VL', 'top', 'optics', null, 'a Look', { should: true }],
+    // A Look: optics teaches these words to today's camera and Optics matchers (its module adds no Look
+    // of its own), so the rows wait for optics' branch and then name those entries.
+    ['take a picture', 'V0', 'camera', 'optics', 'camera', 'a Look (Optics opens)'],
+    ['take a photo of this', 'V0', 'camera', 'optics', 'camera', 'a Look (Optics opens)'],
+    ['snap a picture', 'VL', 'top', 'optics', 'optics', 'a Look'],
     ['look at my screen', 'V0', 'destination', 'voice', 'screen-look', 'a Look at the screen', { should: true }],
     ['switch cameras', 'V0', 'app', 'optics', null, 'opens Optics on the next camera'],
     ['use the Logitech camera', 'V0', 'app', 'optics', null, 'opens Optics on that camera'],
@@ -239,7 +241,7 @@ export const MUST_BASE = Object.freeze(
     ['put the camera and the hologram side by side', 'V0', 'destination', 'windows', null, 'side by side'],
     ['side by side', 'VW', 'destination', 'windows', null, 'side by side'],
     ['put the camera on the left and the hologram on the right', 'V0', 'destination', 'windows', null, 'left and right'],
-    ['swap them', 'VW', 'destination', 'windows', null, 'swap', { should: true }],
+    ['swap them', 'WIN2', 'destination', 'windows', null, 'swap (two windows open: windows\' state WIN2)'],
     ['make the window bigger', 'VW', 'destination', 'windows', null, 'size', { should: true }],
     ['make it full screen', 'VW', 'destination', 'windows', null, 'size', { should: true }],
     ['full screen', 'VW', 'destination', 'windows', null, 'size', { should: true }],
@@ -336,5 +338,13 @@ export const PARITY_EXCEPTIONS = Object.freeze(
     { id: 'blueprint', surfaces: ['voice'], why: "a blueprint sheet over Voice Mode (the viewer's field closes its own)" },
     { id: 'music', surfaces: ['voice', 'chat'], why: "typed in a hologram's field over Voice Mode it is Voice Mode's (its card shows there); Optics' field is the Look's question" },
     { id: 'chrome-link', surfaces: ['voice', 'chat'], why: "Jarvis for Chrome's link status and setup (chrome-relay): said in Voice Mode or written in the chat" },
+    // Declared here from the surfaces optics' and mac-dev's modules register (their branches predate T4):
+    { id: 'optics-card', surfaces: ['voice', 'optics'], why: "a Look's picture card, where Optics shows it (optics)" },
+    { id: 'optics-camera-part', surfaces: ['voice', 'hologram'], why: "R10: camera words that name a hologram's camera part, where the hologram is (optics)" },
+    { id: 'optics-research', surfaces: ['voice', 'optics'], why: '"research this": the price first, in Voice Mode and Optics\' field; typed in the chat it is a question (optics)' },
+    { id: 'optics-research-answer', surfaces: ['voice'], why: "a dear way for Voice Mode's research offer (optics)" },
+    { id: 'optics-open', surfaces: ['voice', 'chat', 'optics'], why: "\"open optics\": typed in a hologram's field it is the hologram's question (optics)" },
+    { id: 'optics-close', surfaces: ['voice', 'chat', 'optics'], why: "\"close the camera\": typed in a hologram's field it is the hologram's question (optics)" },
+    { id: 'audio-status', surfaces: ['voice', 'chat'], why: "\"which microphone are you using\": typed in a viewer's field it is that viewer's question (mac-dev)" },
   ].map((r) => Object.freeze(r)),
 );

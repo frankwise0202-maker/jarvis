@@ -191,7 +191,7 @@ test("the final order, as the app has it: today's matchers and every module's, l
     assert.ok(pos(a) >= 0 && pos(a) < pos(b), `${a} before ${b} (${flat.join(', ')})`);
   }
   // The declared ids each layer asks first (src/lib/command-order.js).
-  assert.deepEqual([...ORDER.destination], ['chrome-task', 'chrome-open', 'windows', 'screens', 'screen-look'], 'D1: a Chrome task before opening a page');
+  assert.deepEqual([...ORDER.destination], ['chrome-task', 'chrome-open', 'windows', 'optics-card', 'screens', 'screen-look'], 'D1: a Chrome task before opening a page; the Look\'s card before Screens');
   // The chat, a hologram's field and Optics' field: the same order, each with its own matchers.
   for (const surface of ['chat', 'hologram', 'optics']) {
     const ids = router.order(surface).flat();
@@ -303,7 +303,9 @@ export function checkCollisions(router, { sentences, states, table, waiting = nu
   }
   for (const row of table) {
     if (!states[row.state]) {
-      problems.push(`the collision row "${row.words}" names an unknown state ${row.state}`);
+      // A row for another builder's state waits until that builder is merged (its section brings the state).
+      if (waiting && row.by && waitingFor(row)) waiting.push(`"${row.words}" in ${row.state} (${row.by}'s state) → ${winnersOf(row).join(' or ')}`);
+      else problems.push(`the collision row "${row.words}" names an unknown state ${row.state}`);
       continue;
     }
     const want = winnersOf(row);
@@ -450,6 +452,11 @@ test('the harness finds an undeclared collision, a wrong winner and a stolen sen
   const waiting = [];
   assert.deepEqual(checkCollisions(r, { sentences: [], states, table: [{ words: 'go', state: 'V0', winner: 'not-yet' }], waiting }), []);
   assert.deepEqual(waiting, ['"go" in V0 → not-yet']);
+  // A row for a state another builder's section brings waits for that builder; without `by` it is an error.
+  const later = { words: 'go', state: 'X9', winner: 'stop-all', by: 'someone' };
+  assert.deepEqual(checkCollisions(r, { sentences: [], states, table: [later], waiting, waitingFor: (row) => row.by === 'someone' }), []);
+  assert.equal(waiting.at(-1), '"go" in X9 (someone\'s state) → stop-all');
+  assert.deepEqual(checkCollisions(r, { sentences: [], states, table: [{ ...later, by: undefined }], waiting, waitingFor: () => true }), ['the collision row "go" names an unknown state X9']);
   // T4: a matcher declared for some surfaces only may differ there; anything else is a difference.
   const p = createRouter({ order: { voice: [{ use: ['@app'] }], chat: [{ use: ['@app'] }], hologram: [{ use: ['@app'] }], optics: [{ use: ['@app'] }] } });
   p.register({ id: 'everywhere', layer: 'app', match: word('new chat') });
