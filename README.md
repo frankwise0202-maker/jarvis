@@ -654,6 +654,13 @@ Mac; the card isn't there on iPhone).
   speakerphone leaving changes nothing: it must be gone for about 3 seconds.
 - **Standby tries the microphone again by itself** when it's busy or gone: after 2 seconds, 5, 15, a minute, then
   every 5 minutes, also in the background. After the Mac has slept, Standby starts its microphone again.
+- **Ask him:** "Which microphone are you using?" (or "which speaker are you using?", "is the speakerphone
+  connected?") and he says where he listens and speaks, free.
+- **If your microphone sends no sound at all** for 10 seconds (the speakerphone's mute button), the Standby pill
+  asks **MICROPHONE MUTED?** until sound comes back.
+- **Always on** (the card after it) checks what keeps Jarvis listening day and night: the microphone allowed, the
+  speakerphone connected, on power, installed as an app, notifications, the wake words, George ready, your
+  questions heard on the chosen microphone and the last hands-free Test; and it lists what a page can't check.
 - **The first time Standby runs with a Bluetooth speaker and nothing chosen** it shows one line: "Using a
   Bluetooth speakerphone? Set it up in Settings → Voice."
 - **Free, and on this Mac only:** nothing here asks Claude anything, and the choice stays on this Mac (it isn't in

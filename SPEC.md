@@ -3948,6 +3948,28 @@ ends, in localStorage `jarvis.handsFreeTest.v1` = `{ at, hiddenWords: true|false
 Notes: the Mac's own voice follows the Mac's sound output; setup 1 needs the lid open; Chrome's microphone setting
 as text (`chrome://settings/content/microphone`) with **Copy**.
 
+**"Which microphone are you using?"** (`src/ui/commands/audio.js`, router id `audio-status`, layer `app`, Voice Mode
+and the chat): whole sentences only ("which microphone / mic are you using", "which speaker are you using", "which
+microphone and speaker are you using", "where are you listening", "is the speakerphone connected", "are you on the
+speakerphone"; "hey Jarvis" before and "please" after are fine); free and undoable; Jarvis says
+`audioStatusLine(plan, devices)` ("I’m listening on the Mac’s microphone and speaking on Desk Speakerphone.", or
+that the speakerphone isn't connected, or that he follows the Mac's sound settings). Corpus rows: the mac-dev
+section of `test/unit/fixtures/voice-corpus.mjs`.
+
+**The "Always on" card** (A10; after Microphone and speaker, test id `always-on`): `alwaysOnChecks(env)` (pure,
+src/lib/audio-devices.js) gives one line per check, OK (`data-ok="true"`), what to do (`"false"`) or not known
+(`"unknown"`): the microphone permission, the chosen devices connected, the Bluetooth note, on power
+(`navigator.getBattery()`), installed (`display-mode: standalone`), notifications, the wake words, George ready
+(from the home base or on this Mac, not stuck), the recognizer on the chosen microphone (`trackUse()`), the
+hands-free Test's last results; then `ALWAYS_ON_TOLD`, four lines a page can't check (`data-check="told"`).
+
+**MICROPHONE MUTED?** (A12, the mute half): Standby's signal path (`src/lib/wake/tap.js`, in the AudioWorklet and the
+ScriptProcessor fallback) counts exact zeros at the device rate; after `SILENCE_MS` (10 s) of nothing but zeros it
+reports `{ type: 'silence', silent: true }` (capture.js `onSilence(true)`), and at the first non-zero sample
+`silent: false`. Standby's pill then says `MICROPHONE MUTED?` (tone warn, `data-muted="true"`) and the hint "No sound
+at all is coming from the microphone. Is it muted (the speakerphone’s mute button)?". A quiet room is never exact
+zeros (a microphone always has some noise).
+
 **Standby's one-time line**: with nothing chosen, the first time Standby's capture is live on a computer whose
 default output is Bluetooth, `standby-tip` says "Using a Bluetooth speakerphone? Set it up in Settings → Voice."
 (once per device: localStorage `jarvis.audio.firstTimeLine`; hidden when Standby leaves).
