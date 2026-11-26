@@ -600,7 +600,7 @@ export default [
     name: 'mac-standby-at-launch',
     title: 'Mac with "Hey Jarvis" on: after a restart (no click yet) Jarvis opens Standby by himself and says CLICK ONCE SO JARVIS CAN SPEAK; that click unlocks speech and Standby stays; an iPhone doesn’t open it',
     device: 'mac',
-    settings: { wakeWord: true },
+    settings: { wakeWord: true, standbyAtLaunch: '' }, // automatic (the harness seeds 'off')
     timeout: 120000,
     async run(t) {
       await setup(t, { wordStub: true });
@@ -617,7 +617,7 @@ export default [
         await waitListening(t);
       });
       await t.step('an iPhone with the same settings doesn’t open it', async () => {
-        const page = await t.newPage({ device: 'iphone13', settings: { wakeWord: true } });
+        const page = await t.newPage({ device: 'iphone13', settings: { wakeWord: true, standbyAtLaunch: '' } });
         await setup(t, { page });
         await page.waitForTimeout(1500);
         t.assert(!(await page.locator(tid('standby')).count()), 'no Standby at launch on an iPhone');
