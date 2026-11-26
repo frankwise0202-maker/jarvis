@@ -279,6 +279,15 @@ export const CHROME_VOICE = {
     { words: 'cancel Chrome', state: 'CV-card', winner: 'chrome-typed', why: "the card's no, as its button (Voice Mode's prompt takes it the same way)" },
     { words: 'spend more in Chrome', state: 'CV-card', winner: 'chrome-typed', why: "a yes typed: the card's button answers it (typing isn't the check)" },
     { words: 'allow once in Chrome', state: 'CV-card', winner: 'chrome-typed', why: "a yes typed: the card's button answers it (typing isn't the check)" },
+    // CHROME-VOICE-R4-1: during a check, "tell Chrome to cancel …" is the check's cancel: withdrawn, never a stop for the
+    // task that runs (nor, typed, for the countdown's).
+    // "Chrome, stop." with a question or a check open: its own stop (the prompt's stop answer, or the check's).
+    ...['CV-budget', 'CV-buy', 'CV-check', 'CV-prompt', 'CV-prompt-tour'].map((state) => ({ words: 'Chrome, stop.', state, winner: 'chrome-prompt', why: "the question's (or the check's) own stop, which stops the task too" })),
+    { words: 'Chrome, stop.', state: 'CV-typed', winner: 'chrome-typed', why: "the countdown's own stop, typed" },
+    ...['Tell Chrome to cancel.', 'Tell Chrome to cancel that.', 'Tell Chrome to cancel the task.', 'Tell Chrome to cancel everything.'].flatMap((words) => [
+      { words, state: 'CV-check', winner: 'chrome-prompt', why: "the check's own cancel: nothing sent, and the task that runs goes on" },
+      { words, state: 'CV-typed', winner: 'chrome-typed', why: "the countdown's own cancel, typed: nothing sent, and the task that runs goes on" },
+    ]),
   ],
 };
 

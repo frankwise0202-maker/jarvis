@@ -932,19 +932,184 @@ test('CHROME-VOICE-R3-3: the agent\'s reworded questions ("Chrome is asking …"
   assert.equal(taskStatusLine({ status: 'running', text: 'find a monitor', narration: 'Chrome is asking: add the AppleCare plan? Tell me yes or no.' }), 'Chrome is working on: find a monitor.');
 });
 
-test('CHROME-VOICE-R3-4: a yes-led sentence said to Chrome\'s question ("Yes, add it.", "Sure, do it.", "Yes, keep going.", "Yes, allow it.") gets the free hint, never a paid question', () => {
+test('CHROME-VOICE-R5-3, R5-4: yes-led sentences said to Chrome\'s question are no answer and no hint (as on 422af45); approval by voice stays a reserved word\'s', () => {
   for (const [kind, prompt, words] of [
-    ['cart', PROMPTS.cart, ['Yes, add it.', 'Sure, do it.', 'Yes, add it to the cart.', 'Sure, go ahead and add it.']],
+    ['cart', PROMPTS.cart, ['Yes, add it.', 'Sure, do it.', 'Okay, be quiet.', 'Okay, that’s enough.', 'Okay, take me to settings.']],
     ['budget', PROMPTS.budget, ['Yes, keep going.', 'Okay, spend a bit more.']],
     ['site', PROMPTS.site, ['Yes, allow it.', 'Yeah, let it.']],
   ]) {
     const p = { id: `chrome:${prompt.promptId}`, askedAt: 3000, ...prompt };
-    for (const w of words) assert.equal((promptWords.matchChromeAnswer(w, { prompt: p, questions: [] }) || {}).do, 'chrome-hint', `${kind}: ${w}`);
+    for (const w of words) assert.equal(promptWords.matchChromeAnswer(w, { prompt: p, questions: [] }), null, `${kind}: ${w}`);
   }
-  const p = { id: 'chrome:p-cart', askedAt: 3000, ...PROMPTS.cart };
-  // Never over a no word or a question, nor with a walkthrough going.
-  for (const w of ['Yes, cancel it.', 'Sure, but wait.', 'Yes, what does it cost?']) assert.notEqual((promptWords.matchChromeAnswer(w, { prompt: p, questions: [] }) || {}).do, 'chrome-hint', w);
-  assert.equal(promptWords.matchChromeAnswer('Yes, add it.', { prompt: p, questions: [], tour: { active: true } }), null, 'a walkthrough going: not the hint');
+});
+
+// ---- the re-verify's sentences (review4 cvoice-probes and cvoice-v-probes): I| instructions, N| not tasks, S| stops --
+const R4_INSTRUCTIONS = [
+  "Cancel my Peloton membership in Chrome.", "Renew my driver's license in Chrome.",
+  "Email my landlord about the heater in Chrome.", "Request a refund for the broken lamp in Chrome.",
+  "Reschedule my dentist appointment to Friday in Chrome.", "Unfollow that account on Instagram in Chrome.",
+  "Reply to Sarah's email in Chrome.", "Pay the electric bill in Chrome.",
+  "Book two tickets for Saturday in Chrome.", "Archive all the promo emails in Chrome.",
+  "Submit my timesheet in Chrome.", "Transfer 200 dollars to savings in Chrome.", "Sign up for the 10K in Chrome.",
+  "Refill my prescription in Chrome.", "Track my Amazon package in Chrome.",
+  "Change my shipping address on Amazon in Chrome.", "Turn on two-factor for my Google account in Chrome.",
+  "Fill in the visa form in Chrome.", "Message the seller on eBay in Chrome.",
+  "Add milk to my Instacart order in Chrome.", "Confirm Amazon has my new address in Chrome.",
+  "Verify PayPal is linked in Chrome.", "Check Netflix is cancelled in Chrome.",
+  "Make sure autopay is on in Chrome.", "Ensure autopay is on in Chrome.",
+  "Check Gmail has the receipt from Delta in Chrome.", "Make Gmail look less cluttered in Chrome.",
+  "See if Costco has the TV in Chrome.", "Find out whether Target has diapers in stock in Chrome.",
+  "Double-check Venmo says paid in Chrome.", "Tell Sam dinner is at 7 in Chrome.",
+  "Text Sarah the meeting is moved in Chrome.", "Bookmark the recipe page in Chrome.",
+  "Unsubscribe me from the Target newsletter in Chrome.", "Archive all the promo emails in Gmail in Chrome.",
+  "Pin the Spotify tab in Chrome.", "Mute the Slack channel called random in Chrome.",
+  "Translate this page to Spanish in Chrome.", "Compare prices for AirPods on Amazon and Best Buy in Chrome.",
+  "Track my UPS package in Chrome.", "Reserve a table at Nobu for Friday in Chrome.",
+  "Can you renew my library books in Chrome?", "Would you please pay my Con Edison bill in Chrome?",
+  "In Chrome, star the email from my landlord.", "In Chrome, sort my Amazon orders by date.",
+  "Reorder my contact lenses in Chrome.", "Fetch the PDF of my lease from Google Drive in Chrome.",
+  "Print my boarding pass in Chrome.", "Upvote that Reddit post in Chrome.", "Retweet the NASA post in Chrome.",
+  "Follow Taylor Swift on Twitter in Chrome.", "Redeem my Starbucks gift card in Chrome.",
+  "Claim the free game on Epic in Chrome.", "Activate my new credit card in Chrome.",
+  "Enroll me in paperless billing on Verizon in Chrome.", "Hunt down a discount code for Wayfair in Chrome.",
+  "Dig up my old printer ink order on Amazon in Chrome.", "Rename my Google Doc to Budget 2027 in Chrome.",
+  "Invite Ben to the Zoom meeting in Chrome.", "Decline the calendar invite from HR in Chrome.",
+  "Forward the receipt to my accountant in Chrome.", "Tip the DoorDash driver five dollars in Chrome.",
+  "Donate twenty dollars to Wikipedia in Chrome.", "Rate my Uber driver five stars in Chrome.",
+  "Report the spam account on Instagram in Chrome.", "Reopen the tab I just closed in Chrome.",
+  "Research standing desks in Chrome.", "Scroll down to the comments in Chrome.",
+  "Tell Chrome to find a plumber near me.", "Ask Chrome to check on my UPS package.",
+  "Have Chrome look up flights to Denver.", "Get Chrome to bookmark this recipe.",
+  "Use Chrome to compare air fryers.", "Please tell Chrome to unsubscribe me from Old Navy emails.",
+  "In Chrome, please gather the receipts from my Gmail.", "Check PayPal has my refund in Chrome.",
+  "Make sure Venmo says paid in Chrome.", "See if Amazon has the blender in stock in Chrome.",
+  "Check netflix is cancelled in Chrome.", "Check my Netflix is cancelled in Chrome.",
+  "Tell Sam I'm running late in Chrome.", "Remind Sam the party is at 7 in Chrome.",
+  "Make sure Gmail has the receipt in Chrome.", "Verify Chase has the transfer in Chrome.",
+  "Pay the Comcast bill in Chrome.", "Transfer $50 to Chase in Chrome.", "Tell Chrome to find a cheaper monitor.",
+];
+const R4_NOT_TASKS = [
+  "Videos lag in Chrome.", "Sound cuts out on Spotify in Chrome.", "Gmail loads really slowly in Chrome.",
+  "Tabs freeze in Chrome.", "Videos stop playing after a minute in Chrome.", "Pages take ages to load in Chrome.",
+  "Zoom calls drop in Chrome.", "Facebook logs me out every day in Chrome.", "Twitter shows a blank page in Chrome.",
+  "Disney Plus plays without sound in Chrome.", "Extensions disappeared in Chrome.", "Bookmarks vanished in Chrome.",
+  "Images load half way in Chrome.", "YouTube comments never load in Chrome.",
+  "Notifications pop up all day in Chrome.", "Spotify skips songs in Chrome.", "Chase site errors out in Chrome.",
+  "Popups everywhere in Chrome.", "Endless captchas in Chrome.", "Too many tabs in Chrome.",
+  "Way too slow in Chrome.", "Sound problems in Chrome.", "Login issues with my bank in Chrome.",
+  "Thank you in Chrome.", "Nice work in Chrome.", "Awesome job in Chrome.", "Cool, thanks, in Chrome.",
+  "Forget it in Chrome.", "Forget about it in Chrome.", "Nevermind in Chrome.", "Same thing in Chrome.",
+  "Same here in Chrome.", "Also in Chrome.", "Not in Chrome.", "Just checking in Chrome.",
+  "Any chance you can see why YouTube is slow in Chrome.", "Curious why Netflix buffers in Chrome.",
+  "No idea why Gmail logs me out in Chrome.", "YouTube keeps buffering in Chrome.", "Netflix won't play in Chrome.",
+  "Gmail is slow in Chrome.", "Downloads fail in Chrome.", "Tell Chrome to stop.", "Ask Chrome to stop.",
+  "Get Chrome to stop.", "Have Chrome stop.", "Tell Chrome to cancel.", "Tell Chrome to cancel that.",
+  "Tell Chrome to cancel the task.", "Tell Chrome to stop what it's doing.", "Tell Chrome to quit.",
+  "Tell Chrome to hold on.", "Tell Chrome to wait.", "Tell Chrome to pause.", "Tell Chrome never mind.",
+  "Tell Chrome to forget it.", "Tell Chrome to stop clicking.", "Have Chrome stop the task.",
+  "Tell Chrome to approve it.", "Tell Chrome yes.", "Tell Chrome to go ahead.", "Tell Chrome to keep going.",
+  "Tell Chrome to stop that.", "Tell Chrome to stop it now.", "Tell Chrome to stop the search.",
+  "Tell Chrome to stop shopping.", "Tell Chrome to stop working on that.", "Tell Chrome to stop what it is doing.",
+  "Tell Chrome to abort.", "Tell Chrome to give up.", "Tell Chrome to leave it.", "Tell Chrome to drop it.",
+  "Tell Chrome to never mind.", "Tell Chrome to hang on a second.", "Tell Chrome to wait a minute.",
+  "Tell Chrome thanks.", "Tell Chrome to stand by.", "Have Chrome hold off.", "Get Chrome to back off.",
+  "Stop what it's doing in Chrome.", "Chrome, stop what you're doing.", "Stop what Chrome is doing.",
+  "Yes, cancel it.", "Yes, cancel.", "Okay, cancel that.", "Yes, stop it.", "Sure, cancel it.",
+  "Have Chrome turn on my camera.", "Tell Chrome to open the camera.", "Use Chrome to turn on the microphone.",
+  "Get Chrome to show my screen.", "Have Chrome open my settings.", "Tell Chrome to start the live view.",
+  "Have Chrome turn on the mic.", "Tell Chrome to unmute my mic on Zoom.", "Have Chrome allow the camera on Zoom.",
+  "Turn on my camera on Zoom in Chrome.", "My bank's website keeps timing out in Chrome.",
+  "Google Maps freezes when I zoom in Chrome.", "Videos stutter in Chrome.",
+  "Autofill puts in the wrong address in Chrome.", "Netflix subtitles out of sync in Chrome.",
+  "Fonts look blurry in Chrome.", "Audio crackles in Chrome.", "Captcha keeps looping in Chrome.",
+  "The checkout button does nothing in Chrome.", "Memory usage is crazy in Chrome.",
+  "Thanks so much, Chrome.", "Appreciate it, Chrome.",
+  "That was fast in Chrome.", "Well done in Chrome.", "Lovely work in Chrome.", "Cheers, Chrome.",
+  "Strange things happening in Chrome.", "Something's off in Chrome.", "Nothing happens when I click in Chrome.",
+  "Not sure why the video won't play in Chrome.", "I can't log in to my bank in Chrome.",
+  "Page keeps reloading in Chrome.", "Login loop on Hulu in Chrome.",
+  "Order history won't load on Amazon in Chrome.", "Sign in button greyed out in Chrome.",
+  "Update failed in Chrome.", "Search bar disappeared in Chrome.",
+  "Pay button not working in Chrome.", "Buy now button missing on Amazon in Chrome.",
+  "Play button does nothing on Netflix in Chrome.", "Watch history gone on YouTube in Chrome.",
+  "Cancel button doesn't work on Hulu in Chrome.",
+  "Return policy page won't load on Target in Chrome.", "Subscribe button keeps spinning on YouTube in Chrome.",
+  "Delete key not working in Google Docs in Chrome.",
+  "Transfer limit too low on Chase in Chrome.",
+  "Book preview won't open on Kindle in Chrome.", "Check deposit failing on Chase in Chrome.",
+  "Booking page crashes on Expedia in Chrome.", "In Chrome, videos stutter.", "In Chrome, the cart keeps emptying.",
+  "Chrome, pages load really slowly.", "Chrome, thanks a bunch.", "In Chrome, order history is blank.",
+  "In Chrome, pay button is greyed out.", "Hang on in Chrome.", "Hold that thought, Chrome.", "One sec, Chrome.",
+  "Scratch that in Chrome.", "Don't bother in Chrome.", "Not now, Chrome.", "Skip it in Chrome.",
+  "Let me think in Chrome.", "Tell Chrome good job.", "Tell Chrome to hang on.", "Ask Chrome to hold that thought.",
+  "Tell Chrome to forget about it.", "Tell Chrome not to bother.", "Tell Chrome I said thanks.",
+  "Tell Chrome to scratch that.", "Tell Chrome to take a break.", "Ask Chrome to sit tight.",
+  "Tell Chrome to chill.", "Have Chrome wait.", "Tell Chrome to hold up.", "Tell Chrome to give it a rest.",
+  "Tell Chrome to let it go.", "Check out with PayPal is greyed out in Chrome.",
+  "Order from Amazon says delivered but nothing came in Chrome.", "Sign in with Google is broken in Chrome.",
+  "Log in with Apple says error in Chrome.", "Pay with Venmo has disappeared in Chrome.",
+  "Book on Expedia says sold out in Chrome.", "Watch on Netflix is stuck loading in Chrome.",
+  "Search on Amazon is super slow in Chrome.", "Transfer to Chase says pending forever in Chrome.",
+  "Buy on Etsy is greyed out in Chrome.", "Order on DoorDash has been stuck for an hour in Chrome.",
+  "Join Zoom is greyed out in Chrome.", "Stream from Hulu keeps buffering in Chrome.",
+  "Upload to Dropbox is stuck in Chrome.", "Download from Google Drive fails in Chrome.",
+  "In Chrome, sign in with Google is broken.", "Chrome, checkout on Amazon has an error.",
+  "Pay Venmo is down in Chrome.", "Delete Account on Facebook is greyed out in Chrome.",
+  "Cancel Subscription on Hulu is missing in Chrome.", "Confirm button doesn't work on Venmo in Chrome.",
+  "Make default button doesn't work in Chrome.",
+  "Confirm payment page keeps crashing in Chrome.", "Ensure checkbox won't tick in Chrome.",
+  "Upgrade to Premium is greyed out on Spotify in Chrome.", "Connect to PayPal says error in Chrome.",
+  "Return to Amazon says not eligible in Chrome.", "Unsubscribe from Target has no effect in Chrome.",
+  "Reply to Mom says failed in Gmail in Chrome.", "Login with Microsoft is broken in Chrome.",
+  "Transfer to Venmo is pending in Chrome.", "Send to Kindle says failed in Chrome.",
+  "Pay with Apple Pay is missing in Chrome.", "Share to Instagram is broken in Chrome.",
+  "In Chrome, transfer to Chase says pending.", "Good job in Chrome.", "Great job with Chrome.",
+  "Never mind in Chrome.", "Confirm email never arrived from Venmo in Chrome.",
+  "Ensure Autopay toggle won't turn on in Chrome.",
+  "Tell Chrome Gmail is broken.",
+  "Transfer to Chase says pending in Chrome.", "Checkout with PayPal says error in Chrome.",
+  "Donate to Wikipedia is broken in Chrome.",
+  "Subscribe to YouTube Premium says unavailable in Chrome.", "Renew with Visa says declined in Chrome.",
+  "Withdraw to Chase is greyed out in Chrome.", "Buy with Apple Pay is missing in Chrome.",
+  "Pay Now on Comcast says error in Chrome.", "Reply All in Outlook is greyed out in Chrome.",
+  "Share to Facebook is broken in Chrome.", "Tell Chrome that's enough.", "Tell Chrome to stand down.",
+  "Tell Chrome to pack it in.", "Have Chrome back off.", "Tell Chrome to drop everything.",
+  "Tell Chrome to forget the whole thing.", "Tell Chrome to leave it alone.", "Tell Chrome to wait up.",
+  "Tell Chrome to hang tight.", "Tell Chrome to quit it.", "Tell Chrome to cancel everything.",
+  "Tell Chrome to shut it down.", "Tell Chrome to turn it off.", "Tell Chrome to stop now please.",
+  "Search results empty on Google in Chrome.", "Checkout page blank on Target in Chrome.",
+  "Order status wrong on Amazon in Chrome.",
+  "Book button disabled on Expedia in Chrome.",
+  "Payment declined on Amazon in Chrome.", "Refund still pending on Amazon in Chrome.",
+  "Renewal price way too high on Netflix in Chrome.", "Reply button unresponsive in Gmail in Chrome.",
+  "Delete option missing in Gmail in Chrome.",
+];
+const R4_STOPS = [
+  "Tell Chrome to knock it off.", "Tell Chrome to cut it out.", "Ask Chrome to halt.",
+  "Tell Chrome to stop what it is doing right now.", "Chrome, stop.", "Tell Chrome to stop the task.",
+  "Have Chrome stop searching.", "Tell Chrome to cancel what it's doing.",
+  "Tell Chrome to stop shopping for me.", "Tell Chrome to call it off.", "Tell Chrome to quit what it's doing.",
+  "Tell Chrome to stop working.", "Can you tell Chrome to stop?", "Please tell Chrome to stop what it's doing.",
+];
+
+const R4_GAPS = new Set(["Zoom level resets every time in Chrome.", "Download stuck at 99 percent in Chrome.", "Login loop on Hulu in Chrome.", "Sign in button greyed out in Chrome.", "Print button broken in Chrome.", "Buy now button missing on Amazon in Chrome.", "Watch history gone on YouTube in Chrome.", "Reply all button missing in Gmail in Chrome.", "Send button greyed out in Gmail in Chrome.", "Order confirmation never arrived from Amazon in Chrome.", "Transfer limit too low on Chase in Chrome.", "Check deposit failing on Chase in Chrome.", "Verify email link expired in Chrome.", "Confirm email never arrived from Venmo in Chrome.", "Make payment button is greyed out in Chrome.", "Double-check Gmail says storage full in Chrome.", "Send to Bank on Cash App says failed in Chrome.", "Checkout page blank on Target in Chrome.", "Upload speed terrible in Chrome.", "Order status wrong on Amazon in Chrome.", "Pay button missing on Comcast in Chrome.", "Book button disabled on Expedia in Chrome.", "Share menu gone in Chrome.", "Refund still pending on Amazon in Chrome.", "Reply button unresponsive in Gmail in Chrome.", "Delete option missing in Gmail in Chrome."]);
+
+test('CHROME-VOICE-R4-2, R4-4, R4-5: the re-verify\'s instructions are tasks; its troubles (a site, a brand or a button named, said short), idioms and remarks never are; its stops stop', async () => {
+  const { matchChromeStop } = await import('../../src/lib/chrome-task-words.js');
+  const st = { chrome: { linked: true, online: true } };
+  const run = { chrome: { linked: true, online: true, task: { id: 't1', status: 'running', text: 'find a monitor' } } };
+  const lost = R4_INSTRUCTIONS.filter((s) => !matchChromeTask(s, st));
+  // (Short troubles said without a verb, "download stuck at 99 percent", are tasks again since R5-2's revert: known gaps.)
+  const taken = R4_NOT_TASKS.filter((s) => !R4_GAPS.has(s) && matchChromeTask(s, st)).map((s) => `${s} -> "${matchChromeTask(s, st).text}"`);
+  const notStops = R4_STOPS.filter((s) => matchChromeTask(s, st) || !matchChromeStop(s, run));
+  assert.deepEqual({ lost, taken, notStops }, { lost: [], taken: [], notStops: [] });
+});
+
+test('CHROME-VOICE-R4-6: only a question that ends the agent\'s answer, or one put to the owner, stays on the card', async () => {
+  const { taskDoneLine } = await import('../../src/lib/chrome-task-words.js');
+  assert.equal(taskDoneLine({ status: 'done', answer: 'The FAQ says: Can I return opened items? Yes, within 30 days.' }).say, 'Chrome is done. The FAQ says: Can I return opened items? Yes, within 30 days.');
+  assert.equal(taskDoneLine({ status: 'done', answer: 'Do you want the 27-inch one? I added the cheaper one.' }).say, 'Chrome is done. I added the cheaper one. Its question is on its card.');
+  assert.equal(taskDoneLine({ status: 'done', answer: 'I found the monitor. Shall I place the order?' }).say, 'Chrome is done. I found the monitor. Its question is on its card.');
 });
 
 test('ROUTING-8: emphatic no\'s answer Chrome\'s question asked last; during a check "not now", "no no no", "one second" withdraw it, "go for it" lets it count on', () => {
