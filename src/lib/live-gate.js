@@ -483,15 +483,13 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
         const ran = isNum(ranUsd) && ranUsd > 0 ? Math.min(ranUsd, upTo) : 0;
         const t = time();
         const all = reservedNano(t) / NANO;
-        let own = 0;
-        for (const x of mine.values()) own += x.nano;
         const cost = Math.max(Math.min(e.nano / NANO, upTo), Math.min(ran, e.nano / NANO + roomUsd(t)));
         if (nano(cost) > 0) budget.add(cost);
         drop(id);
-        // MONEY-R4-2: what ran past the hold that the hour couldn't take because another window holds the rest
-        // stays held by this window for the rest of the hour, so it isn't offered again when that question
-        // settles. The record never passes $1.
-        const kept = Math.min(Math.max(0, ran - cost), Math.max(0, all - own / NANO));
+        // MONEY-R4-2, MONEY-R5-1: what ran past the hold that the hour couldn't take because other questions hold
+        // the rest (in another window, or another chat of this one) stays held by this window for the rest of
+        // the hour, so it isn't offered again when they settle. The record never passes $1.
+        const kept = Math.min(Math.max(0, ran - cost), Math.max(0, all - e.nano / NANO));
         if (nano(kept) > 0) hold(t, nano(kept));
         return true;
       }),
