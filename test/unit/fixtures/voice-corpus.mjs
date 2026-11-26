@@ -6,6 +6,8 @@
 //   must    T2, must-match: [words, state, expected]. In that state the router must pick `expected`:
 //           a matcher id ('screens'), or id:action ('tour-words:next'), or null (Claude).
 //   not     T1, no-steal: ordinary sentences that must reach Claude in every state of the harness.
+//   parity  (optional) T4: the section's matchers that listen on some surfaces only, on purpose:
+//           [{ id, surfaces, why }]
 //   states  the section's own states: { name: { surface, …fields } }, filled over the router's
 //           emptyState(surface) (command-router.js documents every field). The harness's own states
 //           (V0 nothing open, S speaking, VH a hologram, VL / VF Optics live / frozen, VW a window,
