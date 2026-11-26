@@ -268,16 +268,16 @@ test('the worst case: all of the input at the cache-write price, all of max_toke
     messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: fakeJpeg(1280, 720).toString('base64') } }, { type: 'text', text: 'What am I looking at?' }] }],
   };
   const input = estimateInputTokens(params);
-  const opus = MODELS['claude-opus-5-5'];
+  const lead = MODELS['claude-opus-5-5'];
   const usd = requestWorstUsd(params);
-  assert.ok(near(usd, (input * opus.cacheWrite5mPerM + 4000 * opus.outPerM) / 1e6 + 0.1), String(usd));
+  assert.ok(near(usd, (input * lead.cacheWrite5mPerM + 4000 * lead.outPerM) / 1e6 + 0.1), String(usd));
   // A Look's first request, in a new chat, during the live view: between 20¢ and 35¢ held (a Look
   // really costs about 3¢: the hour keeps its room for the worst case only while it runs).
   assert.ok(usd > 0.2 && usd < 0.35, `a Look's first request reserves ${usd}`);
   const later = requestWorstUsd({ ...params, max_tokens: 1000 });
-  assert.ok(near(usd - later, (3000 * opus.outPerM) / 1e6), 'max_tokens 1,000: 6¢ less on Opus 5.5');
-  const haiku = requestWorstUsd(params, { model: 'claude-haiku-5-5' });
-  assert.ok(haiku - 0.1 < (usd - 0.1) / 20, 'priced at the model it goes to (the searches cost the same)');
+  assert.ok(near(usd - later, (3000 * lead.outPerM) / 1e6), 'max_tokens 1,000: 6¢ less at the lead model\'s output price');
+  const small = requestWorstUsd(params, { model: 'claude-haiku-5-5' });
+  assert.ok(small - 0.1 < (usd - 0.1) / 20, 'priced at the model it goes to (the searches cost the same)');
   assert.ok(near(requestWorstUsd({ model: 'claude-opus-5-5', max_tokens: 0, messages: [] }), 0));
 });
 
