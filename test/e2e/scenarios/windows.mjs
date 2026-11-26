@@ -130,7 +130,7 @@ async function sendDone(t, text) {
 
 /** The app with a hologram and a report to put in windows. */
 async function start(t, { monitors = 1, perm = 'prompt', voice = false } = {}) {
-  await t.newPage();
+  t.page = await t.newPage(); // a fresh page each time (windows-side-by-side starts twice)
   await t.page.addInitScript(installScreenStubs, { monitors, perm });
   await t.page.addInitScript(installWindowGeometry);
   await t.page.context().addInitScript(installPopupGeometry);
