@@ -12,6 +12,7 @@
 //   liveBackoff            how long to wait after a 429 or 529 (or a network or server error)
 //   canSpeakLive           whether a worth-saying line may be spoken now
 //   liveMeterText          "LIVE VIEW · 12 min · 9¢ this hour · limit $1"
+//   liveResumeShownAt      the time to name in "It can go on at 2:41 PM" (rounded up to the minute)
 
 import { priceOf } from '../engine/models.js';
 import { formatUsd, imageTokens } from './optics.js';
@@ -357,4 +358,14 @@ function capText(usd) {
 export function liveMeterText({ elapsedMs = 0, spentUsd = 0, capUsd = LIVE_DEFAULTS.capUsd } = {}) {
   const minutes = isNum(elapsedMs) && elapsedMs > 0 ? Math.floor(elapsedMs / 60000) : 0;
   return `LIVE VIEW · ${minutes} min · ${formatUsd(spentUsd)} this hour · limit ${capText(capUsd)}`;
+}
+
+/**
+ * The time to name in "Live view paused: … It can go on at 2:41 PM." for a `resumeAt(usd)` result:
+ * rounded UP to the whole minute, because a clock shows minutes (2:41:30 would read "2:41" while
+ * Resume still waits 30 s); so Resume always works at the minute named. Infinity, NaN and other
+ * junk come back unchanged (the caller then names no time).
+ */
+export function liveResumeShownAt(at) {
+  return isNum(at) ? Math.ceil(at / 60000) * 60000 : at;
 }

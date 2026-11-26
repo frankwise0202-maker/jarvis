@@ -121,13 +121,18 @@ test('the first look says there is no summary and no line yet', async () => {
   assert.equal(fetch.calls[0].body.messages[0].content[1].text, 'Scene so far: (nothing yet: this is the first look)\nLines you already said: (none yet)');
 });
 
-test('the strict mock API accepts the request (apart from thinking off, which Claude Haiku 5.5 allows at effort high or below)', async () => {
+test('the strict mock API accepts the whole request (thinking off, which Claude Haiku 5.5 allows at effort high or below)', async () => {
   const fetch = fakeFetch(() => json(liveMessage()));
   await look(fetch, { summary: 'A desk.', said: ['A red mug.'] });
   const { thinking, ...rest } = fetch.calls[0].body;
   assert.deepEqual(thinking, { type: 'disabled' });
   assert.equal(rest.output_config.effort, 'low', 'disabled thinking needs effort high or below');
   assert.equal(validateBody(rest), null);
+  // The validator knows Claude Haiku 5.5 turns thinking off at effort high or below: the request as sent passes.
+  assert.equal(validateBody(fetch.calls[0].body), null);
+  // …and the same thinking off at effort xhigh, or on another model, is a 400 (as on the real API).
+  assert.ok(validateBody({ ...fetch.calls[0].body, output_config: { ...rest.output_config, effort: 'xhigh' } }), 'effort xhigh with thinking off');
+  assert.ok(validateBody({ ...fetch.calls[0].body, model: 'claude-opus-5-5' }), 'thinking off on Claude Opus 5.5');
   // No sampling parameters (a 400 on Claude Haiku 5.5) and no server-side fallbacks (it has none).
   for (const banned of ['temperature', 'top_p', 'top_k', 'tools', 'tool_choice', 'stream', 'fallbacks', 'betas', 'cache_control', 'context_management']) {
     assert.ok(!(banned in fetch.calls[0].body), `no ${banned}`);

@@ -363,6 +363,18 @@ export default [
         for (let i = 1; i < times.length; i++) t.assert(times[i] - times[i - 1] >= 4800, `one look every 5 s from 90 cents (gap ${times[i] - times[i - 1]} ms)`);
         const note = await noteText(t);
         t.assert(/^Live view paused: it has spent \$1 in the last hour\. It can go on at \d{1,2}:\d{2}\s?(AM|PM)\.$/.test(note), `the note (${note})`);
+        // The minute named is one Resume already works at: rounded up (2:40:30 reads 2:41 PM, never 2:40 PM).
+        const named = await page.evaluate(() => {
+          const text = document.querySelector('[data-testid="optics-liveview-note"]').textContent;
+          const at = Number(document.querySelector('[data-testid="optics-liveview-resume"]').dataset.resumeAt);
+          const m = /(\d{1,2}):(\d{2})\s?(AM|PM)/.exec(text);
+          if (!m || !Number.isFinite(at) || at <= 0) return { text, at, diff: null };
+          const d = new Date(at);
+          let shown = new Date(d.getFullYear(), d.getMonth(), d.getDate(), (Number(m[1]) % 12) + (m[3] === 'PM' ? 12 : 0), Number(m[2])).getTime();
+          if (shown - at < -12 * 3600000) shown += 24 * 3600000; // over midnight
+          return { text, at, diff: shown - at };
+        });
+        t.assert(named.diff !== null && named.diff >= 0 && named.diff < 60000, `the time named is the next whole minute from when Resume works (${JSON.stringify(named)})`);
         t.assert(await page.locator(tid('optics-liveview-resume')).isVisible(), 'a Resume button');
         t.assert(await page.locator(tid('optics-liveview-resume')).isDisabled(), 'which works only from then');
         t.assert(/99¢ this hour/.test(await meterText(t)), `the meter (${await meterText(t)})`);

@@ -3670,15 +3670,25 @@ hard budget of $1 in any rolling hour.
 - `src/engine/live.js`: `LIVE_DEFAULT_MODEL` (`claude-haiku-5-5`), `LIVE_SYSTEM` (starts "You are Jarvis Live view"),
   `LIVE_SCHEMA` (`{ summary, worth_saying, line }`, `additionalProperties: false`) and
   `runLiveLook({ apiKey, apiBase, fetch, model, frame: { data }, summary, said, signal, onSpend })` →
-  `{ ok, worthSaying, line, summary, costUsd, rateLimited?, retryAfterMs?, error? }`, never throws. One request: the
-  frame and a text with the scene so far and the lines already said; `thinking: { type: 'disabled' }`,
+  `{ ok, worthSaying, line, summary, costUsd, kind, rateLimited?, retryAfterMs?, backoff?, fatal?, costUnknown?,
+  repeated?, status?, error? }`, never throws. One request: the frame and a text with the scene so far and up to 5
+  lines already said (newest first); `thinking: { type: 'disabled' }`,
   `output_config: { effort: 'low', format: { type: 'json_schema', schema: LIVE_SCHEMA } }`, `max_tokens` 300, no
-  retries, 15 s timeout. 429 and 529 come back `rateLimited` with `retryAfterMs` from `retry-after`.
+  tools, no sampling parameters, nothing cached, no retries, 15 s timeout. The summary is capped at 160 characters
+  and the line at 120; a line the reply repeats from `said` is dropped (`repeated`). `kind` says what happened: `ok`;
+  `rate_limited` (429 or 529: `rateLimited`, `retryAfterMs` from `retry-after` when given, `error` is exactly
+  `LIVE_RATE_LIMIT_NOTE`); `refusal`, `cut_short`, `unreadable`, `no_frame`, `unknown` (skip the frame); `network`,
+  `timeout`, `server` (`backoff`); `no_key`, `auth`, `billing`, `not_found`, `bad_request` (`fatal`: stop the live
+  view and show `error`); `stopped` (aborted). `costUnknown` (stopped in flight, timeout, network): the look may be
+  billed with no usage back, so the caller counts its estimate. On failure `summary` is the one that was sent.
 - `src/lib/live-view.js` (pure): `LIVE_DEFAULTS` (640 px JPEG at 0.75, 1 s, 5 s from 90¢, $1 per 3,600,000 ms,
   sessions of an hour, 15 s between spoken lines, 5 lines kept, back-off 2 s doubling to 30 s), `createLiveBudget`
-  (entries `[{ t, usd }]` in localStorage `jarvis.liveView.spend`, pruned to the hour; corrupt storage reads as empty
-  but never as more allowed than what it can parse; `resumeAt(usd)`; `reload()` for other tabs),
-  `estimateLiveLookUsd`, `nextLiveDelay`, `liveBackoff`, `canSpeakLive`, `liveMeterText`.
+  (entries `[{ t, usd, id }]` in localStorage `jarvis.liveView.spend`, pruned to the hour, counted in whole
+  nano-dollars; one budget's adds within 10 s share an entry timed at the latest, so an hour is about 360 entries and
+  spending is only ever counted a little longer; corrupt storage reads as empty but never as more allowed than what it
+  can parse; `resumeAt(usd)` (Infinity when `usd` alone passes the cap); `reload()` for other tabs, which also writes
+  back spending another tab's stale write dropped), `estimateLiveLookUsd`, `nextLiveDelay`, `liveBackoff`,
+  `canSpeakLive`, `liveMeterText`, `liveResumeShownAt` (the time named at the limit, rounded up to the minute).
 - `src/ui/optics/optics.js` (the key, the loop, the panel, the caption, the words), `src/styles/optics.css`,
   `src/lib/optics-commands.js` (the words), `src/ui/app.js` (deps), `src/ui/voice-mode.js` (`api.say(line)`).
 
@@ -3701,7 +3711,9 @@ two requests are never less than a second apart.
 - **Before each look**: the budget is re-read (another tab may have spent), and the estimate is
   `max(estimateLiveLookUsd(…), the last real cost)`. The last real cost is also kept in localStorage
   (`jarvis.liveView.lastLook`, for an hour), so a reload or another window can't send a look the last one showed
-  would pass the cap. When `spent + estimate > $1` nothing is sent: paused at the limit (below).
+  would pass the cap. When `spent + estimate > $1` nothing is sent: paused at the limit (below). The budget lives in
+  the browser's storage, so every Jarvis tab and window of that browser shares it (the `storage` event refreshes the
+  meter); on an iPhone the Home Screen app and Safari keep separate storage, so each counts its own hour.
 - **After each reply**: the real cost (`costUsd`, from usage) is added to the budget, and to the month's spending by
   `onSpend` → `addSpend` (as Watch frames are). A look aborted after it was sent (stopped, closed) is counted at its
   estimate.
@@ -3730,8 +3742,10 @@ any read-aloud reply. `liveSpeech.unlock()` runs inside the Live view tap (iOS s
 reopened from the log puts its frame and answer on screen: "Paused while you look at this" until **Live**; a look already under way finishes and is counted, but its summary isn't shown and its line isn't
 listed or said (the next look after Live says it if it still matters). The Look and its
 follow-ups asked during the live view count toward the hour's $1 when their turns end (`liveCount`). `cap` — "Live
-view paused: it has spent $1 in the last hour. It can go on at 2:41 PM." (`budget.resumeAt`) with **Resume**
-(`optics-liveview-resume`), disabled until then; the live view never goes on by itself. `offline`.
+view paused: it has spent $1 in the last hour. It can go on at 2:41 PM." (`budget.resumeAt`, named rounded up to the
+minute by `liveResumeShownAt`, so Resume already works at the minute named) with **Resume**
+(`optics-liveview-resume`, `data-resume-at`), disabled until then; the live view never goes on by itself. If another
+tab spent meanwhile, a tap on Resume names the new time. `offline`.
 
 **Stops** (never a pause): the key, the panel's ×, "stop live view", "turn off live view", "that's enough", "stop
 watching" (it stops whichever of Watch and the live view is on); Optics closed (Esc, the LIVE pill, ×, Voice Mode

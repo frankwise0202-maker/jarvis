@@ -16,6 +16,7 @@ import {
   estimateLiveLookUsd,
   liveBackoff,
   liveMeterText,
+  liveResumeShownAt,
   nextLiveDelay,
 } from '../../src/lib/live-view.js';
 import { LIVE_SCHEMA, LIVE_SYSTEM, runLiveLook } from '../../src/engine/live.js';
@@ -572,4 +573,30 @@ test('liveMeterText: "LIVE VIEW · 12 min · 9¢ this hour · limit $1"', () => 
   assert.equal(liveMeterText({ elapsedMs: MIN, spentUsd: 0.1, capUsd: 2.5 }), 'LIVE VIEW · 1 min · 10¢ this hour · limit $2.50');
   assert.equal(liveMeterText({ elapsedMs: -5, spentUsd: Number.NaN }), 'LIVE VIEW · 0 min · 0¢ this hour · limit $1');
   assert.equal(liveMeterText(), 'LIVE VIEW · 0 min · 0¢ this hour · limit $1');
+});
+
+test('liveResumeShownAt: the time named in "It can go on at 2:41 PM" is rounded up, so Resume works at the minute named', () => {
+  const at = Date.UTC(2026, 10, 25, 14, 40, 30); // 2:40:30 PM UTC
+  assert.equal(liveResumeShownAt(at), Date.UTC(2026, 10, 25, 14, 41, 0), 'never "2:40" while Resume still waits 30 s');
+  assert.equal(liveResumeShownAt(Date.UTC(2026, 10, 25, 14, 41, 0)), Date.UTC(2026, 10, 25, 14, 41, 0), 'a whole minute stays');
+  assert.equal(liveResumeShownAt(Date.UTC(2026, 10, 25, 14, 41, 0) + 1), Date.UTC(2026, 10, 25, 14, 42, 0), '1 ms past a minute: the next one');
+  assert.equal(liveResumeShownAt(Date.UTC(2026, 10, 25, 23, 59, 30)), Date.UTC(2026, 10, 26, 0, 0, 0), 'over midnight');
+  assert.equal(liveResumeShownAt(Infinity), Infinity, 'never: no time is named');
+  assert.ok(Number.isNaN(liveResumeShownAt(Number.NaN)));
+  assert.equal(liveResumeShownAt(undefined), undefined);
+  // With the budget: from the minute named on (and at resumeAt itself), Resume works.
+  const clock = fakeClock(T0 + 12.5 * SEC);
+  const storage = memoryStorage();
+  const budget = createLiveBudget({ now: clock.now, storage, coalesceMs: 0 });
+  budget.add(0.95);
+  clock.t = T0 + 30 * SEC;
+  budget.add(0.049);
+  const reserve = 0.002;
+  assert.equal(budget.canSpend(reserve), false, 'at the limit');
+  const exact = budget.resumeAt(reserve);
+  const named = liveResumeShownAt(exact);
+  assert.equal(exact, T0 + 12.5 * SEC + HOUR, 'the 95¢ leaves the hour');
+  assert.equal(named, T0 + HOUR + MIN, 'named: the next whole minute');
+  assert.equal(named % MIN, 0, 'a whole minute');
+  for (const t of [exact, named]) assert.equal(createLiveBudget({ now: fakeClock(t).now, storage }).canSpend(reserve), true, `Resume works at ${t - T0} ms`);
 });

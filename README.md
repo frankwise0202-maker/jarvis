@@ -662,10 +662,11 @@ browser asks for permission.
     this") and goes on when you tap **Live**.
   - **Never more than $1 an hour.** The meter is always on screen ("LIVE VIEW · 12 min · 9¢ this
     hour · limit $1"). The limit counts the last 60 minutes across every Jarvis tab and window on
-    the device, questions asked during the live view included, and a reload doesn't reset it. From
+    the device, questions asked during the live view included, and a reload doesn't reset it (on an
+    iPhone the Home Screen app and Safari keep separate storage, so each counts its own hour). From
     90¢ Jarvis looks only every 5 seconds; at $1 the live view pauses and tells you when it can go
     on ("It can go on at 2:41 PM"), with a **Resume** button that works from then. The looks cost
-    about 30–50¢ an hour.
+    about 30–50¢ an hour; questions about 3¢ each, counted in the limit.
   - **An hour at most.** After 60 minutes it stops by itself: tap **Live view** to keep going.
     Live view and Watch never run together: starting one stops the other.
   - **Off means off.** It stops (it doesn't pause) whenever the camera stops: Optics closed, the

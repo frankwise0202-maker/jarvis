@@ -76,7 +76,7 @@ import {
 } from '../../platform/camera.js';
 import { OPTICS_LIMITS, WATCH_DEFAULTS, createChangeDetector, estimateLookCost, estimateWatchCost, fitTransform, formatUsd, frameToView, layoutPins } from '../../lib/optics.js';
 import { hologramRequest, matchOpticsCommand, partQuestion, theName } from '../../lib/optics-commands.js';
-import { LIVE_DEFAULTS, canSpeakLive, createLiveBudget, estimateLiveLookUsd, liveBackoff, liveMeterText, nextLiveDelay } from '../../lib/live-view.js';
+import { LIVE_DEFAULTS, canSpeakLive, createLiveBudget, estimateLiveLookUsd, liveBackoff, liveMeterText, liveResumeShownAt, nextLiveDelay } from '../../lib/live-view.js';
 import { matchScreenCommand } from '../../lib/screen-commands.js';
 import { listenPhrases } from '../voice-heard.js';
 import { drawSchematic } from './schematic.js';
@@ -148,10 +148,13 @@ const timeLabel = (at = Date.now()) => {
   }
 };
 
-/** "2:41 PM": when a paused live view can go on (the device's own clock style). */
+/**
+ * "2:41 PM": when a paused live view can go on (the device's own clock style), rounded up to the
+ * minute, so Resume already works at the minute named (2:40:30 reads "2:41 PM", never "2:40 PM").
+ */
 const resumeLabel = (at) => {
   try {
-    return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return new Date(liveResumeShownAt(at)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   } catch {
     return '';
   }
@@ -1844,24 +1847,31 @@ export function openOptics(deps = {}) {
     liveResume.hidden = true;
     if (kind === 'look') setLiveNote('Paused while you look at this', 'info');
     else if (kind === 'offline') setLiveNote('You’re offline. Live view goes on when you’re back online.', 'warn');
-    else if (kind === 'cap') {
-      const at = budget().resumeAt(est || Math.max(estimateLive(), lv.lastCostUsd));
-      lv.resumeAt = at;
-      const when = Number.isFinite(at) ? ` It can go on at ${resumeLabel(at)}.` : '';
-      const text = `Live view paused: it has spent ${formatCap()} in the last hour.${when}`;
-      setLiveNote(text, 'warn');
-      announce(text);
-      liveResume.hidden = false;
-      liveResume.disabled = at > Date.now();
-      // The Resume button works from then (the owner taps it: it never goes on by itself).
-      const wait = at - Date.now();
-      if (wait > 0) {
-        lv.resumeTimer = setTimeout(() => {
-          if (liveView === lv && lv.paused === 'cap') liveResume.disabled = false;
-        }, Math.min(wait + 50, 2147483000));
-      }
-    }
+    else if (kind === 'cap') showCapNote(lv, budget().resumeAt(est || Math.max(estimateLive(), lv.lastCostUsd)));
     renderLiveHud();
+  }
+
+  /**
+   * At the hour's $1: "Live view paused: it has spent $1 in the last hour. It can go on at 2:41 PM."
+   * with Resume, which works from then (the owner taps it: the live view never goes on by itself).
+   * `at`: budget.resumeAt() (Infinity: no time is named). data-resume-at carries it for the tests.
+   */
+  function showCapNote(lv, at, { say = true } = {}) {
+    lv.resumeAt = at;
+    const when = Number.isFinite(at) ? ` It can go on at ${resumeLabel(at)}.` : '';
+    const text = `Live view paused: it has spent ${formatCap()} in the last hour.${when}`;
+    setLiveNote(text, 'warn');
+    if (say) announce(text);
+    liveResume.hidden = false;
+    liveResume.disabled = !(at <= Date.now());
+    liveResume.dataset.resumeAt = Number.isFinite(at) ? String(at) : '';
+    clearTimeout(lv.resumeTimer);
+    const wait = at - Date.now();
+    if (Number.isFinite(wait) && wait > 0) {
+      lv.resumeTimer = setTimeout(() => {
+        if (liveView === lv && lv.paused === 'cap') liveResume.disabled = false;
+      }, Math.min(wait + 50, 2147483000));
+    }
   }
 
   function resumeLiveView({ byOwner = false } = {}) {
@@ -1871,8 +1881,8 @@ export function openOptics(deps = {}) {
       budget().reload();
       const est = Math.max(estimateLive(), lv.lastCostUsd);
       if (!budget().canSpend(est)) {
-        lv.resumeAt = budget().resumeAt(est);
-        liveResume.disabled = true;
+        // Another tab spent meanwhile: the note names the new time.
+        showCapNote(lv, budget().resumeAt(est), { say: false });
         if (byOwner && Number.isFinite(lv.resumeAt)) announce(`It can go on at ${resumeLabel(lv.resumeAt)}.`);
         return false;
       }
@@ -2551,7 +2561,7 @@ export function openOptics(deps = {}) {
     showCard({
       kind: 'intro',
       title: 'Let Jarvis see',
-      text: 'Jarvis uses the camera only while this screen is open. A frame goes to Claude only when you tap Look (or while Watch is on, which you start and which turns itself off), and it is exactly the picture you see between the brackets.',
+      text: 'Jarvis uses the camera only while this screen is open. A frame goes to Claude only when you tap Look (or while Watch or the live view is on: you start them, and they turn themselves off), and it is exactly the picture you see between the brackets.',
       extra: h('p', {
         class: 'optics-card-cost',
         text: `About ${formatUsd(estimateLookCost({ model: leadModel() }).usd)} a look with ${leadModel() === 'claude-opus-5-5' ? 'Opus 5.5' : 'your model'}; the first in a new chat about ${formatUsd(estimateLookCost({ model: leadModel(), prefixCached: false }).usd)}.`,
