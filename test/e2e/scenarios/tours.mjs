@@ -149,23 +149,45 @@ const barBox = (t) => t.page.evaluate(() => {
   return r ? { height: Math.round(r.height), top: Math.round(r.top) } : null;
 });
 
-/** In the page: when each piece of George's audio starts playing (performance.now() time), in order. */
+/**
+ * In the page: each piece of George's audio, in order, with the audio-clock time it starts at, and samples
+ * of that clock against performance.now() (a page under load can run its audio clock slower than the wall
+ * clock, so a start is read off the clock as it went, not worked out when it was scheduled).
+ */
 function recordGeorgeAudio() {
   const starts = [];
-  window.__george = { starts };
+  const samples = [];
+  window.__george = { starts, samples };
+  let sampler = 0;
   const start = AudioBufferSourceNode.prototype.start;
   AudioBufferSourceNode.prototype.start = function (when, ...rest) {
     try {
       const ctx = this.context;
       if (ctx && ctx.sampleRate === 24000 && this.buffer && this.buffer.length > 1) {
-        const lead = Math.max(0, (Number(when) || 0) - ctx.currentTime);
-        starts.push({ at: performance.now() + lead * 1000, duration: this.buffer.duration });
+        starts.push({ when: Math.max(Number(when) || 0, ctx.currentTime), duration: this.buffer.duration });
+        const sample = () => samples.push({ perf: performance.now(), t: ctx.currentTime });
+        sample();
+        if (!sampler) sampler = setInterval(sample, 20);
       }
     } catch {
       /* bookkeeping only */
     }
     return start.call(this, when, ...rest);
   };
+}
+
+/** When (performance.now()) George's audio clock reached each piece's start, from the page's samples; -1 if it never did. */
+function georgeStarts({ starts, samples }) {
+  const wallAt = (when) => {
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1];
+      const b = samples[i];
+      if (b.t < when) continue;
+      return b.t > a.t ? a.perf + ((when - a.t) / (b.t - a.t)) * (b.perf - a.perf) : b.perf;
+    }
+    return -1;
+  };
+  return starts.map((s) => ({ at: wallAt(s.when), duration: s.duration }));
 }
 
 /** Decode a PNG screenshot (8-bit RGB or RGBA) into { width, height, data: RGBA }. */
@@ -548,7 +570,7 @@ export default [
       await voiceLaptop(t, { page, queue: ['Walk me through it.'] });
       await waitStatus(t, 'done', { timeout: 120000 });
       const log = await tourLog(t);
-      const audio = await page.evaluate(() => window.__george.starts);
+      const audio = georgeStarts(await page.evaluate(() => JSON.parse(JSON.stringify(window.__george))));
       const speaks = t.core.senses.speaks.map((s) => norm(s.text));
       t.assert(audio.length === speaks.length, `one piece of audio per sentence George was asked for (${audio.length} pieces, ${speaks.length} sentences)`);
       const first = speaks.findIndex((s) => s.startsWith("Here's the 14-inch laptop, assembled"));
@@ -572,6 +594,7 @@ export default [
         if (i < 0) continue;
         const heard = audio[i].at;
         const shown = shownAt(log, step);
+        t.assert(heard > 0, `${step}: George's audio for it played`);
         t.assert(shown > 0, `${step} was shown`);
         // M5: with no chunk 4 s after it was asked for (a home base slow under load), the first step is
         // shown then and the next ones follow George's chunks again.
