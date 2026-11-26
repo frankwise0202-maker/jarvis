@@ -411,3 +411,20 @@ test('the wake greeting: pending() gives "Chrome is waiting for you: …" and te
   assert.equal(line, 'Chrome is waiting for you: add the 27-inch 4K monitor, $279.99, to the cart on bestbuy.com? Say approve, or cancel.');
   assert.deepEqual(greeted, [['chrome:p-cart', line]]);
 });
+
+test('a bare "stop" (voice\'s stop layer) stops the task quietly, or withdraws its check; nothing said twice', async () => {
+  const t = setup();
+  t.cv.run(TASK);
+  assert.equal(t.cv.stopFromVoice(), true, 'the check is withdrawn');
+  await flush();
+  assert.equal(t.fake.calls.startTask.length, 0);
+  t.cv.run(TASK);
+  t.v.checks[1].spec.onGo();
+  await flush();
+  const said = t.v.said.length;
+  await t.cv.stopFromVoice();
+  await flush();
+  assert.equal(t.fake.calls.stopTask, 1);
+  assert.equal(t.v.said.length, said, 'voice\'s stop says "Chrome is stopping"; nothing more here');
+  assert.equal(await t.cv.stopFromVoice(), false, 'nothing running');
+});

@@ -4455,6 +4455,10 @@ export async function startApp(rootEl) {
             safe(() => stopSpeakingNow());
             break;
           // 'tour' (tours) and 'chrome' (chrome-voice) are added by their builders here.
+          case 'chrome':
+            // v8.1 chrome-voice: a bare "stop" stops the Chrome task too (its line is said: "Chrome is stopping").
+            safe(() => chromeVoice && chromeVoice.stopFromVoice());
+            break;
           default:
             break;
         }

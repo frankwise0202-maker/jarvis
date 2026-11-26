@@ -1077,6 +1077,14 @@ export function createChromeVoice(deps = {}) {
     voiceChanged,
     /** "Start now": the task's check ends at once. */
     startNow: () => startNow(),
+    /**
+     * A bare "stop" (voice's stop layer, which says its own line): a check is withdrawn, a running task
+     * stopped, quietly.
+     */
+    stopFromVoice: () => {
+      if (cancelCheck('stop', { quietly: true })) return true;
+      return stopTask({ via: 'voice', quietly: true });
+    },
     /** Whether a check for a task is on screen (the router's "check" state). */
     checking: () => !!(S.pendingTask && !S.pendingTask.done && !S.pendingTask.cancelled && !S.pendingTask.refused),
     destroy() {
