@@ -378,6 +378,10 @@ export default [
         t.assert(await page.locator(tid('optics-liveview-resume')).isVisible(), 'a Resume button');
         t.assert(await page.locator(tid('optics-liveview-resume')).isDisabled(), 'which works only from then');
         t.assert(/99¢ this hour/.test(await meterText(t)), `the meter (${await meterText(t)})`);
+        // Paused for up to an hour: nothing says Jarvis is watching (no caption of the scene; the pill says paused).
+        t.assert(!(await page.locator(tid('optics-liveview-caption')).isVisible()), 'no caption of the scene while paused at the limit');
+        t.assert((await t.text(page.locator('.optics-pill-text'))) === 'VIEW PAUSED', `the pill reads LIVE VIEW PAUSED (${await t.text(page.locator('.optics-pill-text'))})`);
+        t.assert(/^Live view is paused/.test(await page.locator(tid('optics-live-pill')).getAttribute('aria-label')), 'and says so to a screen reader');
         await shot(t, 'mac-live-view-cap');
         await noMoreLooks(t, 'paused at the limit', 2500);
       });
@@ -432,6 +436,27 @@ export default [
       t.assert((await liveTracks(page)) === 0, 'the camera is released');
       t.assert((await attr(page, 'liveview')) === 'off', 'the live view stopped (not paused)');
       await noMoreLooks(t, 'hidden', 4000);
+      // A look sent and then given up may still be billed: the hour counts its estimate, and so does
+      // the month (Settings → Spending), so the two agree (only live looks were spent here).
+      const money = await page.evaluate(() => {
+        const now = Date.now();
+        let list = [];
+        try {
+          list = JSON.parse(localStorage.getItem('jarvis.liveView.spend') || '[]');
+        } catch {
+          list = [];
+        }
+        const hour = (Array.isArray(list) ? list : []).filter((e) => now - Number(e.t) < 3600000).reduce((x, e) => x + (Number(e.usd) || 0), 0);
+        let month = 0;
+        try {
+          month = Number(JSON.parse(localStorage.getItem('jarvis.spend.v1') || 'null').monthUsd) || 0;
+        } catch {
+          month = 0;
+        }
+        return { hour, month };
+      });
+      t.note(`hour $${money.hour.toFixed(6)}, month $${money.month.toFixed(6)} (${liveReqs(t).map((r) => r.outcome).join(', ')})`);
+      t.assert(Math.abs(money.hour - money.month) < 2e-5, `the month counts the look given up as the hour does (hour $${money.hour.toFixed(6)}, month $${money.month.toFixed(6)})`);
       await setHidden(page, false);
       await page.waitForTimeout(1500);
       t.assert((await attr(page, 'liveview')) === 'off', 'shown again, it does not start by itself');
@@ -588,6 +613,13 @@ export default [
       t.assert((await attr(page, 'liveview')) === 'off', 'starting Watch stopped the live view');
       await noMoreLooks(t, 'Watch on', 2500);
       t.assert(watchReqs() >= 1, 'Watch looks');
+      // "Keep watching" (or "watch me") while Watch is on means "go on": Watch goes on.
+      const leadBefore = t.requests('lead').length;
+      await page.locator(tid('optics-ask')).fill('Keep watching');
+      await page.locator(tid('optics-ask')).press('Enter');
+      await page.waitForTimeout(1500);
+      t.assert((await attr(page, 'watching')) === 'true' && (await attr(page, 'liveview')) === 'off', `"keep watching" leaves Watch on (watching ${await attr(page, 'watching')}, live view ${await attr(page, 'liveview')})`);
+      t.assert(t.requests('lead').length === leadBefore, 'and sends nothing to Jarvis');
       await page.locator(tid('optics-liveview-toggle')).click();
       await waitOn(t, true, page, 'the live view');
       t.assert((await attr(page, 'watching')) === 'false', 'starting the live view stopped Watch');

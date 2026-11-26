@@ -77,6 +77,27 @@ export const DEFAULT_SETTINGS = deepFreeze({
   // it on by itself (once, when a home base with a voice was linked and reachable), 'owner' the owner
   // switched it himself (on or off). The app never turns it on again once the owner has chosen.
   homeBaseSpeakBy: '',
+  // ==== v8.1: each builder's settings (key: default, // what it is) go between its two markers ====
+  // ---- mac-dev ▸ audioSetup, audioInputId, audioInputLabel, audioOutputId, audioOutputLabel (A4)
+  // ---- mac-dev ◂
+  // ---- mac-hf ▸ handsFreeBackground (A1), the Standby at launch (A11)
+  // ---- mac-hf ◂
+  // ---- tour-render ▸
+  // ---- tour-render ◂
+  // ---- tours ▸ Walkthroughs written by Claude: Ask first / Always / Never (B7)
+  // ---- tours ◂
+  // ---- voice ▸
+  // ---- voice ◂
+  // ---- chrome-voice ▸
+  // ---- chrome-voice ◂
+  // ---- windows ▸
+  // ---- windows ◂
+  // ---- optics ▸
+  // ---- optics ◂
+  // ---- chrome-relay ▸ never the link key: it lives in its own storage entry (G2)
+  // ---- chrome-relay ◂
+  // ---- chrome-ext ▸
+  // ---- chrome-ext ◂
 });
 
 /** Valid ranges, exported so the Settings UI can use the same bounds for its inputs. */
@@ -202,6 +223,27 @@ const VALIDATORS = {
   homeBaseHear: bool,
   homeBaseSpeak: bool,
   homeBaseSpeakBy: oneOf(['', 'auto', 'owner']),
+  // ==== v8.1: each builder's validators (one per setting above) go between its two markers ====
+  // ---- mac-dev ▸ audioSetup, audioInputId, audioInputLabel, audioOutputId, audioOutputLabel (A4)
+  // ---- mac-dev ◂
+  // ---- mac-hf ▸ handsFreeBackground (A1), the Standby at launch (A11)
+  // ---- mac-hf ◂
+  // ---- tour-render ▸
+  // ---- tour-render ◂
+  // ---- tours ▸ Walkthroughs written by Claude: Ask first / Always / Never (B7)
+  // ---- tours ◂
+  // ---- voice ▸
+  // ---- voice ◂
+  // ---- chrome-voice ▸
+  // ---- chrome-voice ◂
+  // ---- windows ▸
+  // ---- windows ◂
+  // ---- optics ▸
+  // ---- optics ◂
+  // ---- chrome-relay ▸ never the link key: it lives in its own storage entry (G2)
+  // ---- chrome-relay ◂
+  // ---- chrome-ext ▸
+  // ---- chrome-ext ◂
 };
 
 /**

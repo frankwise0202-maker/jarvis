@@ -12,6 +12,7 @@
 //   liveBackoff            how long to wait after a 429 or 529 (or a network or server error)
 //   canSpeakLive           whether a worth-saying line may be spoken now
 //   liveMeterText          "LIVE VIEW · 12 min · 9¢ this hour · limit $1"
+//   liveSpentText          the hour's spending as the meter shows it ("9¢", "$1.00" from 99.5¢)
 //   liveResumeShownAt      the time to name in "It can go on at 2:41 PM" (rounded up to the minute)
 
 import { priceOf } from '../engine/models.js';
@@ -354,10 +355,20 @@ function capText(usd) {
   return formatUsd(usd);
 }
 
+/**
+ * The hour's spending as the meter shows it: formatUsd, except that from 99.5¢ to $1 it reads
+ * "$1.00" (formatUsd rounds to whole cents there and would show "100¢" next to "limit $1", just
+ * when the live view pauses at the limit).
+ */
+export function liveSpentText(usd) {
+  if (isNum(usd) && usd >= 0.995 && usd < 1) return '$1.00';
+  return formatUsd(usd);
+}
+
 /** The meter shown while Live view is on: "LIVE VIEW · 12 min · 9¢ this hour · limit $1". */
 export function liveMeterText({ elapsedMs = 0, spentUsd = 0, capUsd = LIVE_DEFAULTS.capUsd } = {}) {
   const minutes = isNum(elapsedMs) && elapsedMs > 0 ? Math.floor(elapsedMs / 60000) : 0;
-  return `LIVE VIEW · ${minutes} min · ${formatUsd(spentUsd)} this hour · limit ${capText(capUsd)}`;
+  return `LIVE VIEW · ${minutes} min · ${liveSpentText(spentUsd)} this hour · limit ${capText(capUsd)}`;
 }
 
 /**
