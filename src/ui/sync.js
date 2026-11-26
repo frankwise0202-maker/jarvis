@@ -19,7 +19,9 @@
 // export (buildSyncBackup): over 50 MB it is not sent ("too big"); unchanged since the last upload
 // (its SHA-256 without exportedAt) and still on the Core: not sent; otherwise PUT api/sync/<id>,
 // gzip-compressed where the browser can. What this device has had (`known`) is remembered, so
-// something deleted here is never brought back by another device's copy.
+// something deleted here is never brought back by another device's copy. With no change noted, the
+// export is built and compared at most once an hour (v8.1: `checkedAt`, the last time it was; before,
+// an idle device rebuilt it at every 10-minute sync once its last upload was an hour old).
 //
 // All text reaches the page through dom.js helpers (textContent). Never innerHTML.
 
@@ -35,7 +37,7 @@ const START_DELAY_MS = 3000;
 const TICK_MS = 60 * 1000;
 const RELINK_DELAY_MS = 1500;
 const KNOWN_MAX = 20000; // ids remembered per kind (the oldest go first)
-const REBUILD_MS = 60 * 60 * 1000; // with no change noted, the export is still re-checked hourly
+const REBUILD_MS = 60 * 60 * 1000; // with no change noted, the export is still re-checked hourly (from upload.checkedAt)
 
 const realClient = { list: listSyncDevices, download: downloadSyncBackup, upload: uploadSyncBackup };
 const realData = { build: buildSyncBackup, merge: mergeSyncedBackup };
@@ -167,7 +169,7 @@ export function createSync({
       enabled: r.enabled !== false, // on by default
       lastSyncedAt: typeof r.lastSyncedAt === 'number' ? r.lastSyncedAt : null,
       lastAttemptAt: typeof r.lastAttemptAt === 'number' ? r.lastAttemptAt : 0,
-      upload: r.upload && typeof r.upload.fingerprint === 'string' ? { fingerprint: r.upload.fingerprint, at: Number(r.upload.at) || 0, bytes: Number(r.upload.bytes) || 0 } : null,
+      upload: r.upload && typeof r.upload.fingerprint === 'string' ? { fingerprint: r.upload.fingerprint, at: Number(r.upload.at) || 0, bytes: Number(r.upload.bytes) || 0, checkedAt: Number(r.upload.checkedAt) || 0 } : null,
       merged: r.merged && typeof r.merged === 'object' && !Array.isArray(r.merged) ? { ...r.merged } : {},
       tooBig: typeof r.tooBig === 'number' && r.tooBig > 0 ? r.tooBig : 0, // the size of the export that was too big
     };
@@ -311,7 +313,7 @@ export function createSync({
       fail({ kind: 'toobig', bytes: rec.tooBig }); // still too big: nothing changed since it was checked
       return;
     }
-    if (!dirty && !someAdded && onCore && rec.upload && now() - rec.upload.at < REBUILD_MS) {
+    if (!dirty && !someAdded && onCore && rec.upload && now() - Math.max(rec.upload.at, rec.upload.checkedAt || 0) < REBUILD_MS) {
       rec.lastSyncedAt = now();
       saveRec();
       set({ phase: pullProblem ? 'failed' : 'done', problem: pullProblem ? syncProblem(pullProblem) : null, lastSyncedAt: rec.lastSyncedAt, added: null });
@@ -341,6 +343,7 @@ export function createSync({
       }
       rec.upload = { fingerprint, at: now(), bytes };
     }
+    rec.upload.checkedAt = now(); // built and compared now: the next idle check is an hour from here
     if (changes === seenChanges) dirty = false; // everything noted so far is on the Core now
     rec.tooBig = 0;
     rec.lastSyncedAt = now();

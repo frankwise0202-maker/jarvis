@@ -5,16 +5,23 @@
 //
 //   initSounds(getSettings)   // once at boot: unlocks audio on the first tap/key (iOS)
 //   play('launch')            // see SOUND_NAMES; returns true if the sound was scheduled
-//   play('wake', { hidden: true })  // the one sound that may play in a background tab: Jarvis woken
-//                             // from Standby on a Mac (the owner clapped; he should hear it)
+//   play('wake', { hidden: true })  // a sound that may play in a background tab: Jarvis woken from
+//                             // Standby on a Mac (the owner clapped; he should hear it). v8.1: also
+//                             // 'listen-start', 'listen-stop' and 'error' in a hands-free session there
+//                             // (SPEC §28.1: the chime before each listen is the honest signal across the room)
 //   haptic('success')         // 'light' | 'success' | 'error' (navigator.vibrate; Android)
 //   cue('mission-done')       // play() + the matching haptic
+//   setSoundsSink(id)         // v8.1: the speaker the chimes play on (AudioContext.setSinkId; '' = the
+//                             // default output), with George's: Settings → Voice → Microphone and speaker
 //
 // Never throws. Nothing plays when settings.sounds is false or soundVolume is 0, while the
-// page is hidden, or before the owner has interacted with the page (browsers block audio
-// until then). Rapid repeats are rate-limited (e.g. at most one 'agent-done' per 120 ms).
+// page is hidden (except HIDDEN_SOUNDS asked for with { hidden: true }), or before the owner has
+// interacted with the page (browsers block audio until then). Rapid repeats are rate-limited
+// (e.g. at most one 'agent-done' per 120 ms).
 
 export const SOUND_NAMES = Object.freeze(['send', 'launch', 'agent-done', 'mission-done', 'reply-done', 'error', 'listen-start', 'listen-stop', 'tap', 'notify', 'boot', 'optics', 'scan', 'alert', 'wake']);
+/** The sounds that may play while the page is hidden, when asked with { hidden: true } (v8.1: a session on a Mac). */
+export const HIDDEN_SOUNDS = Object.freeze(['wake', 'listen-start', 'listen-stop', 'error']);
 
 // gap: minimum ms between two plays of the same sound. big: a prominent sound; small
 // sounds are skipped for a moment after one so they never clutter it. gain: output level,
@@ -68,6 +75,7 @@ let ladderStep = 0;
 let ladderAt = -Infinity;
 let lastHapticAt = 0;
 let warned = false;
+let sinkId = ''; // v8.1: '' = the default output (nothing is asked of the context)
 
 // ---- public API -------------------------------------------------------------------------------
 
@@ -78,6 +86,31 @@ let warned = false;
 export function initSounds(getSettings) {
   if (typeof getSettings === 'function') getSettingsFn = getSettings;
   arm();
+}
+
+/**
+ * v8.1: the speaker the sounds play on ('' = the default output); kept for a context made later. Everything
+ * Jarvis plays goes to one device (Chrome's echo cancellation takes one output as its reference).
+ * Promise<boolean>; never throws.
+ */
+export function setSoundsSink(id) {
+  const next = typeof id === 'string' ? id : '';
+  const same = next === sinkId;
+  sinkId = next;
+  if (!ctx || ctx.state === 'closed' || (same && (ctx.sinkId || '') === next)) return Promise.resolve(true);
+  return applySink(ctx);
+}
+
+function applySink(c) {
+  try {
+    if (!c || typeof c.setSinkId !== 'function') return Promise.resolve(false);
+    return Promise.resolve(c.setSinkId(sinkId)).then(
+      () => true,
+      () => false,
+    );
+  } catch {
+    return Promise.resolve(false);
+  }
 }
 
 /**
@@ -92,7 +125,7 @@ export function play(name, opts) {
     const s = readSettings();
     if (!s.sounds) return false;
     const volume = opts && opts.volume !== undefined && opts.volume !== null ? toVolume(opts.volume, s.volume) : s.volume;
-    if (volume <= 0 || (isHidden() && !(opts && opts.hidden === true && name === 'wake'))) return false;
+    if (volume <= 0 || (isHidden() && !(opts && opts.hidden === true && HIDDEN_SOUNDS.includes(name)))) return false;
 
     const now = nowMs();
     if (now - (lastAt.get(name) ?? -Infinity) < spec.gap) return false;
@@ -311,6 +344,7 @@ function ensureContext(fromGesture) {
   }
   chain = buildChain(ctx, ctx.destination);
   suspendedByUs = false;
+  if (sinkId) applySink(ctx);
   return ctx;
 }
 

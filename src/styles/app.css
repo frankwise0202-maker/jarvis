@@ -21,6 +21,7 @@
 @import './homebase.css';
 @import './homebase-brain.css';
 @import './chrome-link.css'; /* v8.1: Settings → Jarvis for Chrome (src/ui/chrome-link-settings.js) */
+@import './chrome-task.css'; /* v8.1: Chrome by voice, the task and prompt cards (src/ui/chrome-task.js) */
 @import './voice-label.css'; /* v7.8: the voice label, Jarvis's voice card, the George notice */
 @import './themes.css';
 

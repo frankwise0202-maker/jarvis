@@ -51,6 +51,11 @@
 // latency() says, e.g. Bluetooth where outputLatency isn't reported, and a word said twice beats a word
 // lost), or the start of the chunk that never started. Hidden, it never counts; back in view it starts
 // again from fresh readings. Without onHandoff there is no watchdog: the stream waits for the clock, as before.
+//
+// v8.1 (SPEC §26 note, §28.1): that hidden rule is the iPhone's (iOS stops Web Audio in the background). On a
+// computer the voice goes on playing in the background, so app.js calls setPausesWhenHidden(false) once: the
+// watchdog then counts hidden time too, each tick at most stallHiddenStepMs (a hidden page's timers run about
+// once a second), so a stall in the background hands over in about 4 s instead of never.
 
 import { newText, ingest, segment, takeChunk, takeFirstClause, takeGrowingChunk, releasePiece } from '../speech-text.js';
 
@@ -76,11 +81,21 @@ export const NATURAL_TIMING = Object.freeze({
   stallMs: 3500, // … hand what wasn't heard to the device voice;
   stallStepMs: 250, // one tick counts at most this much (a late timer or a blocked page never adds up)
   stallBackS: 0.3, // a word boundary this recent when the clock stopped may not have been heard yet: one more back
+  stallHiddenStepMs: 1000, // v8.1: hidden on a computer, one tick counts at most this much (timers run once a second there)
 });
 const T = NATURAL_TIMING;
 
 let current = null;
 let userDepth = 0;
+let pausesWhenHidden = true; // v8.1: false on a computer, where the voice plays on in the background
+
+/**
+ * v8.1: whether the voice pauses while the page is hidden. True (the default) on an iPhone or iPad: the stall
+ * watchdog doesn't count hidden time. False on a computer: it counts, at most stallHiddenStepMs a tick.
+ */
+export function setPausesWhenHidden(on) {
+  pausesWhenHidden = on !== false;
+}
 
 function report(err) {
   try {
@@ -593,8 +608,9 @@ function onTheClock(s) {
  */
 function watch(s) {
   if (!s.deps.onHandoff || s.ended || (s.handoff && s.handoff.reason === 'stall')) return;
-  if (!onTheClock(s) || pageHidden()) {
-    s.wd = null; // nothing waits on the clock (or the page is hidden): fresh readings next time
+  const hidden = pageHidden();
+  if (!onTheClock(s) || (hidden && pausesWhenHidden)) {
+    s.wd = null; // nothing waits on the clock (or the page is hidden on an iPhone): fresh readings next time
     return;
   }
   let clock = NaN;
@@ -618,7 +634,7 @@ function watch(s) {
     w.kicked = false;
     return;
   }
-  w.stalled += Math.min(T.stallStepMs, Math.max(0, step));
+  w.stalled += Math.min(hidden ? T.stallHiddenStepMs : T.stallStepMs, Math.max(0, step));
   if (w.stalled >= T.stallMs) {
     stallHandoff(s);
     return;

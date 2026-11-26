@@ -508,3 +508,50 @@ test('sync controller: a stored device id and the owner’s choice survive a rel
   await bad.sync.syncNow();
   assert.equal(bad.sync.deviceId(), 'jd-0102030405060708090a0b0c', 'an invalid stored id is replaced');
 });
+
+test('sync controller (v8.1): an idle device builds its export at most once an hour, not at every 10-minute sync once its last upload is an hour old; checkedAt survives a reload', async () => {
+  const storage = memoryStorage();
+  const { sync, core, data, timers } = setup({ storage });
+  await sync.syncNow(); // the first sync builds and sends
+  const puts = () => core.calls.filter((c) => c.startsWith('put ')).length;
+  assert.equal(puts(), 1);
+  const builds = data.builds;
+  // Three hours with nothing changing: a sync every 10 minutes.
+  for (let i = 1; i <= 18; i++) {
+    timers.advance(SYNC_INTERVAL_MS);
+    await sync.syncNow();
+  }
+  assert.equal(data.builds - builds, 3, `built ${data.builds - builds} times in 3 hours (once an hour; it was 13)`);
+  assert.equal(puts(), 1, 'nothing new was sent (the export was the same)');
+  const rec = JSON.parse(storage.getItem(SYNC_KEY));
+  assert.equal(rec.upload.checkedAt, timers.now(), 'the last check is kept');
+  assert.ok(rec.upload.at < rec.upload.checkedAt, 'the upload’s own time stays the upload’s');
+  sync.destroy();
+  // A reload 30 minutes later: still no build until the hour from the last check is up.
+  timers.advance(30 * 60_000);
+  const again = createSync({ getSettings: () => ({ homeBaseUrl: BASE }), client: core, data, storage, hash: async (text) => `h:${text}`, gzip: async (text) => ({ gz: text.length }), now: timers.now, label: 'iPhone', locks: null, timers, doc: null });
+  const before = data.builds;
+  // (The first sync after a reload always builds: nothing is known about changes made meanwhile.)
+  await again.syncNow();
+  assert.equal(data.builds, before + 1);
+  timers.advance(SYNC_INTERVAL_MS);
+  await again.syncNow();
+  assert.equal(data.builds, before + 1, 'then an hour again');
+  again.destroy();
+});
+
+test('sync controller (v8.1): a record from before checkedAt (upload.at only) still works: an hour from the upload, then hourly', async () => {
+  const storage = memoryStorage();
+  const { sync, data, timers } = setup({ storage });
+  await sync.syncNow();
+  const rec = JSON.parse(storage.getItem(SYNC_KEY));
+  delete rec.upload.checkedAt; // as v8.0 stored it
+  storage.setItem(SYNC_KEY, JSON.stringify(rec));
+  const builds = data.builds;
+  for (let i = 1; i <= 12; i++) {
+    timers.advance(SYNC_INTERVAL_MS);
+    await sync.syncNow();
+  }
+  assert.equal(data.builds - builds, 2, 'at 60 and 120 minutes');
+  sync.destroy();
+});

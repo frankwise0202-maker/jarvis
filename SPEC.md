@@ -2928,6 +2928,22 @@ room's talk is not sent), `standby-word-failed` and `standby-word-wait` (claps o
 word, never held while nothing listens), `standby-hey-jarvis` (the real models in the real worker on a synthetic
 voice), `standby-hey-jarvis-stub`, `standby-background`, `standby-denied`.
 
+**v8.1 note: every end of a woken session goes back to Standby** (A2; before, a failed question, a voice-input error, a
+2-second check paused by a tab switch, or anything still "busy" when the sleep timer fired left Voice Mode up for good,
+with Standby not listening). In a woken session: after an apology (`afterApology`) and after a voice-input error
+(`voiceInputError`; the `S.typing` it forces is marked `S.typingForced` and doesn't hold the return) the return is
+armed for `SLEEP_FAILED_MS` (10 s: time for a tap; "Hey Jarvis" works again only once he is back on Standby); a check
+paused in a woken session (`reviewPause('paused')`) arms `SLEEP_IDLE_MS` (60 s) and, when it fires, closes into
+Standby (`close()` drops the words: nothing is sent). `armSleep` arms itself again (`SLEEP_IDLE_MS`) while Voice Mode
+is busy (listening, a turn, speech, a check counting or hearing words, the owner typing) instead of giving up. A held
+session (`api.hold()`, contract (a)) waits until 2 minutes after the owner's last words (`src/lib/voice-hold.js`);
+`'jarvis.dev.voice'` `{ holdCapMs }` (2 s to 2 minutes, shorter only) shortens that for tests, and on localhost gives
+them `window.__jarvisVoice` `{ hold, release }`. Sessions opened by a tap: as before. Return to standby off: no
+return. Also (A12, SHOULD): "Hey Jarvis" whose download or worker failed is started again after 2 s, 5 s, 15 s, 60 s,
+then every 5 minutes (`createBackoff`, src/lib/audio-devices.js), and at once on `online`; the hint adds "Jarvis
+tries again by himself." Unit `voice.handsfree`, `standby.hands-free`; E2E `standby-session-ends` (the mock's
+refusal, a network error, "wait"), `standby-hold-timeout`; `standby-background` changed on purpose (§28.1).
+
 ## 23. v7.5: Home base (the Jarvis Core)
 
 The **home base** is the Jarvis Core (`core/`, its own README): the owner's Alienware running 24/7 with a live system
@@ -3660,6 +3676,19 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
   and `turnStatsLine` (shared text) says the same. A recent briefing, or a free one, stays "Free · Home base".
   Unit `brain`, `share`, `platform.sync`; E2E `brain-chat`.
 
+**v8.1 note: the watchdogs while hidden, by device** (A3, §28.1). "Hidden, it never counts" (George's stall
+watchdog) and the built-in voice's visible-time clock were made for iOS, which pauses speech and Web Audio in the
+background. On a computer the voices play on there, so a reply whose sound stopped (George) or whose `end` was lost
+(the built-in voice) while Jarvis was hidden never ended: Voice Mode neither listened nor slept. Both modules now
+export `setPausesWhenHidden(on)` (default `true`: the iPhone's rule, unchanged); app.js calls both with `phoneLike`
+once. With `false` hidden time counts: tts.js's clock counts it like visible time (and resumes a paused engine there
+too), and natural-stream.js's watchdog counts at most `NATURAL_TIMING.stallHiddenStepMs` (1 s) a tick while hidden (a
+hidden page's timers run about once a second), so a hidden stall hands over to the built-in voice in about 4 s instead
+of never (about 14 s at the visible 250 ms a tick). Unit `voice.hidden` (George hidden on a computer: hands over in
+3.5 s, in 4-5 ticks of 1 s; playing normally: no kick; an iPhone: never while hidden; the built-in voice: a lost end
+still ends hidden on a computer, not on an iPhone; the router: the device voice says the rest while still hidden);
+E2E `mac-handsfree-stall-hidden`.
+
 ## 27. v8.0: Live view (Optics)
 
 The owner asked for a live "video mode" on the cheap model, "always looking … constant for like an hour. Max is $1
@@ -3854,7 +3883,51 @@ and `liveSpentText`.
 
 ### 28.1 Listening in the background
 
-<!-- v8.1: mac-hf writes this part. -->
+The owner keeps Jarvis on Standby in Chrome on a Mac day and night, behind other windows or with the display asleep,
+and talks to him from across the room. Desktop Chrome lets a hidden page listen (Chromium aborts recognition in the
+background only on Android); Jarvis's own checks stopped it: woken hidden, he greeted and listened 0 times (the u-mac
+study's probe). Now a session the owner started goes on while Jarvis is hidden, on computers only (A1).
+
+**Who may go on hidden.** app.js `handsFreeHidden()`: not `phoneLike` (iOS, Android, a touch screen up to 1024 px, as
+Standby's `pauseWhenHidden`), `settings.handsFreeBackground !== false` (owner question 2: on by default), and
+`voiceOwnerStarted` (`openVoice({ ownerStarted })`: every way Voice Mode opens today is the owner's: a tap, a key, a
+wake; nothing else ever opens the microphone for questions). It is Voice Mode's `listenWhileHidden` (contract (a)):
+`away()` is then false while hidden, so the wake window listens, Jarvis listens again after speaking, the hidden branch
+of `onVisibility` leaves the listen and the 2-second check alone (it keeps counting and sends), and a silent listen
+gets its second try. Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**
+(`setting-handsFreeBackground`; not shown on iOS or Android). Off: as before v8.1.
+
+**What changes in such a session** (src/ui/voice-mode.js, `handsFree()`):
+- each listen passes `background: true` to stt.js: a recognizer session that ends by itself while hidden is started
+  again, as on screen (before: `giveUp()`); `noSpeechMs` (A6) goes to the recognizer too;
+- `play()` asks sounds.js with `{ hidden: true }`: `HIDDEN_SOUNDS` (wake, listen-start, listen-stop, error) play while
+  hidden; the others never do;
+- `setVoiceState` calls attention.js `sessionTitle(state)`: while the page is hidden the title is "Listening · Jarvis",
+  "Thinking · Jarvis" (thinking or working) or "Speaking · Jarvis", composed with the "(n) " marker of
+  `missionFinished`; idle, shown again, or the session closed: the app's title again;
+- one notification per session, when it is or becomes hidden (`notify({ tag: 'session', title: 'Jarvis is listening',
+  body: 'Ask away, or say “go back to sleep”.' })`; its click brings Jarvis forward), closed at `close()`
+  (`closeNotify('session')`). app.js's old wake notification ("… Switch to Jarvis to answer.") stays for sessions that
+  can't go on hidden;
+- the recognizer failing hidden (`not-allowed` or `other` while hidden; device test 2): once, "I can't hear you while
+  I'm in the background. Click me." is said and the notification says the same; no more listening while hidden
+  (`S.deaf`, until a tap); a woken session goes back to Standby after 10 s.
+
+**The voices (A3)**: §26 note (`setPausesWhenHidden`). **Unchanged:** an iPhone or iPad pauses while hidden; the camera
+and the live view stop while hidden (camera.js; v8.0). Chrome's red dot and macOS's orange dot are on whenever Standby
+listens, so they can't tell "waiting for Hey Jarvis" from "hearing your question" (README).
+
+**Lines before the greeting** (lead decision D3): src/lib/wake/pending.js `createWakePending()` →
+`{ add(fn, { waits }) → remove(), lines() }`; app.js holds one (`wakePending`, also `deps.wakePending` for the command
+modules) and passes `wake.pending: () => wakePending.lines()`. `greetWake` says `[...lines, greeting, offer]`. Each
+`fn()` returns a line or null at each wake; lines with `waits: true` (Chrome's question) come first, then the others
+in the order added; a throwing `fn` counts as null; lines are tidied and cut at 240 characters.
+
+**Tests.** Unit `stt.background`, `sounds.hidden`, `attention.title`, `voice.handsfree` (Voice Mode on a Node
+harness, `voice-mode.fakes.mjs`), `wake.pending`. E2E `mac-handsfree-hidden-wake`, `mac-handsfree-hidden-mid-listen`,
+`mac-handsfree-hidden-check` (u-mac probe C), `mac-handsfree-setting-off`, `mac-handsfree-iphone`,
+`mac-handsfree-indicators`, `mac-handsfree-stall-hidden`; `standby-background` changed on purpose (a Mac woken in the
+background listens there).
 
 ### 28.2 Microphone and speaker
 
@@ -3866,11 +3939,80 @@ and `liveSpentText`.
 
 ### 28.4 Interrupting by voice
 
-<!-- v8.1: mac-hf writes this part. -->
+Before v8.1 only a tap stopped Jarvis: a new listen cancels speech, and he listened again only after speaking, with
+Standby's microphone released at the wake. Across the room nothing could be said while he talked (critique H6). Now,
+on a Mac in setup 1 or 3, "Hey Jarvis" or two claps while George speaks stop him and he listens (A8; free, on the Mac).
+
+**The gate** (src/lib/hands-free.js `bargeInAllowed({ computer, setup, test })`, app.js Standby's `bargeIn.keep()`): a
+computer, `audioSetup` (src/lib/audio-devices.js `setupOf`) in `HANDS_FREE.bargeInSetups` (`speaker-mac-mic`,
+`switch`; owner question 10: add `speakerphone-both` to allow it there), and the hands-free Test's self-trigger step
+passed (`readHandsFreeTest(localStorage)`, key `jarvis.handsFreeTest.v1`, read through `normalizeHandsFreeTest`).
+"Hey Jarvis" needs the wake word on; claps work either way.
+
+**Standby** (`createStandby({ bargeIn: { keep(), detected({ trigger }) } })`): at a wake where `keep()` is true, its
+capture and the "Hey Jarvis" worker stay on through the session instead of being released first (in setups 1 and 3
+the capture is the Mac's microphone with echo cancellation on and noise suppression and auto gain off: §28.2). Claps
+and the word heard then go to `detected()`, never to a second wake (1.5 s apart at least, as a wake; the worker is
+reset after a detection that acted). After the session the same capture listens on (no second getUserMedia), unless
+the chosen microphone moved meanwhile. Another window taking Standby during the session releases the kept microphone.
+
+**Voice Mode** (`api.bargeIn(trigger)`, app.js's `detected`): only while speech is under way, not while it listens or
+checks, and only while `tts.voiceNow()` is George (`natural`, `homebase`): the Mac's own voice is played by macOS,
+outside Chrome's echo reference. For `'word'`, not while the self-mask is on. Then it is the core's tap while he
+speaks: the reply's spoken part already done → `releaseRun()`; the reply still being said → `abortRun({ listen: true
+})` (what was written stays in the chat); a line or an answer read → cancel it and listen. A narration ends
+`'cancelled'` (a tour pauses at its step: Track 2). The hidden count of §28.5 starts again. True when it acted.
+
+**The self-mask** (`createSelfMask()`, critique M8): Voice Mode gives it what is about to be said (`begin(text, rate)`,
+`text()` as a reply streams) and the speech's events (`chunk({ start })`, `boundary({ charIndex })`, offsets in the
+engine's text); `masked()` is true from about `HANDS_FREE.maskBeforeMs` (1 s) before to `maskAfterMs` (1 s) after each
+"Jarvis" (`jarvisSpans`: the whole word, any case, "Jarvis's" too), the position between events estimated at
+`HANDS_FREE.charsPerSecond` (14.5) × rate. Claps are not masked (George saying "Jarvis" makes no clap). Jarvis's own
+lines say "Chrome asks …", never "Jarvis for Chrome asks …" (chrome-voice).
+
+**Unchanged:** setup 2, no setup chosen, the Mac's own voice, a failed or missing self-test, an iPhone: a tap on the
+core or Space stops him, as before; tours then listen only at decisions and `wait` steps (B5).
+
+**Tests.** Unit `hands-free` (the gate, the mask), `standby.hands-free` (the kept capture, `detected()`, the reuse, a
+taken lock), `voice.handsfree` (George or claps stop him; not the Mac's voice, not while listening; his own "Jarvis"
+masked, claps at that moment not). E2E `mac-barge-in` (the stand-in "Hey Jarvis" while George speaks: he listens;
+Standby's capture stayed live), `mac-barge-in-self` (the stand-in fed George's own "Jarvis" at that word: he goes on);
+`tour-barge-in` with Track 2.
 
 ### 28.5 The follow-up window, the brake and one window
 
-<!-- v8.1: mac-hf writes this part. -->
+**The follow-up window** (A6, owner question 3; src/lib/hands-free.js `followUp({ woken, away, continuous, asking,
+asked })`, used by `afterSpeech`): after speech, a woken session (`S.wakeSession`) and every session while Jarvis is
+hidden listen once, with `noSpeechMs` `HANDS_FREE.followUpMs` (8000) given to the recognizer and to Voice Mode's own
+watchdog, and `oneTry` (before: two tries of up to 12 s). Nobody speaks: a woken session goes back to Standby 2.5 s
+later (`SLEEP_SILENT_MS`). The wake routine's offer is listened for the same way (Continuous or not). A session opened
+by a tap with Jarvis on screen keeps Continuous as before; Continuous off: no listen.
+
+**The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last
+wake (the greeting resets it), barge-in, tap or key (a listen started with `gesture`). While hidden, from
+`HANDS_FREE.hiddenQuestions` (3) on there is no follow-up listen: Jarvis says "Say “Hey Jarvis” when you need me." and
+goes back to Standby (woken, Return to standby on: `S.sleepAfter`) or stops listening (`S.braked`, until the owner calls
+him again). A TV left on can't run up paid questions. On screen the count doesn't matter. The claps' room-talk guard
+stays.
+
+**One Jarvis per Mac** (A9, critique M6; src/platform/standby-lock.js `createStandbyLock({ onChange, locks, name })` →
+`{ acquire(), take(), release(), state }`, state `off` | `asking` | `held` | `elsewhere` | `unsupported`; Standby's
+`createLock` dep): Standby asks for the Web Lock `jarvis-standby` when it opens (`ifAvailable` first; held elsewhere:
+`elsewhere`, and it waits in line) and listens only while it holds it; it keeps it through a woken session and lets go
+on `exit()`/`release()` (or when the window closes). While another window has it: `data-listening="elsewhere"`, the
+pill "NOT LISTENING IN THIS WINDOW", the hint "Standby is on in another Jarvis window.", and **Use this window**
+(`standby-use-here`; Tab reaches it, Enter or Space presses it; its click is not the tap that leaves Standby) →
+`take()`: a request with `steal: true` (the browser takes the lock from the holder at once, also from a frozen page,
+ahead of any other window waiting). The holder's request then fails with AbortError: it stops listening (a kept
+barge-in microphone too) and waits in line. When the holder leaves Standby or closes, the next window in line listens
+by itself. (The design had the holder asked to let go over a BroadcastChannel; `steal` needs no message and can't be
+missed.) No Web Locks (or a request that throws): `unsupported`, as before.
+
+**Tests.** Unit `hands-free` (`followUp`), `voice.handsfree` (the 8 s window and one try; a follow-up answered; the
+brake, woken and tapped, Return to standby off; a tap or a barge-in starts the count again), `standby.lock` (one, two
+and three windows, steal, withdrawing, no Web Locks), `standby.hands-free` (Standby with the lock). E2E
+`mac-handsfree-followup-window`, `mac-handsfree-hidden-tapped`, `standby-one-window` (two pages of one browser
+context).
 
 ## 29. v8.1: Walkthroughs
 
@@ -4377,4 +4519,123 @@ Mac (headless Chromium keeps its own window size), and a voice approval on a rea
 
 ### 32.3 Asking by voice
 
-<!-- v8.1: chrome-voice writes this part. -->
+The app's side of G4 (tasks by voice) and G5 (Chrome's questions answered by voice). Pure words:
+`src/lib/chrome-task-words.js` (tasks) and `src/lib/chrome-prompt-words.js` (answers); the controller and the cards:
+`src/ui/chrome-task.js` (+ `src/styles/chrome-task.css`); the router entries: `src/ui/commands/chrome-voice.js`; Voice
+Mode's prompt channel internals and the spoken check: `src/ui/voice-mode.js` ("v8.1 Jarvis for Chrome by voice"). The
+app reaches the extension only through `app.chromeLink` (contract (f), §32.1). Text from the extension (its
+`spoken` line, narration, steps, the final answer, refusals) is information: it is shown with textContent and said
+through `sayable()`, and nothing in it is ever routed as the owner's words.
+
+**32.3.1 The router's entries** (contract (b); ids as `src/lib/command-order.js` orders them):
+
+| id | layer | surfaces | takes |
+|---|---|---|---|
+| `chrome-prompt` | answer | voice | while a Chrome check counts down (Voice Mode's `state.chromeCheck`): "cancel", "no", "stop" (withdraw), "no, I said …" (correct), "start now" (go); the open prompt's reserved words (`state.prompt`); a bare "cancel" or "no" when the prompt was asked last (`askedAt`, against every open question's); a bare "yes", "okay", "continue" … asked last with no tour and no other question open (Jarvis says what to say: never an answer). Voice Mode only, like voice's `prompt` and `question`: in the chat, a prompt's card answers it |
+| `chrome-stop` | stop | all | "stop Chrome", "cancel the Chrome task", "Chrome, stop" (a bare "stop" is voice's `stop`, which stops the Chrome task too) |
+| `chrome-task` | destination | all | `matchChromeTask` (32.3.2), a carrier; its action is `{ do: 'chrome-task', text, chat, free: false, undo: false, check: false }`: never from another reading (R7), and never the generic 2-second check (it has its own, 32.3.3; the lead's D2) |
+| `chrome-ask` | destination | all | "click around for me" → "What should I do in Chrome?" (an owner question; the answer, `matchTaskAnswer`, is the task) |
+| `chrome-status` | destination | all | "what are you doing in Chrome?", "what's Chrome doing", "is Chrome done yet" → the latest step (free) |
+| `chrome-answer` | destination | all | a reserved yes that names Chrome ("allow once in Chrome", "spend more in Chrome", "more steps in Chrome") with no Chrome prompt open → "Chrome isn’t asking anything right now." (free); with a prompt's card waiting where no voice can answer it → "Chrome’s question is on its card: tap its button to answer." Never a task, never an answer |
+
+`chrome-task` comes before `chrome-open` (G1) in the destination layer (the lead's D1); each declines the other's
+sentences (`chrome-task` declines what opening takes: "pull this up in Chrome", "look it up in Chrome", "search for …
+in Chrome", "google …", "open YouTube in Chrome", "go to amazon.com", "… in a new tab", and "open the second link"
+when the newest reply has links, `state.reply.links`). With no links in the newest reply, "open the second link",
+"open link 3" or "follow the link" is a link on the page: a task in a Chrome context or with "in Chrome" (D1),
+otherwise Claude's.
+
+**32.3.2 Which sentences are tasks** (`matchChromeTask(text, state)`, owner question 4's default):
+- **Any time:** a carrier anchored at either end: "in (Google) Chrome, …" / "… in (Google) Chrome" (also "on
+  Chrome", "using Chrome", "with Jarvis for Chrome"), "use Jarvis for Chrome to …", "have Chrome …", "ask / tell /
+  get Chrome to …". No word cap (a monologue over 60 words is not taken).
+- **In a Chrome context only** (`state.chrome.contextUntil`: 2 minutes, `CHROME_CONTEXT_MS`, after a page opened in
+  the Jarvis window, a task's start or news, or "click around for me"; also while a task runs, waits or is paused):
+  "click …" (not "click around"), "scroll …", "add … to the cart / basket / bag", "put … in the cart", "… on this
+  page / site", "sort by …", "filter by …", "search this site for …", "go back a page", "next page"; "open", "go
+  to", "compare", "pick", "choose", "select", "add", "find", "show me", "buy", "read", "check", "tell me about" with a
+  page object ("the cheapest one", "that result", "the second item": a determiner, up to three words, and a page
+  thing).
+- **Never:** a sentence naming one of Jarvis's things (Optics, hologram, blueprint, Standby, home base, live view,
+  video mode, voice mode, mission control, new chat, voice settings, full screen anywhere; camera, window, screen,
+  display, chat, history, settings, library, music, tour, mic when said as his: after the / my / your / this / that,
+  one of his modifiers allowed between, or right after a verb or "in / on / to", and not inside a longer name, so
+  "the screen protector" and "order history" are a page's); a question without page words (R4); with a hologram
+  open, one of its parts' names or aliases (R10); what opening takes (above), unless it also asks for an action
+  ("and add it to the cart") or names a page object; a reserved answer word.
+- **The task text** is the owner's words with their spelling ("$300", "4K"), without the carrier and fillers; a
+  leading verb is lower-cased for the check line. `chat: 'same'` carries on the last task's chat (`state.chrome
+  .lastTask`, kept after it ends): a context sentence after a task, or a follow-up word ("now …", "… too", "also",
+  "again") with a carrier.
+
+**32.3.3 The task's check** (one check, the lead's D2). In Voice Mode (`api.chrome.check`):
+1. the task card in Voice Mode and in the chat goes to its "starting" state: the owner's words, the line with the
+   price, **Cancel** and **Start now**;
+2. Jarvis says "Chrome, up to a dollar: <task>. Say cancel to stop." (`taskCheckLine`; the budget the extension last
+   gave, a dollar by default);
+3. once it is said in full, it counts 2 s (`TASK_CHECK_MS`), or 5 s while Jarvis is hidden (`TASK_CHECK_HIDDEN_MS`),
+   with one listen open; words being heard pause it, words taken back (or silence) let it go on;
+4. "cancel", "no" or "stop" withdraws it ("Okay, nothing sent to Chrome."); "no, I said …" withdraws it and routes
+   the corrected words from the top; "yes", "okay" or "thanks" lets it count on (the full time again: nothing goes
+   sooner); any other words withdraw it and are routed as usual; a barge-in during the line followed by silence
+   withdraws it; closing Voice Mode withdraws it; "start now" (or the card's button) ends it at once. While a yes
+   to Chrome's question counts down ("Approving · say cancel"), the same words come first, before the prompt's:
+   a bare "cancel" or "no" there takes the approval back and is never the prompt's no;
+5. only then `startTask({ text, chat })`. Refusals are said: not linked ("Chrome isn't linked yet. Link it in
+   Settings."), offline ("I can't reach Chrome. Open the Jarvis window and keep it open."), `off`, `cap`, and `busy`
+   ("Chrome is busy with another task. Stop it first?": yes stops it and starts this one). Started: "Chrome is on
+   it." Nothing goes to the extension before the countdown ends.
+
+Typed (the chat box, Voice Mode closed): the same card, a 2-s countdown, nothing spoken. Jarvis never says "Jarvis
+for Chrome" (his own name would set off his barge-in, critique M8): the lines say "Chrome".
+
+**32.3.4 While a task runs.** The controller keeps the latest task from `app.chromeLink.state()` and its `subscribe`,
+and `onDone`: the card shows the status, the latest step (`narration` or `lastStep`), the cost against the budget
+and the final answer; **Stop** stops it. Jarvis says the final answer (the first 400 characters; the card has all
+2,000) once Voice Mode is free, waiting up to a minute; with Voice Mode closed the chat toasts it, and while Jarvis
+is hidden a notification says it (`notify`, tag `chrome-task`). A Chrome task never holds the session
+(critique H5). A page opened in the Jarvis window (`chromeLink.open` resolving `{ ok: true }`, whoever asked)
+starts a Chrome context: the controller watches `open()` on the link object (same arguments, same answer).
+
+**32.3.5 Chrome's questions** (`onPrompt`, `onPromptClosed`):
+- Each prompt gets a card in the chat's dock (`chrome-prompt-card`) and, with Voice Mode open and awake, a card there
+  and an `api.prompt({ id: 'chrome:<promptId>', say, hint, answers, onAnswer, onClosed })`. With Voice Mode closed or
+  on Standby: `notify({ tag: 'chrome-prompt-<promptId>', title: 'Chrome asks', body })`, whose click brings Jarvis
+  forward; the next wake greeting starts with "Chrome is waiting for you: …" (mac-hf's `wake.pending()`, `waits:
+  true`, the lead's D3), which counts as the prompt said.
+- What is said: "Chrome asks: <spoken>" plus what to say for its kind ("Say approve, or cancel.", "Say allow once, or
+  deny.", "Say spend more in Chrome, or cancel.", "Say more steps in Chrome, or cancel."); a click-only prompt says
+  "<voice.why> It needs a click in the Jarvis window. Option-Shift-J opens its side panel." (`spoken` is the question
+  alone and `voice.why` one short sentence: the lead's D4.)
+- The reserved answers (`RESERVED_ANSWERS`): approve ("approve", "approve it", "yes, approve", "i approve"), once
+  ("allow once"), deny ("deny", "cancel Chrome", "cancel it in Chrome"), stop ("stop Chrome", "stop the Chrome task":
+  stops the task, which closes the prompt), budget ("spend more in Chrome"), steps ("more steps in Chrome"). A yes is
+  offered only when `voice.allowed` and the prompt has that choice (never "Always"); a yes the prompt can't take by
+  voice is consumed with the click line; a yes of another kind with the right hint. `NEVER_ANSWERS` ("yes", "okay",
+  "sure", "go ahead", "continue" …) never answer.
+- Voice Mode's channel says a prompt once it is free (a prompt waiting is said as soon as it is, also when nothing
+  else is spoken first), with one listen after it. Said to the end, it opens the 30-s window (`ANSWER_WINDOW_MS`); cut
+  short (barge-in), it is said again first. A yes (`chooseAnswer`) counts only from the best reading, within the
+  window ('late' and 'unsaid' say it again), and when no other reading is a no, cancel or stop word ('unsure': "I'm
+  not sure I heard that right." and the prompt again). Then the check: shown "Approving: <what> · say cancel", said
+  "Approving. Say cancel to stop." (the budget names the new limit: what was used plus one more budget; allowing a
+  site names the site), 2 s (5 s while hidden), withdrawn by "cancel", "no" or "stop" ("Okay, not approved."). Only
+  then `onAnswer`, and the decision goes out as `answer({ promptId, hash, choice, via: 'voice' })` with the hash of
+  the prompt as it was said (a changed prompt is said again before a yes counts). A no goes out at once. The card's
+  buttons answer `via: 'card'`. A refusal is said: "Chrome didn't take that: <why>." and the prompt stays open.
+- Typed in the chat, a no goes out as the card's would; a yes points to the card's button (typing isn't the check).
+- Answered elsewhere (`prompt-closed`): the cards say "Answered." and go, the channel's prompt closes, the
+  notification closes.
+- The router state (app.js `routerState`): `chrome: { linked, online, task, lastTask, contextUntil }` from the
+  controller (chrome-relay's block then sets `linked`, `online`, `task` from the link); `prompt` off Voice Mode from
+  the controller (`promptState`), in Voice Mode from its channel (`{ id, say, answers, key, chrome, askedAt, saidAt
+  }`); `chromeCheck: { kind }` while Voice Mode's check counts down.
+
+**32.3.6 Tests.** Unit: `chrome-voice.task-words` (the critique probe's 8 commands and 12 sentences in four states,
+the draft's commands, carriers and the task text, G1's words, the context and its expiry, never-a-task, the lines),
+`chrome-voice.prompt-words` (reserved words, the window, other readings, the answer layer, the check lines),
+`chrome-voice.controller` (against a fake `app.chromeLink` of exactly contract (f)'s shape), `chrome-voice.cards`
+(Chromium: the cards, the dock, 320 px); the router's T1-T3 over the chrome-voice sections of
+`test/unit/fixtures/voice-corpus.mjs` and `collisions.mjs`. E2E (`test/e2e/scenarios/chrome-voice.mjs`, against the
+fake relay and the fake Jarvis for Chrome): `chrome-voice-task`, `chrome-voice-context`, `chrome-voice-approve`,
+`chrome-voice-misheard`, `chrome-voice-click-only`, `chrome-voice-stack`.

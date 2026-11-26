@@ -333,7 +333,40 @@ on screen first, and costs what a question costs.
 
 #### Hands-free on a Mac
 
-<!-- v8.1: mac-hf writes this part. -->
+With Jarvis on Standby in Chrome on your Mac, you can talk to him from across the room while his window is behind
+other windows, minimized, or with the display asleep.
+
+- **He listens and answers in the background.** Wake him ("Hey Jarvis" or two claps): he greets you, hears your
+  question and answers out loud, without you switching to his window. A conversation you started with a tap or a
+  key goes on the same way when you switch to another app.
+- **He says what he's doing.** You hear the wake chime, then a short chime each time he starts and stops
+  listening. The tab's title says **Listening · Jarvis**, **Thinking · Jarvis** or **Speaking · Jarvis**. If you
+  allowed notifications, one says "Jarvis is listening. Ask away, or say “go back to sleep”." (click it to bring
+  Jarvis forward); it goes away when the conversation ends.
+- **Chrome's red dot and the Mac's orange dot** are on whenever Standby listens, so they can't tell you whether he
+  is waiting for "Hey Jarvis" or hearing your question. The chimes and the title can.
+- **After an answer he listens about 8 seconds** for a follow-up. If nobody speaks, he goes back to Standby.
+- **The brake.** While his window is in the background, he takes at most 3 questions in a row without "Hey
+  Jarvis", two claps, a tap or a key. Then he says "Say “Hey Jarvis” when you need me." and goes back to Standby
+  (or just stops listening, if you started with a tap). A TV left on can't run up paid questions.
+- **Interrupt him by voice.** While George is speaking, say "Hey Jarvis" or clap twice: he stops and listens (a
+  walkthrough pauses at its step). It's free and stays on your Mac. It works with **Speakerphone speaks, Mac
+  listens** and **Switch** (Settings → Voice → Microphone and speaker), once the second step of **Test hands-free**
+  has passed. His own "Jarvis" never interrupts him: for about a second around it, the wake word doesn't count.
+  With **Speakerphone for both**, while the Mac's own voice is speaking, or if that step of the test failed, tap the
+  core or press Space, as before.
+- **One Jarvis per Mac answers.** If Jarvis is open in two windows (the installed app and a forgotten tab, say),
+  only one listens on Standby. The other says "Standby is on in another Jarvis window"; click **Use this window** to
+  move Standby there. When the one listening leaves Standby or closes, the other takes over by itself.
+- **Turn it off** with Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**.
+  Then he greets you from the background and waits for you to switch to him, as before.
+- **If he can't hear you in the background** (a Chrome or Mac setting can stop that), he says once "I can't hear you
+  while I'm in the background. Click me." and the notification says the same.
+- **On iPhone and iPad** nothing changes: he listens only while he is open on screen. On every device the camera and
+  the live view stop while Jarvis is in the background.
+- **Not yet tried on a real Mac:** this was tested in a browser with simulated sound and a simulated hidden window.
+  How well he hears you behind other windows, with the display asleep or the screen locked, and whether "Hey
+  Jarvis" interrupts him at your speakerphone's volume, are for you to try.
 
 #### Always on: the Mac checklist
 
@@ -386,8 +419,10 @@ he wakes up, greets you and offers some music or your briefing.
   - "Yes, play some Miles Davis" or "no, play Highway to Hell" finds that music instead (free).
   - Anything else is a normal question (with the usual 2-second check).
 - **Afterwards** he goes back to Standby by himself: when you tap **Exit**, say "go back to sleep",
-  or after a quiet minute. Turn that off with Settings → Voice → Wake Jarvis → **Return to standby
-  after a conversation**.
+  or when you say nothing for about 8 seconds after his answer. He also goes back after something went
+  wrong (an error, the microphone, a check you paused and left), so he's never stuck for the night with
+  Standby not listening. Turn that off with Settings → Voice → Wake Jarvis → **Return to standby after
+  a conversation**.
 - **The greeting** uses your name (Settings → Profile, also shown in Wake Jarvis as **Greeting
   name**).
 - **On iPhone** Jarvis can listen only while he is open on screen, so leave him on Standby on the
@@ -396,8 +431,11 @@ he wakes up, greets you and offers some music or your briefing.
   listens again, the pill says **TAP ONCE TO START LISTENING**: tap it.
 - **On a Mac in Chrome** Standby keeps listening while Jarvis is in a background tab or behind
   other windows (Chrome shows its red recording dot on the tab). Two claps there: you hear the
-  chime and the greeting; switch to Jarvis (or click the notification, if you allowed
-  notifications in Settings → Appearance & sound) and answer. In our measurements the clap
+  chime and the greeting, and he hears your answer there too (see [Hands-free on a
+  Mac](#hands-free-on-a-mac)). With **Keep talking when Jarvis is in the background** off, switch to
+  Jarvis (or click the notification, if you allowed notifications in Settings → Appearance & sound)
+  and answer. If "Hey Jarvis" stops working (its download or its worker failed), Standby tries it
+  again by itself, and at once when the network is back. In our measurements the clap
   detector itself used well under 1% of one processor core and "Hey Jarvis" about 7% (on a Linux
   test computer; Chrome's own microphone handling comes on top, and it hasn't been measured on a
   Mac yet).
@@ -869,7 +907,61 @@ Chrome only points you there.
 
 ##### What to say
 
-<!-- v8.1: chrome-voice writes this part. -->
+With the link online, say these to Jarvis (in Voice Mode, or typed in the chat box):
+
+- **A task, with "in Chrome":** "find a 4K monitor under $300 and add it to the cart in Chrome". You can also start
+  with "in Chrome, …", "use Jarvis for Chrome to …" or "have Chrome …". Before anything happens, Jarvis shows the
+  task on a card and says it back with its price: "Chrome, up to a dollar: find a 4K monitor under $300 and add it to
+  the cart. Say cancel to stop." Two seconds after he finishes (five while Jarvis is behind other windows) it starts,
+  and he says "Chrome is on it."
+  - To stop it from starting, say "cancel", "no" or "stop", or press the card's **Cancel**. **Start now** skips the
+    wait. "Yes" or "okay" just lets it count on.
+  - To change the words, say "no, I said …".
+  - Typed in the chat, the card shows the price and starts after two seconds, with nothing said.
+- **"Click around for me":** Jarvis asks "What should I do in Chrome?", and your answer is the task (checked the
+  same way).
+- **Words for the page:** for two minutes after a page opens in the Jarvis window ("pull this up in Chrome"), after a
+  task, or after "click around for me", words that only make sense on a page go to Chrome without "in Chrome":
+  - "add the cheapest one to the cart", "click the first result", "scroll down";
+  - "sort by price", "filter by brand", "search this site for standing desks", "go back a page";
+  - "what's the return policy on this page?".
+
+  "Now add the second one too" carries on in the same Chrome chat. Jarvis's own words stay his: "open the camera",
+  "open settings" and "new chat" never go to Chrome, and neither does a question that isn't about the page.
+- **While it works:** a card in Voice Mode and in the chat shows the task, its latest step and what it has cost so
+  far.
+  - Jarvis says the final answer.
+  - "What are you doing in Chrome?" tells you the latest step (free).
+  - "Stop" or "stop Chrome" stops it at once. The card's **Stop**, ⌘⇧. and the side panel's Stop still work.
+- **When Chrome asks something:** Jarvis shows it on a card and says it, in Jarvis for Chrome's own words (never
+  words picked out of the page): "Chrome asks: add the 27-inch 4K monitor, $279.99, to the cart on bestbuy.com?
+  Say approve, or cancel."
+  - **Only these words answer it:**
+    - "approve", "approve it" or "yes, approve";
+    - "allow once" for a new site;
+    - "spend more in Chrome" at its budget, "more steps in Chrome" at its step limit;
+    - "deny", "cancel Chrome" or "stop Chrome" to say no.
+
+    A plain "yes", "okay", "sure", "go ahead" or "continue" never answers Chrome. "Cancel" or "no" on its own answers
+    whatever Jarvis asked last.
+  - **A yes counts only within 30 seconds of the question being said in full.** If Jarvis may have heard "no"
+    instead, he asks again. Then he says "Approving · say cancel" and waits two seconds (five while he is behind
+    other windows): "cancel", "no" or "stop" takes it back.
+  - **Purchases always need a click.** So do paying, sending, posting, deleting, account changes and everything else
+    Jarvis for Chrome marks. Jarvis and the card say "That's a purchase. It needs a click in the Jarvis window.
+    Option-Shift-J opens its side panel."
+  - **For now, every step needs a click.** Approving everyday steps by voice comes with the setting **Approve everyday
+    steps by voice** in Jarvis for Chrome, after its security review. Until then you can say no by voice, and Jarvis
+    tells you where to click.
+  - **In the chat,** the card's buttons answer it. Typed words don't.
+  - **With Voice Mode closed or on Standby,** a notification tells you Chrome is asking. When you wake Jarvis, he
+    starts with "Chrome is waiting for you: …".
+- **What it never does:**
+  - Start a task from anything but your own words: never from a web page, Jarvis's answers or Jarvis for Chrome.
+  - Approve a step without your "approve" or a click.
+  - Keep Jarvis awake: a task running in Chrome never stops him from going back to Standby.
+- **Costs:** the words above are free. A task is paid with Jarvis for Chrome's own key, at its model's price, within
+  its budget (a dollar unless you changed it); it asks before going over.
 
 ## What it costs
 
