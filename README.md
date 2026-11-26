@@ -300,7 +300,7 @@ Mode or Optics first.
 | | "close the camera" | Camera off, from anywhere |
 | | "switch cameras", "use the Logitech camera" | Optics opens on that camera |
 | | "what am I looking at?", "look at this", "take a picture", "look again", "new look" | A Look, about 3¢ |
-| | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs). With Optics closed, "video mode off", "stop live view" and "stop watching" just say "The live view is off.", free |
+| | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs). With Optics closed (or under a hologram), "video mode off", "stop live view" and "stop watching" just say "The live view is off.", free, a hologram or blueprint on screen or not |
 | | "expand the picture", "show the picture big", "back to live", "show the live video", "close the picture", "put the picture aside" | The picture and the live video, on a Mac (with no picture on screen: "There's no picture on screen.", free) |
 | | "research this", "look this up", "dig into this", "research this in the background", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose (in Voice Mode and Optics' field, where you can also type the way or tap it on the card; said to Optics' own microphone, "mission" and "home base" need that tap; typed in the chat it is a question) |
 | | "look at my screen" | A button to tap (your screen's share picker needs a tap), with a Look's price on it |
@@ -1029,13 +1029,17 @@ browser asks for permission.
     tells you when it can go on ("It can go on at 2:41 PM"), with a **Resume** button that works
     from then (or say "resume live view"). Questions you ask while it's on count in the same hour,
     even if you tap **Live** or close Optics before the answer ends; one you asked before you
-    started it (a research mission still at work, say) doesn't count and isn't held back. While
-    it's on, an answer uses at most two web searches and reads no whole pages. Before each request
-    of an answer Jarvis sets aside the most it could cost (about 27¢: a long answer with two web
-    searches), or what's left of the hour when that's less, with a shorter answer to fit. He gives
-    back what it didn't use as soon as the answer is in, and stops an answer the moment it would
-    cost more than he set aside, so no request sent while the live view is on can take the hour
-    past $1. When not even the question and a short answer fit (from about 88¢ spent in a new chat,
+    started it (a research mission still at work, say) doesn't count and isn't held back, even if
+    you resume it while the live view is on. While it's on, an answer is asked to use at most two
+    web searches and to read no whole pages; if it starts to open one, Jarvis stops it there and
+    says so ("That needs a whole web page, which I don't open while the live view is on. Say 'stop
+    live view' and ask again."). Before each request of an answer he sets aside the most it could
+    cost (about 27¢: a long answer with two web searches), or what's left of the hour when that's
+    less, with a shorter answer to fit. He gives back what it didn't use as soon as the answer is
+    in. An answer that needs more (another search, larger results) gets more set aside while the
+    hour has it; he stops it only when the hour itself can't hold its next step, so no request sent
+    while the live view is on can take the hour past $1. An answer stopped or cut off counts at
+    most what it may have cost. When not even the question and a short answer fit (from about 88¢ spent in a new chat,
     earlier in a long one) he doesn't send it and says so, out loud where he speaks: "That would
     take the live view past its dollar this hour. It can go on at 2:41 PM, or say 'stop live view'
     and ask again." With the live view off, questions are as usual. The looks cost about 30–50¢ an

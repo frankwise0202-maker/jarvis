@@ -118,7 +118,7 @@ import { installChromeLink, containsLinkSecret } from '../platform/chrome-link.j
 import { notify as notifyOwner } from './attention.js';
 // v8.1 Optics (Track 5): the live view's gate for answers, "open optics", "research this".
 import { createLiveBudget } from '../lib/live-view.js';
-import { GATE_LIMITS, createLiveGate, createTurnGate, gateNote, requestWorstUsd } from '../lib/live-gate.js';
+import { GATE_LIMITS, createLiveGate, createTurnGate, gateNote, requestWorstUsd, resumeTurnGate } from '../lib/live-gate.js';
 import { LIVE_VIEW_COUNTS, OFFLINE_LINE, lookFirstLine, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
 import { briefingUsd } from '../lib/app-commands.js'; // v8.1 fix (MONEY-5): the briefing's price
 import { matchOpticsCommand, opticsOpenLine, voiceOpticsOpen } from '../lib/optics-commands.js';
@@ -3864,7 +3864,10 @@ export async function startApp(rootEl) {
     }
     let run = null;
     try {
-      run = engine.resumeTurn(state.conv, { gate: liveTurnGate() }); // v8.1 (E0): the live view's gate, as send()'s
+      // v8.1 (E0): the live view's gate, as send()'s. MONEY-R2-2: with the decision made when the turn was
+      // asked (turn.liveGated): one asked outside the live view resumes ungated, one asked in it held.
+      const turn = turnsOf(state.conv).filter((t) => t && t.role === 'jarvis').pop() || null;
+      run = engine.resumeTurn(state.conv, { gate: state.demo ? null : resumeTurnGate({ gate: getLiveGate(), isOn: liveViewOn, turn }) });
     } catch (err) {
       console.error('[jarvis] resumeTurn failed:', err);
     }
@@ -5033,9 +5036,17 @@ export async function startApp(rootEl) {
   function routeFromViewer(text, opts = {}) {
     const words = String(text || '');
     const viewer = opts.viewer || getHologramViewer();
+    // MONEY-R2-5 (as PRIVACY-3 for Optics): the viewer's own microphone gives every reading, best first;
+    // the router takes another one only for what R7 allows, and the command acts on the reading it chose.
+    const readings = [words];
+    for (const a of Array.isArray(opts.alternatives) ? opts.alternatives : []) {
+      const r = typeof a === 'string' ? a.trim() : '';
+      if (r && !readings.some((x) => x.toLowerCase() === r.toLowerCase())) readings.push(r);
+    }
     const st = routerState('hologram', { via: opts.source === 'voice' ? 'voice' : 'typed' });
-    for (let hit = commandRouter.route([words], st); hit; hit = commandRouter.route([words], st, { after: hit })) {
-      const out = runFromViewer(hit, words, viewer, opts);
+    for (let hit = commandRouter.route(readings, st); hit; hit = commandRouter.route(readings, st, { after: hit })) {
+      const chosen = typeof hit.reading === 'string' && hit.reading ? hit.reading : words;
+      const out = runFromViewer(hit, chosen, viewer, opts);
       if (out) return out;
     }
     return null;

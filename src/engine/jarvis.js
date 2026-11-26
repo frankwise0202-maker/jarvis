@@ -727,6 +727,8 @@ export function createJarvis(deps = {}) {
       };
       if (override !== null) turn.maxAgents = override; // survives a resume (launch applies it)
       if (spoken === true) turn.spoken = true; // a Voice Mode reply, written for the ear (UI and exports can tell)
+      // MONEY-R2-2: whether the live view's gate held this turn when it was asked: Resume keeps it.
+      turn.liveGated = !!(gate && gate.active === true);
       if (target) turn.blueprintFor = target; // the 2D request this turn answers (links the saved blueprint)
       if (isFirst || !conv.title) conv.title = truncate(singleLine(body || attachmentsTitle(files)), 60);
       conv.turns.push(userTurn, turn);
@@ -800,7 +802,8 @@ export function createJarvis(deps = {}) {
       };
     },
 
-    // v8.1 (E0): `gate`, as for startTurn: a turn resumed while the live view is on goes through it too.
+    // v8.1 (E0): `gate`, as for startTurn. MONEY-R2-2: the app makes it from the turn's own record
+    // (live-gate.js resumeTurnGate: turn.liveGated), so a resumed turn keeps the decision made when it was asked.
     resumeTurn(conv, { gate = null } = {}) {
       if (!canResume(conv)) return null;
       const turn = lastJarvisTurn(conv);

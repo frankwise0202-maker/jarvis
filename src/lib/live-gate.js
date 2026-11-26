@@ -5,9 +5,10 @@
 // live view is on (a Look, a follow-up, a quick research answer, and each later request of that
 // turn), its worst case is reserved, or what is left of the hour when that covers the input and a
 // useful answer (max_tokens then comes down to fit); with less room than that the request is not
-// sent. While it streams, a meter follows what it costs and stops it before it could pass what was
-// reserved (a page it would fetch, a search round that would not fit). After it, the real cost
-// replaces the reservation.
+// sent. While it streams, a meter follows what it costs and, while the hour has room, grows what is
+// held for it; it stops the request only when the hour can't hold its next round, or before it
+// fetches a page (v8.1.1, MONEY-R2-1). After it, the real cost replaces the reservation; a request
+// stopped or cut after it was sent counts at most what it may have cost (MONEY-R2-3).
 //
 //   GATE_LIMITS            max_tokens 4,000 for a turn's first request and 1,000 for later ones;
 //                          $0.01 for each web search; the web budget of such a turn (2 searches, no
@@ -29,12 +30,13 @@
 //   fitRequest(params, { model, web, usd })
 //                          { maxTokens, web } that keep the worst case within `usd`, or null
 //   createLiveGate({ budget, storage, now, lock })
-//                          { budget, reserve(usd), reserveUpTo(usd, floorUsd), settle(id, usd),
-//                            release(id), keep(id), count(usd), reserved(), room(), fits(usd),
-//                            resumeAt(usd) }
+//                          { budget, reserve(usd), reserveUpTo(usd, floorUsd), extend(id, usd),
+//                            settle(id, usd), settleAtMost(id, usd), release(id), keep(id),
+//                            count(usd), reserved(), room(), fits(usd), resumeAt(usd) }
 //   capLine(resumeAt)      "That would take the live view past its dollar this hour. It can go on at
 //                          2:41 PM, or say 'stop live view' and ask again."
-//   createRequestMeter({ model, maxTokens, limitUsd, web, tools })
+//   FETCH_LINE             the line of an answer stopped before it fetches a page (not the cap line)
+//   createRequestMeter({ model, maxTokens, limitUsd, web, tools, canGrow, grow, onStop })
 //                          the running estimate of one request from its stream events: onEvent(event)
 //                          says when it must stop
 //   createTurnGate({ gate, isOn, startedOn })
@@ -44,6 +46,9 @@
 //                          at the edge, and is counted in full even after the live view stops
 //                          (v8.0's rule); a turn asked while it was off is never touched, even if
 //                          the live view starts before it ends
+//   resumeTurnGate({ gate, isOn, turn })
+//                          the gate of a resumed turn: the decision recorded when it was asked
+//                          (turn.liveGated, MONEY-R2-2)
 
 import { WEB_SEARCH_USD, priceOf } from '../engine/models.js';
 import { imageSizeOf, imageTokens } from './optics.js';
@@ -60,6 +65,7 @@ export const GATE_LIMITS = Object.freeze({
   searches: 2,
   fetches: 0,
   searchTokens: 4000, // a search's results, at least (their snippets come encrypted)
+  searchExpectedTokens: 8000, // what a running search is counted ahead at (MONEY-R2-1: about a real one)
   fetchTokens: 25000, // a page fetched with no max_content_tokens (a PDF is never capped)
   usefulTokens: 1000, // the least output worth sending a request for
 });
@@ -290,6 +296,10 @@ function parseReserved(raw) {
  *                     both take the last room.
  *   settle(id, usd)   the request was answered: its real cost goes to the budget, its reservation goes
  *   release(id)       it failed before it was billed: the reservation goes
+ *   extend(id, usd)   MONEY-R2-1: the reservation grows by `usd` when the hour still holds it
+ *   settleAtMost(id, usd)
+ *                     MONEY-R2-3: stopped or cut after it was sent, with `usd` an upper bound of what it
+ *                     may have cost (its meter's): min(held, usd) counts as spent, the reservation goes
  *   keep(id)          it was stopped after it was sent (it may have been billed): the reservation
  *                     is counted as spent
  *   count(usd)        real money with no reservation (a request of a counted turn sent after the
@@ -414,6 +424,20 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
     return { ok: false, resumeAt: budget.resumeAt(held + Math.max(floor, 1) / NANO) };
   }
 
+  // MONEY-R2-1: a reservation grows by `usd` when the hour (every window's spending and reservations,
+  // this one included) still holds it: { ok, usd: what it holds now } | { ok: false, resumeAt }.
+  function tryExtend(id, usd) {
+    const e = mine.get(id);
+    if (!e) return { ok: false, resumeAt: Infinity };
+    const t = time();
+    const extra = nano(usd);
+    const held = reservedUsd(t);
+    if (!budget.canSpend(held + extra / NANO)) return { ok: false, resumeAt: budget.resumeAt(held + extra / NANO) };
+    e.nano += extra;
+    writeOwn();
+    return { ok: true, usd: e.nano / NANO };
+  }
+
   function drop(id) {
     const e = mine.get(id);
     if (!e) return null;
@@ -439,6 +463,21 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
         return true;
       }),
     release: (id) => run(() => !!drop(id)),
+    /** MONEY-R2-1: grow reservation `id` by `usd` when the hour holds it ({ ok, usd } | { ok: false, resumeAt }). */
+    extend: (id, usd) => run(() => tryExtend(id, usd)),
+    /**
+     * MONEY-R2-3: a request stopped or cut after it was sent, whose upper bound `usd` is known (its meter):
+     * at most that, never more than what was held, is counted as spent; the reservation goes.
+     */
+    settleAtMost: (id, usd) =>
+      run(() => {
+        const e = mine.get(id);
+        if (!e) return false;
+        const cost = Math.min(e.nano / NANO, isNum(usd) && usd > 0 ? usd : 0);
+        if (nano(cost) > 0) budget.add(cost);
+        drop(id);
+        return true;
+      }),
     keep: (id) =>
       run(() => {
         const e = mine.get(id);
@@ -506,30 +545,41 @@ function resultTokensOf(block) {
   return block.type === 'web_search_tool_result' ? Math.max(GATE_LIMITS.searchTokens, measured) : Math.max(1000, measured);
 }
 
+/** The line a gated answer stopped before it fetches a whole page ends with (MONEY-R2-1: not the cap line). */
+export const FETCH_LINE = "That needs a whole web page, which I don't open while the live view is on. Say 'stop live view' and ask again.";
+
 /**
  * The running cost of one request sent while the live view is on, on the high side, from its stream
- * events, against `limitUsd` (what was reserved for it). Like the home base's brain client
- * (core/server/brain/claude.mjs), but held to the reservation:
+ * events, against what is held for it (`limitUsd`, grown from the hour's room as it goes). Like the home
+ * base's brain client (core/server/brain/claude.mjs):
  *   - its prompt as message_start reports it (cache reads, cache writes and the rest, each at its
  *     price), and all of max_tokens at the output price from the start;
  *   - each web search $0.01 when it starts;
- *   - each server-tool round: its result written to the cache (4,000 tokens at least for a search,
- *     its measured size once it arrives), and everything before it read again from the cache (the
- *     prompt's uncached part at the write price), the output written once;
- *   - a round a running tool will start is counted ahead (a search as 4,000 tokens, a page as its
+ *   - each server-tool round: its result written to the cache (4,000 tokens at least for a search, its
+ *     measured size once it arrives), and everything before it read again from the cache (the prompt's
+ *     uncached part at the write price), the output written once;
+ *   - a round a running tool will start is counted ahead (a search as 8,000 tokens, a page as its
  *     max_content_tokens), so the request stops before that round rather than after it.
- * onEvent(event) → true once it must stop now: the estimate would pass `limitUsd`, or it starts to
- * fetch a page beyond `web.fetches` (a fetched PDF has no size limit, so none is let run).
- * spent() / committed() in USD; tripped: why it stopped ('cost' | 'fetch') or null.
+ * MONEY-R2-1: when the estimate would pass what is held, the hold grows (`canGrow(usd)`: the hour holds
+ * it now; `grow(usd)`: the reservation grows, through the lock; meanwhile the tool runs on the server).
+ * The request stops only when the hour itself can't hold the next round (tripped 'cost': the cap line is
+ * then true), or when it starts to fetch a page beyond `web.fetches` (tripped 'fetch', before the fetch
+ * runs: a fetched PDF has no size limit). onEvent(event) → true once it must stop now; a stop decided
+ * later (a grow the lock turned down) calls `onStop()`.
+ * spent() / committed() in USD (committed: with the rounds running tools will start; an upper bound of
+ * what the request may have cost); started: its prompt was billed (message_start seen); tripped: why it
+ * stopped ('cost' | 'fetch') or null.
  */
-export function createRequestMeter({ model, maxTokens, limitUsd, web = LIVE_WEB, tools } = {}) {
+export function createRequestMeter({ model, maxTokens, limitUsd, web = LIVE_WEB, tools, canGrow = null, grow = null, onStop = null } = {}) {
   const price = priceOf(model);
   const write = price.cacheWrite5mPerM / 1e6;
   const read = price.cacheReadPerM / 1e6;
   const out = isNum(maxTokens) && maxTokens > 0 ? maxTokens : 0;
-  const limit = isNum(limitUsd) ? limitUsd : 0;
+  let limit = isNum(limitUsd) ? limitUsd : 0;
   const fetchTokens = fetchTokensOf(tools);
   const fetchBudget = web && isNum(web.fetches) ? web.fetches : allowedFetches(tools);
+  // What each grow asks for beyond the need: one more search round, so the next one rarely asks again.
+  const headroom = GATE_LIMITS.searchUsd + GATE_LIMITS.searchExpectedTokens * write;
   let promptUsd = 0; // the first round's input, as billed
   let rereadUsd = 0; // the prompt read again in a later round
   let searches = 0;
@@ -537,9 +587,11 @@ export function createRequestMeter({ model, maxTokens, limitUsd, web = LIVE_WEB,
   let resultTokens = 0;
   let roundsUsd = 0;
   let rounds = 0;
+  let started = false;
   const blocks = new Map(); // stream index → { type, name, id }
   const pending = new Map(); // server_tool_use id → the tokens its result is expected to add
   let tripped = null;
+  let growing = null; // a grow under way (one at a time)
 
   // A later round: everything before it read again from the cache, `added` tokens written to it.
   const roundUsd = (added) => rereadUsd + (out + resultTokens) * read + added * write;
@@ -550,9 +602,50 @@ export function createRequestMeter({ model, maxTokens, limitUsd, web = LIVE_WEB,
     for (const tokens of pending.values()) usd += roundUsd(tokens);
     return usd;
   };
-  const check = (reason = 'cost') => {
-    if (!tripped && committed() > limit + 1e-9) tripped = reason;
-    return !!tripped;
+  const stopFor = (reason) => {
+    if (!tripped) tripped = reason;
+  };
+  // True when it must stop now. With room in the hour the hold grows instead (asked through the lock;
+  // a refusal there stops it then, through onStop): by a round more than it needs where the hour has
+  // that, else by just what it needs. It stops only when the hour can't hold even that.
+  const check = () => {
+    if (tripped) return true;
+    const need = committed() - limit;
+    if (need <= 1e-9) return false;
+    if (growing) return false; // decided when the grow under way answers
+    let ask = 0;
+    try {
+      if (typeof canGrow === 'function' && typeof grow === 'function') {
+        if (canGrow(need + headroom) === true) ask = need + headroom;
+        else if (canGrow(need) === true) ask = need;
+      }
+    } catch {
+      ask = 0;
+    }
+    if (!(ask > 0)) {
+      stopFor('cost');
+      return true;
+    }
+    const stop = () => {
+      stopFor('cost');
+      if (typeof onStop === 'function') onStop();
+    };
+    growing = Promise.resolve()
+      .then(() => grow(ask))
+      .then(
+        (r) => {
+          growing = null;
+          if (tripped) return;
+          if (!(r && r.ok)) return stop();
+          limit = isNum(r.usd) ? r.usd : limit + ask;
+          if (check() && typeof onStop === 'function') onStop(); // more may have come meanwhile
+        },
+        () => {
+          growing = null;
+          if (!tripped) stop();
+        },
+      );
+    return false;
   };
 
   function onEvent(event) {
@@ -565,6 +658,7 @@ export function createRequestMeter({ model, maxTokens, limitUsd, web = LIVE_WEB,
       const cached = tok(u.cache_creation_input_tokens) + tok(u.cache_read_input_tokens);
       promptUsd = (uncached * price.inPerM + tok(u.cache_creation_input_tokens) * price.cacheWrite5mPerM + tok(u.cache_read_input_tokens) * price.cacheReadPerM) / 1e6;
       rereadUsd = cached * read + uncached * write;
+      started = true;
       return check();
     }
     if (event.type === 'content_block_start') {
@@ -576,7 +670,7 @@ export function createRequestMeter({ model, maxTokens, limitUsd, web = LIVE_WEB,
         else if (b.name === 'web_fetch') {
           fetches += 1;
           if (fetches > fetchBudget) {
-            tripped = 'fetch'; // stopped before it runs
+            stopFor('fetch'); // stopped before it runs
             return true;
           }
         }
@@ -598,7 +692,7 @@ export function createRequestMeter({ model, maxTokens, limitUsd, web = LIVE_WEB,
       blocks.delete(event.index);
       if (b && b.type === 'server_tool_use' && typeof b.id === 'string') {
         // The tool runs now, on Anthropic's side: the round its result starts is counted ahead.
-        pending.set(b.id, b.name === 'web_fetch' ? fetchTokens : b.name === 'web_search' ? GATE_LIMITS.searchTokens : 1000);
+        pending.set(b.id, b.name === 'web_fetch' ? fetchTokens : b.name === 'web_search' ? GATE_LIMITS.searchExpectedTokens : 1000);
         return check();
       }
     }
@@ -609,7 +703,12 @@ export function createRequestMeter({ model, maxTokens, limitUsd, web = LIVE_WEB,
     onEvent,
     spent,
     committed,
-    limitUsd: limit,
+    get limitUsd() {
+      return limit;
+    },
+    get started() {
+      return started;
+    },
     get tripped() {
       return tripped;
     },
@@ -646,7 +745,8 @@ export function createTurnGate({ gate, isOn, startedOn } = {}) {
     }
   };
   const active = typeof startedOn === 'boolean' ? startedOn : on();
-  let counting = false;
+  // MONEY-R2-2: a turn resumed after it went through the live view (startedOn true) counts from the start.
+  let counting = startedOn === true;
   return {
     active,
     turnNote: active ? gateNote : '',
@@ -697,9 +797,37 @@ export function createTurnGate({ gate, isOn, startedOn } = {}) {
         settle: (cost) => finish(() => gate.settle(r.id, Number(cost) || 0)),
         release: () => finish(() => gate.release(r.id)),
         keep: () => finish(() => gate.keep(r.id)),
-        meter: ({ maxTokens: max, tools } = {}) => createRequestMeter({ model, maxTokens: isNum(max) ? max : maxTokens, limitUsd: held, web, tools }),
-        message: () => lineFor(null),
+        // MONEY-R2-3: stopped or cut after it was sent, with its meter's upper bound of what it may have cost.
+        settleAtMost: (usd) => finish(() => (typeof gate.settleAtMost === 'function' ? gate.settleAtMost(r.id, Number(usd) || 0) : gate.keep(r.id))),
+        // MONEY-R2-1: the meter grows the hold from the hour's room; it stops the request only when the hour
+        // can't hold its next round.
+        meter: ({ maxTokens: max, tools, onStop } = {}) =>
+          createRequestMeter({
+            model,
+            maxTokens: isNum(max) ? max : maxTokens,
+            limitUsd: held,
+            web,
+            tools,
+            canGrow: typeof gate.extend === 'function' ? (usd) => gate.fits(usd) : null,
+            grow: typeof gate.extend === 'function' ? (usd) => gate.extend(r.id, usd) : null,
+            onStop,
+          }),
+        // The line a stopped request ends with (asked once it is settled): the cap line only when the hour
+        // is the reason, with when the hour holds the question again.
+        message: (reason) => (reason === 'fetch' ? FETCH_LINE : lineFor(null)),
       };
     },
   };
+}
+
+/**
+ * MONEY-R2-2: the gate for a turn resumed with Resume (app.js resume()): the decision made when the turn
+ * was asked (`turn.liveGated`, recorded by startTurn) holds. A turn asked outside the live view (with it
+ * off, or the research offer's Mission) resumes ungated, at its normal max_tokens; one asked during it is
+ * held again, and counted in full even if the live view has stopped since (v8.0's rule). A turn saved
+ * before v8.1.1 has no record: as in v8.1, the live view's state at Resume decides.
+ */
+export function resumeTurnGate({ gate, isOn, turn } = {}) {
+  const recorded = turn && typeof turn.liveGated === 'boolean' ? turn.liveGated : undefined;
+  return createTurnGate({ gate, isOn, startedOn: recorded });
 }

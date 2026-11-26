@@ -2267,11 +2267,19 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   or window those words could be about), the live view's and Watch's off words and the picture's own words ("stop
   video mode", "video mode off", "stop live view", "stop watching", "expand the picture", "back to live", "close the
   picture") get a free line on every surface (`optics-idle`, app layer, `matchOpticsClosedWords`: "The live view is
-  off.", "Watch is off.", "There's no picture on screen."; v8.1 fix MONEY-7), never a question to Claude.
+  off.", "Watch is off.", "There's no picture on screen."; v8.1 fix MONEY-7), never a question to Claude. The off
+  words are never about a hologram, a blueprint or a window: they get the free line whenever this window's live view
+  (or Watch) isn't running, with a hologram or blueprint on screen too, and with Optics open under a hologram (which
+  stops both); with Optics on top they stay Optics' own (v8.1.1 fix MONEY-R2-4). Only the picture's words keep the
+  exclusion.
 - **Never from another reading (v8.1 fixes PRIVACY-2 to PRIVACY-5).** Optics' own microphone gives the router every
   reading, best first (`deps.route(best, { spoken, alternatives })` → `routeFromOptics`), so R7 decides there as in
   Voice Mode and the chat; the old promotion of a less-sure reading (`commandReading`) is gone, and a switch to a
-  named camera is a camera action (`OPTICS_CAMERA`). "Research this" with Optics open (`optics-research`) is
+  named camera is a camera action (`OPTICS_CAMERA`). The hologram viewer's own microphone does the same (v8.1.1 fix
+  MONEY-R2-5): `submit(best, { source: 'voice', alternatives })` → `deps.route` (`routeFromViewer`, which routes
+  every reading and acts on the one the router chose), so "what is the battery" heard with "blueprint the battery"
+  as another reading is the question, never a paid blueprint with no price said; free hologram commands from
+  another reading still act. "Research this" with Optics open (`optics-research`) is
   `camera: true, free: false` (it may take a Look first). Screens' camera views (`what: 'camera'`) and the camera's
   window (window-commands.js `action()` with `which`, `a` or `b` 'camera') are `camera: true`. Hidden on a Mac,
   camera words leave one notification that says what its click does, with the price ("…look through the camera
@@ -2826,7 +2834,8 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
 - The recognizer's alternatives (whole-turn readings, swapping one result's reading at a time) are tried for local
   commands: in Voice Mode every reading goes through Screens and the viewers in turn (the first that is a command acts,
   the blueprint yes/no included); the chat's mic prefers a reading that is a screen command; the hologram viewer's own
-  mic one that is a viewer command; Optics' mic one that is a screen or Optics command. For a question, a reading that
+  mic and Optics' mic give the router every reading, best first, and the router's R7 decides (v8.1 PRIVACY-3, v8.1.1
+  MONEY-R2-5: never a paid blueprint, the camera or the microphone from another reading). For a question, a reading that
   names a part of the open (or last shown) hologram is preferred when the best one names none (`pickHeard`;
   `visuals.vocabulary()` → `{ parts }`, the viewer's `partNames()`).
 - Apple Music joins them with one rule: another reading is taken for a music command only when the best reading is
@@ -4051,13 +4060,18 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
 (`startTurn(conv, { gate })`), app.js (`liveTurnGate`, `getLiveGate`).
 - **Which requests.** Every main-model request of a turn asked from a window whose live view is on when the turn
   starts (`liveViewOn()`: on or paused): a Look, its follow-ups, any question typed or said in that window, a quick
-  research answer, and each later request of the same turn (a tool round, a `pause_turn` continuation), and a turn
-  resumed with Resume while it is on (`resumeTurn(conv, { gate })`). app.js `send()` gives every turn a gate
-  (`createTurnGate({ gate, isOn })`, made as the turn starts; `resume()` too) and, while the live view is on, makes it
-  a quick turn (`mode: 'quick'`: a swarm's agents are outside the gate). Whether the live view is on when the turn
-  starts decides it for the whole turn (`active`): a turn asked while it was off (a swarm whose agents are still out,
-  a briefing) is never shortened, refused or counted, even if the live view starts before it ends (fix MONEY-2). A
-  research mission (its offer says so) and the home base are outside (`outsideLiveView`); the demo has no gate.
+  research answer, and each later request of the same turn (a tool round, a `pause_turn` continuation). app.js
+  `send()` gives every turn a gate (`createTurnGate({ gate, isOn })`, made as the turn starts) and, while the live view
+  is on, makes it a quick turn (`mode: 'quick'`: a swarm's agents are outside the gate). Whether the live view is on
+  when the turn starts decides it for the whole turn (`active`): a turn asked while it was off (a swarm whose agents
+  are still out, a briefing) is never shortened, refused or counted, even if the live view starts before it ends (fix
+  MONEY-2). A research mission (its offer says so) and the home base are outside (`outsideLiveView`); the demo has no
+  gate. Resume keeps the decision made when the turn was asked (v8.1.1, fix MONEY-R2-2): `startTurn` records it on
+  the Jarvis turn (`turn.liveGated`), and `resume()` makes the gate from that record (`resumeTurnGate({ gate, isOn,
+  turn })` → `resumeTurn(conv, { gate })`). A turn asked during the live view is held again, and counted in full even
+  if the live view has stopped since; one asked outside it (with it off, or the research offer's Mission) resumes
+  ungated, with its normal `max_tokens`, even while the live view is on. A turn saved before v8.1.1 has no record:
+  the live view's state at Resume decides, as in v8.1.
 - **The web budget.** A turn asked while the live view is on carries one more line in its turn context
   (`gateNote`, through the gate's `turnNote`): "Live view: the owner's camera live view is on, and this answer counts
   toward its $1 an hour. Keep it short, use at most 2 web searches, and do not use web_fetch." (`LIVE_WEB`). The
@@ -4086,24 +4100,38 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
   `LiveCapRefused`, and the turn fails with `{ kind: 'live_cap', retryable: false }` and `capLine(resumeAt)`: "That
   would take the live view past its dollar this hour. It can go on at 2:41 PM, or say 'stop live view' and ask
   again." (the time rounded up to the minute like the live view's own note; without one, "Say 'stop live view' and
-  ask again."). A refused first request takes its question out of the history, so it can be asked again; a Stop asked
+  ask again."). A first request refused before it was sent takes its question out of the history, so it can be asked
+  again (one the meter stopped after it went out keeps it, as after any request that was sent); a Stop asked
   meanwhile wins over the refusal. Optics shows and says it (`sayAloud`: `sayNotice` where Jarvis may speak, not over
   Voice Mode); Voice Mode says it as the turn's error; the chat shows it on the turn. This is the only refusal: the
   live view's own looks keep their pause at the limit (above), and nothing else refuses a question.
-- **The meter** (fix MONEY-1; `createRequestMeter`, wired by `meterFor` in `leadRequest`). While a held request
-  streams, a running estimate on the high side follows it, as the home base's brain client does
+- **The meter** (fix MONEY-1, v8.1.1 fix MONEY-R2-1; `createRequestMeter`, wired by `meterFor` in `leadRequest`).
+  While a held request streams, a running estimate on the high side follows it, as the home base's brain client does
   (core/server/brain/claude.mjs): its prompt as `message_start` bills it, all of `max_tokens` at the output price, each
   web search's $0.01 as it starts, and each server-tool round (its result written to the cache at its measured size, at
   least 4,000 tokens for a search, and everything before it read again). A round a running tool will start is counted
-  ahead (a search as 4,000 tokens, a page as its `max_content_tokens`). When the estimate would pass what was held, or
-  the request starts to fetch a page (a fetched PDF has no size limit, so none runs while the live view holds the
-  turn), the meter stops that request alone (its own abort, linked to the turn's): before the tool runs, so the round
-  never starts. Its reservation is kept as spent and the turn ends with `capLine`, as a refused one does. So no
-  request sent while the live view is on can settle the hour above $1.
+  ahead (a search as 8,000 tokens, `searchExpectedTokens`: about a real one; a page as its `max_content_tokens`). When
+  the estimate would pass what is held, the hold grows from the hour's room instead (`gate.fits` now, then
+  `gate.extend(id, usd)` through the lock while the tool runs on Anthropic's side): by one more search round than it
+  needs where the hour has that, else by just what it needs. So a third search, or two searches with large results,
+  go on while the hour holds them. The meter stops that request alone (its own abort, linked to the turn's) in two
+  cases only: the hour itself can't hold its next round (then the turn ends with `capLine`, which is then true: the
+  time named is when the hour holds the question's floor again), or the request starts to fetch a page beyond
+  `LIVE_WEB` (a fetched PDF has no size limit): before the fetch runs, with its own line (`FETCH_LINE`; the error
+  kind stays `live_cap`, so Optics and Voice Mode say it as they say the cap line): "That needs a whole web page, which I don't open while the live view is on. Say 'stop live view' and
+  ask again." The conversation's tools keep `web_fetch` (removing it from gated requests would change the cached
+  prefix: the whole prompt written again at the cache-write price, and the earlier thinking dropped or refused,
+  which costs more than the page it saves). Either way the question stays in the history (the request was sent) and
+  the request counts at most what it may have cost (below). So no request sent while the live view is on can settle
+  the hour above $1.
 - **Settle.** Answered: `settle(id, responseCost(model, usage))`, the real cost into v8.0's budget (`budget.add`) and
   the reservation gone. Failed with an HTTP status before any output (429, 529, 500…): `release`, nothing counted.
-  Stopped or cut after it was sent (by the owner, a dropped connection, or the meter): `keep`, the reservation counted
-  as spent (it may have been billed; the worst is assumed).
+  Stopped or cut after it was sent (by the owner, a dropped connection, a mid-stream error, or the meter), once its
+  prompt was billed (`message_start` seen): `settleAtMost(id, meter.committed())` (v8.1.1, fix MONEY-R2-3): the
+  meter's figure (an upper bound of what it may have cost: its prompt as billed, all of `max_tokens`, its searches and
+  rounds, those under way included), never more than was held. So retries and the owner's Stop no longer fill the
+  hour with reservations. With no meter figure (cut before `message_start`, or a request without a reservation):
+  `keep`, the reservation counted as spent, as before.
 - **Every window.** Each window keeps its open reservations in localStorage under its own key
   (`jarvis.liveView.reserved.<tag>`) beside v8.0's `jarvis.liveView.spend`, so every window sees every other's and
   none can drop another's. A Web Lock (`navigator.locks`, `jarvis.liveView.gate`) makes the check and the reservation
@@ -4121,24 +4149,33 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
 - **Hologram of this** stops the live view first (the hologram covers Optics, which stops it anyway), so its turn is
   an ordinary one, not held to 4,000 tokens.
 - **Known limits.** Only a window whose live view is on gates its answers: a question asked in another window
-  meanwhile is neither gated nor counted. The web budget is asked for, not enforced by the API: a request that goes
-  beyond it is stopped by the meter (the answer ends there with the line). The meter counts a search's results as
-  4,000 tokens until they arrive; results much larger than that, arriving at the very edge, could have the next round
-  started before the stop reaches the API. With the live view on every answer is a quick one, at most 4,000 then 1,000
-  tokens a request: a long answer may stop short ("Tell me more" goes on). In Voice Mode the refusal is said with
-  Voice Mode's apology for a failed turn.
+  meanwhile is neither gated nor counted. The web budget is asked for, not enforced by the API: searches beyond it go
+  on while the hour holds them; a page fetch is stopped before it runs (the answer ends there with its line). The
+  meter counts a search's results as 8,000 tokens until they arrive; results much larger than that, arriving at the
+  very edge, could have the next round started before the stop reaches the API (what is held is then what counts). A
+  stopped or cut request counts all of its `max_tokens` (about 8¢ at 4,000 on the lead model): the output billed before
+  the stop isn't known, so the upper bound is kept. With the live view on every answer is a quick one, at most 4,000
+  then 1,000 tokens a request: a long answer may stop short ("Tell me more" goes on). In Voice Mode the refusal is said
+  with Voice Mode's apology for a failed turn.
 - **Tests.** Unit `live-gate` (reserve, settle, release, keep; refused at the edge; two windows sharing storage; the
   lock; a closed window's reservations; storage that throws or is full; the worst case of a Look, a tool round and a
   web search; `capLine`; the engine side; the sticky turn gate) and `optics.gate-engine` (the strict mock: 4,000 then
   1,000 `max_tokens`, settled to the real cost; the live view off changes nothing; refused at 97¢ with the question
-  out of the history, then answered after "stop live view"; a 529 released, then settled; Stop keeps the reservation;
+  out of the history, then answered after "stop live view"; a 529 released, then settled; Stop counts at most the
+  meter's figure;
   the hour filled mid-turn refuses the next request; a web search with `pause_turn`; the live view stopped mid-turn
   keeps counting), and `live-gate.backstop` (fixes MONEY-1, MONEY-2, MONEY-6, against a scripted API that bills server
   rounds as the API does: at 70¢ a research answer with 3 searches and 2 fetched pages is stopped before its first
   page and never settles the hour above $1; searches beyond the budget stopped by their cost; 15¢ left sends a
   question with `max_tokens` to fit, 5¢ refuses it; the meter alone; the worst case with results, pages and rounds;
   a swarm turn asked with the live view off keeps its limits when it starts mid-mission, at 0¢ and at 80¢; a new
-  chat's quick answer priced from `previewRequest`). E2E `optics-aside-live-cap` (Mac, replies read aloud, 97¢ spent: "Tell me more" typed is refused
+  chat's quick answer priced from `previewRequest`), and `live-gate.r2` (v8.1.1, fixes MONEY-R2-1, MONEY-R2-2,
+  MONEY-R2-3, from the second review's probes: at an empty hour, in a new chat and a warm one, two searches of about
+  8,000 tokens and a third search complete at their real cost, and a page fetch ends with its own line, the question
+  kept and at most the meter's figure counted; the cap line only when the hour can't hold the next round; three
+  mid-stream errors and the owner's Stop count at most what they may have cost; a mission asked outside the live view
+  resumes ungated, a question asked in it resumes counted; two simulated hours of looks and questions, never past $1,
+  counted near what was billed). E2E `optics-aside-live-cap` (Mac, replies read aloud, 97¢ spent: "Tell me more" typed is refused
   out loud and nothing is sent; "stop live view"; the same question answered) and `optics-research` (at 97¢ no quick
   answer is offered). Changed on purpose: unit `optics.liveview` ("New picture" is a new Look, not the camera's Live).
 

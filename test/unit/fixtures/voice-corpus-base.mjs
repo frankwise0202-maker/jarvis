@@ -314,6 +314,9 @@ export const ALTERNATIVES = Object.freeze(
     // PRIVACY-3: Optics' own microphone gives the router every reading (the live view, a camera switch).
     { best: 'lie view', alts: ['live view'], state: 'OV', want: 'claude' },
     { best: 'use the logic tech camera', alts: ['use the logitech camera'], state: 'OV', want: 'claude' },
+    // v8.1.1 fix MONEY-R2-5: the hologram's own microphone gives every reading too; a paid blueprint never
+    // comes from another reading (R7), so the question goes to Jarvis.
+    { best: 'what is the battery', alts: ['blueprint the battery'], state: 'H0', want: 'claude' },
   ].map((r) => Object.freeze(r)),
 );
 
