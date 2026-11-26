@@ -3993,7 +3993,7 @@ viewers close first and the line is a toast. The model and the mode stay in Sett
 
 **Tests.** test/unit/command-router.test.mjs registers today's matchers and every src/ui/commands module (with fake deps),
 as app.js does, and runs over every builder's section of test/unit/fixtures/voice-corpus.mjs and collisions.mjs and
-voice's base corpora (voice-corpus-base.mjs: 209 ordinary sentences, the 63 phrases of the study, 19 states):
+voice's base corpora (voice-corpus-base.mjs: 209 ordinary sentences, the 63 phrases of the study, 20 states):
 - T1 no-steal: every ordinary sentence reaches Claude in every state, unless the collision table declares a winner;
 - T2 must-match: a section's rows name an id (or id:do); the base corpus's name a layer and the builder whose matcher must
   take the phrase;
