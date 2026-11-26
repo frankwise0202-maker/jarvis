@@ -623,8 +623,9 @@ can drag across; on an iPhone (one screen) it opens full screen in the app.
   he's doing and the words he heard, the most honest sign of him while his window is hidden. Chrome needs one
   tap to open it (a **Float Jarvis** button). One floating panel at a time: it takes the place of a floating
   hologram, and he says so. Browsers without floating panels can't do this.
-- Jarvis moves only his own windows: Chrome won't let a page move a floating panel ("drag its corner"), or a
-  page from another site once it is open.
+- Jarvis moves only his own windows: Chrome won't let a page move a floating panel ("drag its corner"), a
+  page from another site once it is open, or his own window ("make your window bigger": "I can't resize my own
+  window. Drag its corner.").
 
 #### Pull it up in Chrome
 

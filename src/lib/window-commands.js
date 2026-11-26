@@ -87,9 +87,14 @@ const FOCUS_RE = new RegExp(`^(?:show me|bring up|go to|switch to|focus on|focus
 // Size (D5): "make the camera window bigger", "make it smaller", "fill the screen", "full screen".
 const SIZE_WORD = '(bigger|larger|smaller|full ?screen|full size|maximized|fill the screen)';
 const SIZE_NAMED_RE = new RegExp(`^(?:make|set|have|let) ${THE}(${THING}) ${WIN} ${SIZE_WORD}$|^(?:make|set|have|let) ${THE}(${THING}) ${WIN} fill (?:the|my) screen$`);
-const SIZE_IT_RE = new RegExp(`^(?:make|set) (?:it|this|that|${THE}${WIN}) ${SIZE_WORD}$`);
+const SIZE_IT_RE = new RegExp(`^(?:make|set) (it|this|that|${THE}${WIN}) ${SIZE_WORD}$`);
 const FILL_RE = /^(?:(?:go )?full ?screen|fill the screen|(?:make it|have it|let it) fill the screen|maximi[sz]e(?: it| this| that| the window)?)$/;
 const sizeOf = (w) => (/small/.test(w) ? 'smaller' : /big|large/.test(w) ? 'bigger' : 'fill');
+// Jarvis's own window ("make your window bigger", "the main window", "the Jarvis window"): a script can't
+// resize it, and he says so. Read before the fillers go ("jarvis" is one of them).
+const LEAD = '(?:(?:hey|ok|okay) )?(?:jarvis )?(?:(?:can you|could you|would you|please) )?';
+const MAIN_WIN = '(?:the main|your|your own|the jarvis|jarvis s|jarvis) (?:window|tab)';
+const SIZE_MAIN_RE = new RegExp(`^${LEAD}(?:make|set|have|let) ${MAIN_WIN} (?:${SIZE_WORD}|fill (?:the|my) screen)(?: please)?$`);
 
 // Jarvis himself, floating (D6): "float yourself", "keep yourself on top". Read before the fillers go
 // ("jarvis" is one of them).
@@ -113,6 +118,8 @@ export function matchWindowCommand(text, state = {}) {
     .replace(/\s+/g, ' ')
     .trim();
   if (FLOAT_ME_RE.test(raw)) return action('float-jarvis');
+  const main = SIZE_MAIN_RE.exec(raw);
+  if (main) return action('size', { size: main[1] ? sizeOf(main[1]) : 'fill', which: 'main' });
   const s = normalizeScreenText(text).replace(/\bpop up\b/g, 'popup');
   if (!s) return null;
   const words = s.split(' ');
@@ -164,7 +171,8 @@ export function matchWindowCommand(text, state = {}) {
   // "It" is a window only while one is open and no viewer in the main window owns "it".
   const viewer = !!(state && state.hologram && state.hologram.open && !state.hologram.inWindow);
   m = SIZE_IT_RE.exec(s);
-  if (m && open >= 1 && !viewer) return action('size', { size: sizeOf(m[1]), which: null });
+  // "This window" is the one with the focus: Jarvis's own when it has it (and he says so).
+  if (m && open >= 1 && !viewer) return action('size', { size: sizeOf(m[2]), which: null, ...(/^this \w/.test(m[1]) ? { here: true } : {}) });
   if (FILL_RE.test(s) && open >= 1 && !viewer) return action('size', { size: 'fill', which: null });
   return null;
 }

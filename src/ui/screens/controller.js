@@ -1177,10 +1177,13 @@ export function createScreens(deps = {}) {
   /**
    * "Make the camera window bigger", "smaller", "fill the screen" (D5): Jarvis's own windows only. On
    * Jarvis's screen a window never covers his strip; elsewhere "fill" is the monitor's work area (true
-   * full screen needs a tap: the window's own full-screen button). Floating panels and pages can't be
-   * resized by script, and Jarvis says so.
+   * full screen needs a tap: the window's own full-screen button). Floating panels, pages and his own
+   * window ("your window", or "this window" while it has the focus) can't be resized by script, and
+   * Jarvis says so.
    */
-  async function sizeWindow({ size = 'bigger', which = null } = {}) {
+  async function sizeWindow({ size = 'bigger', which = null, here = false } = {}) {
+    const own = which === 'main' || (here && !focusedEntry() && safe(() => document.hasFocus(), false));
+    if (own) return { status: 'nothing', message: 'I can’t resize my own window. Drag its corner.' };
     const list = [...screens.values()].filter((e) => e.mode !== 'inapp' && alive(e) && (!which || e.kind === which));
     const e = pickOf(list);
     if (!e) return which ? { status: 'closed', count: 0, which, kind: which } : { status: 'nothing', message: 'There’s no window to resize.' };

@@ -126,6 +126,11 @@ test('D5: size and swap words (a named window always; "it" only with a window op
   assert.deepEqual(pick(matchWindowCommand('make it full screen', ONE)), { op: 'size', size: 'fill', which: null });
   assert.deepEqual(pick(matchWindowCommand('full screen', ONE)), { op: 'size', size: 'fill', which: null });
   assert.deepEqual(pick(matchWindowCommand('fill the screen', ONE)), { op: 'size', size: 'fill', which: null });
+  assert.deepEqual(pick(matchWindowCommand('make this window bigger', ONE)), { op: 'size', size: 'bigger', which: null, here: true }, 'the window with the focus (his own when it has it)');
+  for (const t of ['make your window bigger', 'make the main window smaller', 'make the Jarvis window full screen', 'Hey Jarvis, make your window fill the screen please']) {
+    assert.equal(matchWindowCommand(t, NONE)?.which, 'main', `his own window, windows open or not: ${t}`);
+  }
+  assert.equal(matchWindowCommand('make your window bigger in the kitchen', NONE), null);
   assert.equal(matchWindowCommand('make it bigger', NONE), null, 'no window: a question for Jarvis ("make it bigger" about an answer)');
   assert.equal(matchWindowCommand('make it bigger', { ...ONE, hologram: { open: true, inWindow: false } }), null, 'a viewer in the main window owns "it"');
   assert.equal(matchWindowCommand('full screen', NONE), null);

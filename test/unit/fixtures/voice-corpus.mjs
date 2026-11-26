@@ -260,6 +260,7 @@ export const WINDOWS = {
     ['swap them', 'WIN2', 'windows'],
     ['make the camera window bigger', 'WIN2', 'windows'],
     ['make it full screen', 'WIN2', 'windows'],
+    ['make your window bigger', 'V0', 'windows'],
     ['float yourself', 'V0', 'windows'],
     // G1: Chrome
     ['pull this up in Chrome', 'V0', 'chrome-open'],

@@ -4313,10 +4313,11 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   one needs a tap (the one-tap card, button "Float Jarvis"); an open floating panel takes Jarvis in place of what it
   showed ("I'm floating beside you, in place of the hologram."); no Document PiP: "This browser can't float me."
 - `swapWindows`: the picked window and the next newest exchange places (`placeOf`: where the window really is, else
-  where Jarvis put it). `sizeWindow({ size, which })`: `resizedRect` by a quarter around the centre, or `fill`; the
-  bounds are beside Jarvis (`layoutArea`, his strip kept) on his screen, the monitor's work area on another
-  (`screenAt`). Floating panels ("Drag its corner…") and pages ("I can't move a page from another site…") are said, not
-  moved. A window the owner dragged (its corner more than 30 px from where Jarvis put it) is left alone when another
+  where Jarvis put it). `sizeWindow({ size, which, here })`: `resizedRect` by a quarter around the centre, or `fill`;
+  the bounds are beside Jarvis (`layoutArea`, his strip kept) on his screen, the monitor's work area on another
+  (`screenAt`). Floating panels ("Drag its corner…"), pages ("I can't move a page from another site…") and his own
+  window (`which: 'main'` for "your window", "the main window", "the Jarvis window"; "this window" while the main
+  window has the focus: "I can't resize my own window. Drag its corner.") are said, not moved. A window the owner dragged (its corner more than 30 px from where Jarvis put it) is left alone when another
   one opens; an explicit layout moves it.
 
 ### 31.8 Tests
