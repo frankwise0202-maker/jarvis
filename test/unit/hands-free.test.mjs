@@ -4,7 +4,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HANDS_FREE, HANDS_FREE_TEST_KEY, followUp, bargeInAllowed, readHandsFreeTest, jarvisSpans, createSelfMask } from '../../src/lib/hands-free.js';
+import { HANDS_FREE, followUp, bargeInAllowed, readHandsFreeTest, jarvisSpans, createSelfMask } from '../../src/lib/hands-free.js';
+import { HANDS_FREE_TEST_KEY } from '../../src/lib/audio-devices.js';
 
 test('the owner’s numbers, each in one place: 8 s to start a follow-up, 3 questions in a row while hidden, barge-in in setups 1 and 3', () => {
   assert.equal(HANDS_FREE.followUpMs, 8000);
@@ -54,10 +55,11 @@ test('bargeInAllowed: a computer, setup 1 or 3, and the hands-free Test’s self
   assert.equal(bargeInAllowed(), false);
 });
 
-test('readHandsFreeTest: the Test’s results as mac-dev writes them; anything else is null', () => {
+test('readHandsFreeTest: the Test’s results as Settings → Voice → Microphone and speaker writes them; anything else is null', () => {
   const store = (v) => ({ getItem: (k) => (k === 'jarvis.handsFreeTest.v1' ? v : null) });
   assert.deepEqual(readHandsFreeTest(store(JSON.stringify({ at: 5, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: false }))), { at: 5, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: false });
-  assert.deepEqual(readHandsFreeTest(store(JSON.stringify({ selfTrigger: 'yes', hiddenWords: 'x' }))), { at: 0, hiddenWords: null, selfTrigger: null, heardSpeaker: null });
+  assert.deepEqual(readHandsFreeTest(store(JSON.stringify({ at: 9, selfTrigger: 'yes', hiddenWords: 'x' }))), { at: 9, hiddenWords: null, selfTrigger: null, heardSpeaker: null });
+  assert.equal(readHandsFreeTest(store(JSON.stringify({ selfTrigger: 'passed' }))), null, 'no time: not a result');
   assert.equal(readHandsFreeTest(store(null)), null);
   assert.equal(readHandsFreeTest(store('{oops')), null);
   assert.equal(readHandsFreeTest(store('[1]')), null);

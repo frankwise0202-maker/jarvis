@@ -7,7 +7,8 @@
 //   bargeInAllowed({ computer, setup, test }) -> boolean
 //                                     "Hey Jarvis" or two claps may stop him while George speaks (A8)
 //   readHandsFreeTest(storage) -> { at, hiddenWords, selfTrigger, heardSpeaker } | null
-//                                     the hands-free Test's last results (Settings → Voice, written there)
+//                                     the hands-free Test's last results (Settings → Voice → Microphone and
+//                                     speaker writes them: src/lib/audio-devices.js normalizeHandsFreeTest)
 //   jarvisSpans(text) -> [{ start, end }]    where "Jarvis" is in a text he says
 //   createSelfMask({ cps, beforeMs, afterMs, now }) -> mask
 //                                     while he speaks, whether a "Hey Jarvis" heard now may be his own
@@ -24,6 +25,8 @@
 // hears one: George is the voice speaking (the Mac's own voice is played by macOS, outside Chrome's echo
 // reference), and the self-mask is clear.
 
+import { HANDS_FREE_TEST_KEY, normalizeHandsFreeTest } from './audio-devices.js';
+
 export const HANDS_FREE = Object.freeze({
   followUpMs: 8000, // owner question 3: how long the listen after an answer waits for words
   hiddenQuestions: 3, // owner question 3: questions in a row while hidden, without the wake words or a tap
@@ -32,9 +35,6 @@ export const HANDS_FREE = Object.freeze({
   maskAfterMs: 1000, // ... to this long after it
   charsPerSecond: 14.5, // speech at rate 1 (Voice Mode's caption estimate)
 });
-
-/** localStorage key of the hands-free Test's results (Settings → Voice → Microphone and speaker). */
-export const HANDS_FREE_TEST_KEY = 'jarvis.handsFreeTest.v1';
 
 /**
  * After an answer: listen for a follow-up, and how. `woken`: a session opened from Standby; `away`: Jarvis
@@ -60,26 +60,13 @@ export function bargeInAllowed({ computer = false, setup = '', test = null } = {
   return computer === true && HANDS_FREE.bargeInSetups.includes(setup) && !!test && test.selfTrigger === 'passed';
 }
 
-const tri = (v) => (v === true || v === false ? v : null);
-
 /** The hands-free Test's last results from `storage` (localStorage), or null when there are none. */
 export function readHandsFreeTest(storage) {
-  let raw = null;
   try {
-    raw = storage && typeof storage.getItem === 'function' ? storage.getItem(HANDS_FREE_TEST_KEY) : null;
+    return normalizeHandsFreeTest(storage && typeof storage.getItem === 'function' ? storage.getItem(HANDS_FREE_TEST_KEY) : null);
   } catch {
     return null;
   }
-  if (!raw) return null;
-  let v;
-  try {
-    v = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
-  const st = v.selfTrigger === 'passed' || v.selfTrigger === 'failed' ? v.selfTrigger : null;
-  return { at: Number.isFinite(v.at) ? v.at : 0, hiddenWords: tri(v.hiddenWords), selfTrigger: st, heardSpeaker: tri(v.heardSpeaker) };
 }
 
 /** Where "Jarvis" is in `text`, as character offsets [{ start, end }] (any case; "Jarvis's" too). */
