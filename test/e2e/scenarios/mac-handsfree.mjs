@@ -627,7 +627,7 @@ export default [
   // ---- SHOULD: A11 and A12 ------------------------------------------------------------------------------------
   {
     name: 'mac-standby-at-launch',
-    title: 'Mac with "Hey Jarvis" on: after a restart (no click yet) Jarvis opens Standby by himself and says CLICK ONCE SO JARVIS CAN SPEAK; that click unlocks speech and Standby stays; an iPhone doesn’t open it',
+    title: 'Mac with "Hey Jarvis" on: after a restart (no click yet) Jarvis opens Standby by himself and says CLICK ONCE SO JARVIS CAN SPEAK; that click unlocks speech and Standby stays; an iPhone, or an address asking for something else, doesn’t open it',
     device: 'mac',
     settings: { wakeWord: true, standbyAtLaunch: '' }, // automatic (the harness seeds 'off')
     timeout: 120000,
@@ -651,6 +651,14 @@ export default [
         await setup(t, { page });
         await page.waitForTimeout(1500);
         t.assert(!(await page.locator(tid('standby')).count()), 'no Standby at launch on an iPhone');
+      });
+      await t.step('a Mac opened at an address that asks for something else (?homebase=… from a notification) doesn’t open it', async () => {
+        const page = await t.newPage({ device: 'mac', settings: { wakeWord: true, standbyAtLaunch: '' } });
+        await page.addInitScript(installFakeMic, { wakeLock: true });
+        await page.addInitScript(installNoClickYet);
+        await t.goto('/?homebase=briefing', { page });
+        await page.waitForTimeout(1500);
+        t.assert(!(await page.locator(tid('standby')).count()), 'no Standby at launch with ?homebase=');
       });
     },
   },
