@@ -755,7 +755,8 @@ export function createJarvis(deps = {}) {
 
     canResume,
 
-    resumeTurn(conv) {
+    // v8.1 (E0): `gate`, as for startTurn: a turn resumed while the live view is on goes through it too.
+    resumeTurn(conv, { gate = null } = {}) {
       if (!canResume(conv)) return null;
       const turn = lastJarvisTurn(conv);
       const settings = readSettings();
@@ -764,7 +765,7 @@ export function createJarvis(deps = {}) {
       turn.error = null;
       turn.endedAt = null;
       conv.updatedAt = stamp();
-      return launch(conv, turn, settings, { resume: true, req });
+      return launch(conv, turn, settings, { resume: true, req, gate });
     },
 
     async testApiKey(key) {

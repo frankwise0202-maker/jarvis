@@ -3309,7 +3309,7 @@ export async function startApp(rootEl) {
     }
     let run = null;
     try {
-      run = engine.resumeTurn(state.conv);
+      run = engine.resumeTurn(state.conv, { gate: liveTurnGate() }); // v8.1 (E0): the live view's gate, as send()'s
     } catch (err) {
       console.error('[jarvis] resumeTurn failed:', err);
     }

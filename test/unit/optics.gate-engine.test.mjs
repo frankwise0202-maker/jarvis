@@ -12,7 +12,7 @@ import { DEPTHS } from '../../src/engine/models.js';
 import { createMockFetch } from '../mock/anthropic-mock.mjs';
 import { createLiveBudget } from '../../src/lib/live-view.js';
 import { createLiveGate, createTurnGate } from '../../src/lib/live-gate.js';
-import { DEFAULT_TEST_SETTINGS, KEY, createFakeLibrary, createMemory } from './engine.support.test.mjs';
+import { DEFAULT_TEST_SETTINGS, KEY, blk, collect, createFakeLibrary, createHarness, createMemory, runTurn } from './engine.support.test.mjs';
 import { opticsAttachment } from './optics.support.mjs';
 
 function memoryStorage() {
@@ -213,4 +213,43 @@ test('the live view stopped during a turn: the rest of it goes out as usual and 
   assert.deepEqual(outcomes.map((o) => o[0]), ['settle'], 'only the first was reserved');
   assert.ok(near(budget.spent(), turn.costUsd), `the whole turn counts (${budget.spent()} vs ${turn.costUsd})`);
   assert.equal(gate.reserved(), 0);
+});
+
+test('a turn resumed while the live view is on goes through the gate too: kept short, reserved, settled; at the edge refused before anything is sent', async () => {
+  // An interrupted turn (the connection dropped), resumed with the live view on.
+  const interrupted = async () => {
+    const h = createHarness({
+      handler: () => {
+        const n = h.api.requests.length;
+        if (n === 1) return { content: [blk.text('Let me look at that properly.')], stop: 'end_turn', breakAfter: 5 }; // the connection drops
+        return { content: [blk.text('It is a 65-watt USB-C charger.')], stop: 'end_turn' };
+      },
+    });
+    const conv = h.jarvis.newConversation();
+    const { turn } = await runTurn(h.jarvis, conv, 'What is this charger?', 'quick');
+    assert.equal(turn.status, 'interrupted');
+    assert.equal(h.jarvis.canResume(conv), true);
+    const storage = memoryStorage();
+    const budget = createLiveBudget({ storage });
+    return { h, conv, budget, gate: createLiveGate({ budget, storage }) };
+  };
+  {
+    const { h, conv, budget, gate } = await interrupted();
+    const { turn } = await collect(h.jarvis.resumeTurn(conv, { gate: createTurnGate({ gate, isOn: () => true }) }));
+    assert.equal(turn.status, 'done');
+    assert.equal(h.api.requests.at(-1).body.max_tokens, 4000, 'kept short (the turn\'s first request again)');
+    assert.ok(budget.spent() > 0 && budget.spent() <= turn.costUsd + 1e-9, `the resumed request counted in the hour (${budget.spent()} of the turn's ${turn.costUsd})`);
+    assert.equal(gate.reserved(), 0, 'nothing held once answered');
+  }
+  {
+    const { h, conv, budget, gate } = await interrupted();
+    budget.add(0.97);
+    const sent = h.api.requests.length;
+    const { turn } = await collect(h.jarvis.resumeTurn(conv, { gate: createTurnGate({ gate, isOn: () => true }) }));
+    assert.equal(turn.status, 'error');
+    assert.equal(turn.error && turn.error.kind, 'live_cap');
+    assert.match(turn.error.message, /^That would take the live view past its dollar this hour\./);
+    assert.equal(h.api.requests.length, sent, 'nothing sent');
+    assert.equal(gate.reserved(), 0);
+  }
 });
