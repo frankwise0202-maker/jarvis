@@ -11,6 +11,9 @@
 //   { type: 'new-chat' }                        forget the conversation (task cards stay until cleared)
 //   { type: 'clear-chat' }                      remove the task cards from the panel too
 //   { type: 'ping' }                            keep-alive while a task runs
+//   { type: 'open-card', cardId, choice }       Voice from Jarvis: the owner's click on an address
+//                                               Jarvis asked to open ('open' | 'dismiss')
+//   { type: 'unlink' }                          Voice from Jarvis: unlink from Jarvis
 //
 // Service worker -> panel
 //   { type: 'snapshot', tasks, running, chatId }   full state (tasks without thumbnails)
@@ -18,8 +21,14 @@
 //   { type: 'thumb', taskId, stepId, dataUrl }     a step's thumbnail
 //   { type: 'narration', taskId, text }            Jarvis's live progress line
 //   { type: 'thumbs', taskId, thumbs }             all thumbnails of a task (after 'snapshot')
+//   { type: 'link', link }                         Voice from Jarvis: the link's state (see link.js)
+//   { type: 'cards', cards }                       Voice from Jarvis: addresses waiting for a click
+//
+// The small approval window (approve.html, Voice from Jarvis) connects with APPROVE_PORT_NAME and
+// speaks the same messages; it is not a side panel (Controller.hasPanel).
 
 export const PORT_NAME = 'jarvis-panel';
+export const APPROVE_PORT_NAME = 'jarvis-approve';
 
 export const PROMPT_CHOICES = Object.freeze({
   site: ['once', 'always', 'deny'],

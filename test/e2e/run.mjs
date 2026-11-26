@@ -61,10 +61,13 @@ import voiceGeorgeStuck from './scenarios/voice-george-stuck.mjs';
 // ---- chrome-voice ▸
 // ---- chrome-voice ◂
 // ---- windows ▸
+import windowsScenarios from './scenarios/windows.mjs';
+import chromeTab from './scenarios/chrome-tab.mjs';
 // ---- windows ◂
 // ---- optics ▸
 // ---- optics ◂
 // ---- chrome-relay ▸
+import chromeLink from './scenarios/chrome-link.mjs';
 // ---- chrome-relay ◂
 // ---- chrome-ext ▸
 // ---- chrome-ext ◂
@@ -97,10 +100,13 @@ const V81_SCENARIOS = [
   // ---- chrome-voice ▸
   // ---- chrome-voice ◂
   // ---- windows ▸
+  ...windowsScenarios,
+  ...chromeTab,
   // ---- windows ◂
   // ---- optics ▸
   // ---- optics ◂
   // ---- chrome-relay ▸
+  ...chromeLink,
   // ---- chrome-relay ◂
   // ---- chrome-ext ▸
   // ---- chrome-ext ◂

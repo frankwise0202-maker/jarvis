@@ -74,8 +74,9 @@ test('places: other screen (with numbers), beside / floating, its own window', (
     ['open the hologram picture in picture', 'beside', null],
     ['put the report in its own window', 'window', null],
     ['open the blueprint in a separate window', 'window', null],
-    ['open this in a new tab', 'window', null],
+    ['open this in a new window', 'window', null],
     ['open it in another window', 'window', null],
+    ['expand this in a different window', 'window', null], // v8.1: the owner's own words (no longer explodes a hologram)
   ];
   for (const [text, where, screen] of cases) {
     const m = matchScreenCommand(text);
@@ -83,6 +84,34 @@ test('places: other screen (with numbers), beside / floating, its own window', (
     assert.equal(m.where, where, text);
     assert.equal(m.screen, screen, text);
   }
+});
+
+test('v8.1: "in a new tab" is a Chrome tab, not a screen window (chrome-commands.js takes it)', () => {
+  for (const t of ['open this in a new tab', 'open that in a new tab', 'open the link in a new tab', 'put it in another tab']) assert.equal(matchScreenCommand(t), null, t);
+});
+
+test('v8.1: "back" and "close" say which window they mean', () => {
+  const back = (t) => {
+    const m = matchScreenCommand(t);
+    return m && m.action === 'back' ? { what: m.what, all: m.all } : null;
+  };
+  assert.deepEqual(back('bring the hologram back'), { what: 'hologram', all: false });
+  assert.deepEqual(back('bring the camera back'), { what: 'camera', all: false });
+  assert.deepEqual(back('bring it back'), { what: 'this', all: false });
+  assert.deepEqual(back('bring everything back'), { what: 'this', all: true });
+  assert.deepEqual(back('bring them back here'), { what: 'this', all: true });
+  const close = (t) => {
+    const m = matchScreenCommand(t);
+    return m && m.action === 'close' ? { where: m.where, screen: m.screen, all: m.all, ambiguous: m.ambiguous } : null;
+  };
+  assert.deepEqual(close('close the other screen'), { where: 'other', screen: null, all: false, ambiguous: false }, 'the other monitor\'s, not the float');
+  assert.deepEqual(close('close the float'), { where: 'beside', screen: null, all: false, ambiguous: false });
+  assert.deepEqual(close('close screen 2'), { where: null, screen: 2, all: false, ambiguous: false });
+  assert.deepEqual(close('close all screens'), { where: null, screen: null, all: true, ambiguous: false });
+  assert.deepEqual(close('close both screens'), { where: null, screen: null, all: true, ambiguous: false });
+  assert.deepEqual(close('close the windows'), { where: null, screen: null, all: true, ambiguous: false });
+  assert.deepEqual(close('close the window'), { where: null, screen: null, all: false, ambiguous: true }, 'the focused or newest one');
+  assert.deepEqual(close('dismiss the second window'), { where: null, screen: null, all: false, ambiguous: false });
 });
 
 test('the laptop\'s own screen, the main screen and full screen', () => {

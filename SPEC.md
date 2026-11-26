@@ -3902,11 +3902,315 @@ and `liveSpentText`.
 
 ### 32.1 The link and the relay
 
-<!-- v8.1: chrome-relay writes this part. -->
+The web app (in the owner's usual Chrome profile) and Jarvis for Chrome (in its own "Jarvis" profile) can't talk
+to each other: the extension has no `externally_connectable`, its worker takes only its own side panel's port, and
+messages don't cross profiles; moving either into the other's profile is ruled out (u-voice §3.3). So they leave
+sealed messages for each other in two boxes on the home base, which only carries them. The wire below is version 1;
+both ends build to it, and a change needs both.
+
+**32.1.1 Linking.** Settings → Jarvis for Chrome → **Link** (§32.1.6) makes a key on this computer: 32 bytes from
+`crypto.getRandomValues`, base64url (43 characters). The **link code** is `base64url(JSON.stringify({ v: 1, core,
+key }))`, `core` being the home base's origin as the app uses it (`https://<machine>.<tailnet>.ts.net`: no path, no
+port). The owner copies it (**Copy link code**) and pastes it into Jarvis for Chrome (side panel → Settings → Voice
+from Jarvis); Chrome asks to let the extension reach the home base. The first message sealed with the key (the
+extension's `hello`) proves the extension has it: linked, and the app answers with its own `hello`. If this window
+copied the code in the last 10 minutes, it then writes an empty text to the clipboard (critique L9): at once when
+the page may, else when its window next has the focus. An unused code is forgotten after 30 minutes. Either side can
+unlink: it sends `unlinked {}` first if it can (the app waits 5 s at most), then forgets its copy; the other side
+forgets its copy when the message arrives.
+
+The app keeps `{ v: 1, core, key, linkedAt, extSeenAt, madeAt }` in localStorage `jarvis.chromeLink.v1`
+(`linkedAt` is null while it waits for the extension; `extSeenAt`, its last sign of life, is written at most every
+15 s so other windows see it; `madeAt` dates the code) and `{ core, cursor, seen }` in `jarvis.chromeLink.inbox.v1`
+(where it has read up to and the last 500 ids it opened: nothing secret, the relay sees both; so a reload never
+takes a message twice). **The key is never in Settings, an export, a backup or a sync upload** (none of them reads
+those entries), so it never reaches the home base that carries the messages (critique M2); an imported backup never
+creates a link, and Reset Jarvis removes both entries. Like the API key, it can be read by anything that runs at the
+app's origin (README "Who can read your key"). The extension keeps `{ v: 1, core, key, linkedAt }` in
+`chrome.storage.local` under `chromeLink`.
+
+**32.1.2 The envelope** (`src/lib/relay-envelope.js`; Jarvis for Chrome has its own copy,
+`extension/src/background/envelope.js`). The HTTP body in both directions is `{ id, iv, ct }`, base64url without
+padding: `id` 16 random bytes (22 characters), `iv` 12 random bytes (16), `ct` the AES-GCM-256 output (the
+ciphertext, then the 16-byte tag) with the link key and, as additional data, the UTF-8 bytes of `` `${box}|${id}` ``
+(`box` is `to-ext` or `to-app`). The plaintext is the UTF-8 JSON `{ v: 1, kind, id, at, body }`: `id` equals the
+outer id, `at` is milliseconds since 1970 at the sender, at most 16,384 bytes. A receiver drops a message, silently,
+when:
+- its shape is wrong: exactly the three keys, each of the right length and alphabet, canonical base64url, checked
+  before anything is decoded (a `ct` over 21,867 characters is a plaintext over 16,384 bytes, so it never reaches
+  the decryption);
+- it has seen the id before (the last 500 ids);
+- the tag doesn't verify: a changed byte, another key, or a message sealed for the other box;
+- the plaintext isn't a JSON object, `v` isn't 1, the inner `id` differs from the outer one, or `kind` (a short
+  lower-case word) or `body` (an object) is malformed;
+- `at` is more than 120 s old or more than 30 s ahead of its clock.
+
+`test/fixtures/relay-vectors.json` holds a key and, read at a fixed `now`, 7 valid cases (box, id, iv, the exact
+plaintext and ct: sealing the one gives the other; the 120-s and 30-s boundaries, a 16,384-byte plaintext and
+non-ASCII text among them) and 21 cases that must be dropped (a changed byte in the ciphertext or the tag, a changed
+iv or outer id, the wrong box, another key, a wrong inner id, `v: 2`, 1 ms too old or too far ahead, 16,385 bytes,
+not JSON, no kind, a body that isn't an object, a time that isn't a number, and six bad shapes), plus a replay. The
+app's, the extension's and the Core's tests all read it.
+
+**32.1.3 Jarvis Core 1.3.0: the relay** (`core/server/http/relay-routes.mjs`).
+- `POST /api/relay/to-ext`, `POST /api/relay/to-app`: body `{ id, iv, ct }` (JSON, at most 24 KB, the envelope's
+  lengths and alphabet) → `200 { ok: true }`; 400 `bad_json` / `bad_envelope`, 413 `too_large`, 415
+  `unsupported_type`, 429 `rate_limited`. The same id again is kept once (a sender's retry).
+- `GET /api/relay/to-ext?after=<id>&wait=<s>`, `GET /api/relay/to-app?…`: `200 { messages: [{ id, iv, ct }], last }`,
+  the messages after `after` (all held ones when it is missing or no longer held), oldest first; `last` is the newest
+  id held (or `after` when none is). With nothing to send it waits up to `wait` seconds (0-25, default 0; at most 8
+  waiting reads a box) for a message, then answers `messages: []`. A reader that hangs up lets go of its place.
+- `GET /api/relay/status` → `200 { extSeenAt, appSeenAt }`: when each side last read its box (ms, or null; a read
+  waiting right now counts as now). Reading `to-ext` counts as the extension, `to-app` as the app.
+
+Each box keeps at most 50 messages, each for 2 minutes, **in memory only**: nothing is logged (the routes have no
+logger, and an error never quotes a body) or written to disk, and a restart forgets everything. 120 requests a
+minute per box (both methods) and for the status, on top of the API's general limit. Access: the usual check (the
+tailnet or this computer, §23); for these three routes only, `access.mjs checkRelayOrigin` also allows a
+`chrome-extension://<32 letters a-p>` origin (and answers its private-network preflight) and a CORS-mode fetch that
+carries no Origin (`Sec-Fetch-Mode: cors`, `Sec-Fetch-Dest: empty`: an extension's own request; a web page's
+cross-site CORS request always carries its Origin, and a page's no-cors request is still refused). Every other route
+keeps `checkOrigin`. The Core checks shapes only: it never decodes, decrypts, logs or saves a message. What the home
+base could still do, if it were turned against the owner: hold back, delay or reorder messages (the app then counts
+the extension offline, §32.1.5); it can never read or forge one.
+
+**32.1.4 Messages.** Every request from the app carries an `id` (the envelope's); the extension answers each with
+exactly one `reply` whose `re` is that id. The app gives up on a reply after 10 s (`{ ok: false, reason: 'offline' }`).
+
+| App → extension (`to-ext`) | body |
+|---|---|
+| `hello` | `{ app: 'jarvis', version }`: when linked, and when a window starts holding the link while linked |
+| `ping` | `{}` (Settings → Jarvis for Chrome → Test) |
+| `open` | `{ url, rect: { left, top, width, height } \| null, focus }` |
+| `start` | `{ text, chat: 'new' \| 'same', from: 'voice' }` |
+| `stop` | `{}`: stops the running task |
+| `answer` | `{ promptId, hash, choice, via: 'voice' \| 'card' }` |
+| `unlinked` | `{}` |
+
+| Extension → app (`to-app`) | body |
+|---|---|
+| `reply` | `{ re, ok: true, … }` (ping → `{ status }`, open → `{ url, site }`, start → `{ id }`, stop → `{}`, answer → `{ promptId }`) or `{ re, ok: false, reason, why }`, reason one of `off`, `busy`, `cap`, `blocked`, `needs-click`, `refused`, `gone`, `bad` |
+| `hello` | `{ ext: 'jarvis-for-chrome', version }`: when linked, and in answer to the app's |
+| `status` | `{ online: true, tasksFromJarvis, voiceApprovals, task: null \| { id, status } }`: on every change, every 60 s while a task runs |
+| `task` | `{ id, status, text, narration, lastStep, costUsd, limitUsd, from: 'voice' }` (no pictures) |
+| `done` | `{ id, status: 'done' \| 'stopped' \| 'failed' \| 'limit', answer (2,000 characters at most), costUsd }` |
+| `prompt` | `{ promptId, hash, kind, category, consequential, site, title, spoken, body, address, choices: [{ id, label }], voice: { allowed, why } }` (§32.2) |
+| `prompt-closed` | `{ promptId, how: 'clicked' \| 'voice' \| 'stopped' \| 'expired' }` |
+| `unlinked` | `{}` |
+
+`hash` is the extension's own (base64url of the first 16 bytes of SHA-256 over the prompt's canonical fields); the
+app only echoes it. `spoken` and `voice` are the extension's (§32.2); the app says `spoken` as it is.
+
+**Fresh requests only** (decision D5, wire v1). The app gives up on a reply after 10 s, but the envelope accepts a
+message for 120 s and the relay holds it for 2 minutes, so a request could be picked up late (a worker woken by its
+30-s alarm). Jarvis for Chrome answers an `open`, `start` or `answer` whose `at` is more than 8 s old with `reply
+{ ok: false, reason: 'gone', why: 'too late' }` and does nothing else (`stop`, `ping`, `hello` and `unlinked` are
+always taken). The app remembers for 2 minutes each `start`, `open` and `answer` it gave up on; if an `ok` still comes
+back for a `start`, it sends `stop` at once and tells the owner "Chrome started late, so I stopped it." (said in
+Voice Mode when it is open, a toast, and a notification while Jarvis is hidden); a late `ok` for an `open` or an
+`answer` is only noted, and a late refusal changes nothing. The window that gave up is the one that tells (the
+holder passes it the reply).
+
+**32.1.5 app.chromeLink** (`src/platform/chrome-link.js`, made once by `installChromeLink` in app.js; contract (f)):
+`state()` → `{ linked, online, voiceApprovals, task }`, `subscribe(fn)`, `open(url, { rect, focus })`,
+`startTask({ text, chat })`, `stopTask()`, `answer({ promptId, hash, choice, via })`, `onPrompt(fn)`,
+`onPromptClosed(fn)`, `onDone(fn)` (each `on…` returns its unsubscribe).
+- **Where it runs:** on computers only (never on an iPhone, iPad or Android phone: not a single request there),
+  while Jarvis is open, hidden too (hands-free on the Mac).
+- **One window per device holds the link** (the Web Lock `jarvis-chrome-link`, critique M6). It alone long-polls
+  `to-app` (a 20-s wait), checks `/api/relay/status` every 30 s (and when Settings → Jarvis for Chrome opens), says
+  `hello` when it starts while linked, and hands prompts, task news and results to its listeners, so one window
+  speaks each prompt. Other windows send their own requests; the holder passes them their replies, the task and the
+  online state over BroadcastChannel `jarvis-chrome-link`. When it closes, the next window takes over.
+- **Back-off** while the home base can't be reached: 2, 4, 8, 15, 30, then 60 s (±20 %); a Core before 1.3 (404) is
+  asked every 5 minutes; a status check that works ends the wait at once (a Core just updated). Settings shows the
+  problem in the home base's own words.
+- **Online:** the status says the extension read its box less than 60 s ago, or a message from it arrived in the
+  last 60 s (a time more than a minute ahead of this clock isn't believed). While it is offline or not linked,
+  `open`, `startTask` and `answer` answer at once (`offline` / `unlinked`) and send nothing; `stopTask` is always
+  sent (the safe direction: the relay keeps it 2 minutes).
+- **What comes back is information, never orders** (rule 5): every field is checked and cut to size here (no control
+  or bidi characters; a prompt's title 200 characters, `spoken` 400, `body` 1,000, `address` 2,048; a task's text and
+  a result's answer 2,000; ids as plain tokens); `consequential` counts as true unless it says false, and
+  `voice.allowed` as false unless it says true; a prompt without a `promptId`, a 22-character `hash`, a `kind` and a
+  choice is dropped; a kind this version doesn't know is ignored. Nothing in a message starts anything.
+- `open(url, { rect, focus })` sends `open` for an http(s) address without a user name or password (2,048 characters
+  at most), `rect` in whole screen pixels (width and height at least 100) or null, `focus` (by default: no `rect`).
+  It resolves `{ ok: true, site }` or the extension's `{ ok: false, reason, why }` (`needs-click`: a card waits for
+  the owner's click in the Jarvis window, §32.2). §31's "pull this up in Chrome" calls it while linked and online and
+  falls back to a normal tab otherwise.
+
+**32.1.6 Settings → Jarvis for Chrome** (`src/ui/chrome-link-settings.js`, `src/styles/chrome-link.css`), shown on
+computers with what it does and a privacy line: **Not linked** with **Link** (it needs a home base: Settings → Home
+base); while linking, **Copy link code**, the three steps, the code shown only if it couldn't be copied, and
+**Cancel**; **Linked · online** or **Linked · offline** (with "Open the Jarvis window … and keep it open"), **Test**
+(a `ping`: how long the answer took and whether "Tasks from Jarvis" is on there, or that nothing answered in 10 s),
+and **Unlink** (two taps). Problems with the home base and "Jarvis for Chrome unlinked itself" are said there. On an
+iPhone the section has one line: link it from Settings on the computer.
+
+The link's own words (`src/ui/commands/chrome.js`, the router's `app` layer, Voice Mode and the chat, free): "is
+Jarvis for Chrome linked?" ("is Chrome linked?", "… online / connected / working", "Jarvis for Chrome status")
+says the link's state (linked and online; linked but out of reach, with what to do; not linked, with how); "link
+Jarvis for Chrome" ("set up …", "connect Chrome to Jarvis", "how do I link …") opens Settings → Jarvis for Chrome
+when typed, and says the steps in Voice Mode (no sheet over it). Neither takes a sentence about Chrome's pages or
+tasks (§31, §32.3); "unlink" stays a tap in Settings.
+
+**32.1.7 Tests.** Core: `core/test/server/relay.test.mjs` (the vectors through both boxes, sizes and shapes, the
+2-minute life and 50 a box, the long poll, a long poll outliving the 15-s receive deadline, the rate limit, the
+status, the origins, nothing on disk or in the log). App unit: `relay-envelope.test.mjs` (the vectors, the replay
+window, shapes, the link code, no key in errors), `chrome-link.test.mjs` (linking, the clipboard, each request and
+its reply, what comes back cleaned, drops and replays across a reload, offline and the 10 s, fresh requests only
+(D5) in one window and across two, unlinking from either side, one window holding the link, back-off, phones),
+`chrome-commands.test.mjs` (the link's own words), `chrome-link.backup.test.mjs` (real Chromium: the key and the
+code in no export, sync backup or sync upload; an import never links; Reset forgets). E2E: `chrome-link-settings`,
+`chrome-link-open`; `test/e2e/core-fakes.mjs` answers the relay with the Core's own relay store and provides
+`createFakeChromePeer`, a scriptable fake Jarvis for Chrome. Not verifiable here: which headers Chrome's extension
+worker sends, Tailscale serve holding 20-s long polls open, the relay's delay on the real tailnet, and the clipboard
+clearing with Universal Clipboard on the owner's devices.
 
 ### 32.2 The extension's side and the voice policy
 
-<!-- v8.1: chrome-ext writes this part. -->
+Jarvis for Chrome 1.1.0 is the other end of the link (§32.1). Files: `extension/src/background/envelope.js` (the
+envelope, WebCrypto, the extension's own copy), `relay.js` (the long poll and the alarm), `link.js` (what Jarvis may
+ask and what goes back), `voice-policy.js` (the table, the 1.5 s rule, the prompt's hash, the spoken question and
+`voice.why`); the side panel's Settings → Voice from Jarvis (`sidepanel/main.js`), `sidepanel/cards.js` (the cards
+the owner clicks) and `approve.html` (the small approval window). The owner's words: extension/README.md "Voice from
+Jarvis".
+
+**32.2.1 The manifest and storage.** `alarms` in `permissions`; `optional_host_permissions: ['https://*.ts.net/*']`,
+asked for by name when the owner links; the CSP's `connect-src` adds `https://*.ts.net`. Still no
+`externally_connectable` and no content scripts: no web page can message the extension. Version 1.1.0 (the
+extension's own: `extension/build/manifest.mjs` `VERSION`). In `chrome.storage.local`: `chromeLink` `{ v: 1, core,
+key, linkedAt }`; `jarvis.voice` `{ tasksFromJarvis, approvals }` (both off until linked; Link turns the first on);
+`jarvis.voiceTasks` `{ day, count }` (tasks from Jarvis on this computer's calendar day); `jarvis.relay` `{ after,
+seen, heardAt }` (where reading `to-ext` left off, the last 500 ids read, and when a message from the app last opened
+with this key).
+
+**32.2.2 Linking.** The panel checks the code: base64url JSON `{ v: 1, core, key }`, `core` only
+`https://<machine>.<tailnet>.ts.net` (no port, path or user name), `key` 32 bytes. Inside the click it calls
+`chrome.permissions.request({ origins: [core + '/*'] })`; on Allow the link is saved (the old cursor first) and Tasks
+from Jarvis turns on. The worker sees the change, starts the relay, creates the alarm `jarvis-relay` (every 0.5 min)
+and sends `hello` and `status`. The section shows "Linked · online" (the home base answers, a message from the app has
+opened with this key at least once, and the app read its box or spoke in the last 60 s; the home base seeing a reader
+alone isn't enough, since a replaced or expired code leaves the app reading with another key), "Linked · waiting for
+Jarvis" (with what to do: keep Jarvis open; if Jarvis doesn't show Linked, copy a new link code there, Unlink here and
+paste it), "Linked · can't reach your home base" (check Tailscale and the home base) or "Linked · connecting…", with
+Unlink. Unlink (from the panel, or `unlinked` from the app) sends `unlinked {}` first when the panel unlinks, then
+forgets the key, the cursor and the alarm, and gives back the host permission. Development builds also take a local
+relay (`http://127.0.0.1:<port>`).
+
+**32.2.3 The relay loop.** `GET <core>/api/relay/to-ext?after=<id>&wait=20` (`wait=10` while a task from Jarvis
+runs, so 20 s without an answer means the home base is gone), each poll after one extension API call
+(`chrome.runtime.getPlatformInfo`); a poll with no answer 5 s past its wait has failed. Failures back off 1, 2, 5,
+10, 20, 30 s (a 429's Retry-After counts, up to 60 s); a 400 drops the cursor. Each message is opened (§32.1.2's
+drops), counted as read and saved before it is acted on, so none is taken twice, also across a worker or browser
+restart. `/api/relay/status` is read at most every 30 s for the panel. Messages to `to-app` leave in the order they
+were made (one queue): one retry after 1 s while the home base answers, none while it doesn't, and one that waited
+over a minute is dropped. Nothing is logged.
+
+**32.2.4 Requests from Jarvis**, each answered with exactly one `reply`. Fresh requests only (D5): an `open`,
+`start` or `answer` whose `at` is more than 8 s old (exactly 8 s still counts) gets `reply { ok: false, reason:
+'gone', why: 'too late' }` and nothing else happens; `stop`, `ping`, `hello` and `unlinked` are always taken within
+the envelope's 120 s.
+- `hello` → reply, then `hello { ext: 'jarvis-for-chrome', version }` and `status`; `ping` → `{ status }`, the same
+  body as the `status` message.
+- `open { url, rect, focus }` → `blocked` (not http(s), a user name or password, `blockedReason`: Chrome's pages,
+  extensions, files, the Web Store; or over 2,000 characters); `needs-click` when `addressConcern` (hidden or
+  disguised characters) or `addressAction` (`classifyAddress`, an installer, a file) says the address acts: a card
+  with the whole address waits in the side panel (or the approval window) and opens only on **Open it** (checked
+  again then); otherwise a tab in the last focused normal window of the Jarvis profile (or a new window), with no
+  debugger and no task. A `rect` of whole pixels, at least 100 × 100 (the app's own bounds), moves that window there
+  (`state: 'normal'`) without focusing it; without one the window is focused unless `focus` is false. → `{ url,
+  site }` (`site` the registrable domain). The site counts as opened by voice for the next task from Jarvis (10
+  minutes).
+- `start { text, chat, from }` → `bad` (empty, or over 2,000 characters), `off` (Tasks from Jarvis off, or the
+  panel's setup unfinished), `busy` (a task runs), `cap` (30 today); else `chat: 'new'` starts a fresh conversation
+  and the controller runs it with the extension's own model, budget and step limit in the last focused Jarvis
+  window, marked `from: 'voice'` (its card, and History, say "From Jarvis (voice)"), counted for the day. → `{ id }`.
+- `stop` → the running task stops (the step list says "Stopped by voice from Jarvis."); `gone` when none runs.
+- `answer { promptId, hash, choice, via }` → `gone` unless that prompt is open; `bad` for a choice it doesn't have;
+  `refused` (with a short reason, §32.2.6; the prompt stays open) when the hash differs, the policy says no, or a
+  yes comes less than 1.5 s after the prompt appeared; else it is decided through the same path as a click
+  (`decideFromJarvis`), and the step list says "Approved by voice from Jarvis: “Approve” (page step on <site>)."
+  (`via: 'card'` says "on its card").
+- `unlinked` → reply, then unlink. Any other kind → `bad`.
+
+**32.2.5 What goes back.** `status` on every change of the running task or the switches, and every 60 s while a task
+runs; `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
+how }` (`clicked` in the panel or the approval window, `voice`, `stopped` when the task ended or let go, `expired`);
+for tasks from Jarvis only, `task` (at once on a status change, else at most every 2 s; text 2,000, narration 500,
+last step 300 characters; no pictures) and one `done` (`limit` when it stopped at its budget or step limit;
+`answer` is the answer, or the error, at most 2,000 characters). A task from Jarvis cut off by a restart of the
+worker (marked interrupted) gets its `done` (`failed`) once, when the link starts again. `prompt`'s fields are cut
+by UTF-8 bytes (title 600, body 6,000 with the card's "What it covers" line appended, address 4,000, choice labels
+160, at most 4 choices) so a message always fits; `category` is '' for site, budget and step-limit prompts; `hash`
+is the base64url of the first 16 bytes of SHA-256 over the canonical JSON (sorted keys) of `{ kind, category, site,
+title, body, address, choices: [{ id, label }] }` exactly as sent.
+
+**32.2.6 What Jarvis says** (lead decision D4). `spoken` is the question alone, which the app says after "Chrome
+asks:" and before what can be said: "Let it work on bestbuy.com for this task?", "Click a button on bestbuy.com?
+The button says “Add to cart”. The price shown is $279.99.", "Make a purchase or payment on bestbuy.com? …", "Keep
+going past this task’s $1.00 budget, up to $2.00?"; no "Chrome asks", no "say …" hint, never "Jarvis for Chrome";
+at most 280 characters. It is built from the extension's own fields (the kind of question, the site, the category,
+the kind of step, a price found in the step's label or item, the budget's or step limit's numbers). Page text appears
+only as one quote of at most about 40 characters after "The button says" (or "The option says", "The text is"),
+only Latin letters, digits and plain punctuation, and never when its letters contain approve, cancel, say, yes,
+allow, deny, stop or jarvis (checked with spaces, accents and look-alike forms removed: critique M4); a site whose
+name holds such a word is "a site whose name is on the card in the Jarvis window". Claude's words (the card's body,
+request_confirmation's text) are never spoken. `voice.why` is one short sentence on why a yes needs a click ("That’s
+a purchase.", "That sends a message.", "That’s a keyboard shortcut.", "That carries what it read to another site.",
+"The page did that by itself.", "That’s a key press.", "That allows the site for every task."); reasons about what
+the owner could change ("You didn’t name or open that site by voice.", "That site isn’t set to Always.", "This task
+has read another site.") are given only while voice approvals are on; otherwise "Approving by voice is off." when the
+setting is offered, and '' while voice approvals aren't offered (the app then says "That needs a click in the Jarvis
+window."). A refused `answer` carries the same reason, or "That question changed." or "That question has only just
+appeared.".
+
+**32.2.7 The voice policy** (`voice-policy.js`; the table is data, `VOICE_ROWS`). Deny, Cancel and Stop are taken
+from Jarvis at once, always. Every other answer needs `VOICE_APPROVALS_AVAILABLE` (false until the red-team round
+passes; then "Approve everyday steps by voice", off by default, appears in the panel) and that setting; then:
+- Allow once: only for a site named in the task's words as an address ("bestbuy.com", "bestbuy dot com") or opened
+  by voice (§32.2.4); Always: never.
+- Approve: only for the guard's own page step (`source: 'guard'`, `category: 'change'`, not consequential) on a site
+  set to Always (read again at the decision) whose step is one plain left click that opens no address shown on the
+  card, picking an option or ticking a box, or text Claude chose (typing with at most one Enter, at its end; a value
+  set into a field) while the task has read no other site. A purchase or payment, sending, posting, deleting,
+  account or security, terms, a download, another site's box, a keyboard shortcut, the page's own "Are you sure?",
+  a page load nobody approved, "Carry on to …?", "Send this address to …?", Jarvis's own question
+  (request_confirmation) and every other step (a key, a drag, a mouse press, an address, closing a tab) need a
+  click.
+- Budget and step-limit Continue: allowed.
+A yes also needs the prompt to be at least 1.5 s old. `voice: { allowed, why }` in `prompt` mirrors this for that
+prompt. One approval from Jarvis still covers one step on one element, once (the same prompt as a click).
+Development builds can make voice approvals available for the tests (`jarvis.dev.voiceApprovals`); the build refuses
+a release that contains that marker.
+
+**32.2.8 The pause.** While a task from Jarvis runs, once the home base hasn't answered for 20 s the task pauses itself
+as Take over does, with a notice (critique M4: a "stop" said to Jarvis must not be lost); once per outage: Continue in
+the panel goes on. The panel's Stop and ⌘⇧. are unchanged.
+
+**32.2.9 The approval window** (G7). When no side panel is connected and a task from Jarvis shows a prompt that voice
+may not answer, or an address waits for a click, the worker opens `approve.html` (`chrome.windows.create({ type:
+'popup', width: 420, height: 620, focused: true })`; one at a time, also when asked twice at once; focused again on
+the next question). It shows the task's words, the "From Jarvis (voice)" chip, the same card as the panel and Stop,
+and closes itself 1.5 s after nothing waits. No button takes the focus, and a new card's answers take a click only 1 s
+after it appears (a key or a click meant for the window underneath must not answer); Stop always works. It is an
+extension page (not web-accessible) with its own port name (`jarvis-approve`), not counted as a side panel.
+
+**32.2.10 Tests.** Extension unit (`npm run test:extension`): `envelope.test.mjs` (round trips, every drop, the
+shared vectors), `envelope-interop.test.mjs` (the extension's envelope and the app's open each other's messages, both
+boxes; the same link code), `voice-policy.test.mjs` (the table cell by cell, the 1.5 s rule, refusals, the setting
+and its release switch, the hash, the questions and reasons, the quote filter), `link.test.mjs` (open, start, stop,
+answer, prompts, task and done, the daily cap, the switch, replays across a restart, the back-off, the pause, the
+approval window, unlinking, D5's 8 s and its boundary, a task cut off by a restart), `relay-core.test.mjs` (the relay
+loop against the Core's own relay server), and the build test (the manifest's permissions, optional host, CSP and
+version). Extension E2E (the real unpacked extension against a fake home base relay, Jarvis's end played from Node):
+`relay-open`, `relay-task-voice`, `relay-approve-voice`, `relay-approve-refused`, `relay-replay`,
+`relay-approve-window`; and, only when named, `chrome-relay-roundtrip`: one Chromium with the extension, the app's
+own `src/platform/chrome-link.js` in a page and the Core's relay store (`test/e2e/core-fakes.mjs`), linked with a test
+key: open, a task, a voice approval, done. Not verifiable here: the worker with the 20-s long poll and the 30-s alarm
+over hours, Chrome's private-network rules for the extension's worker on the tailnet, window placement on the owner's
+Mac (headless Chromium keeps its own window size), and a voice approval on a real shopping site.
 
 ### 32.3 Asking by voice
 

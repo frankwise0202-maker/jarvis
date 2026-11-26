@@ -92,6 +92,7 @@ environment variables above, which win over it). A broken file is reported and i
 | `GET /api/fixture`, `POST /api/fixture {"scenario"}` | fixture mode only |
 | `/api/brain`, `/api/spend`, `/api/jobs`, `/api/watchers`, `/api/briefing`, `/api/push/*`, `/api/sync/*` | the brain, push and sync (below); SSE gains `job`, `watcher`, `briefing`, `spend` |
 | `/api/senses`, `/api/hear`, `/api/speak` | hearing and George's voice for the phone (below; off until turned on) |
+| `/api/relay/to-ext`, `/api/relay/to-app`, `/api/relay/status` | Jarvis for Chrome's relay (below; Core 1.3): sealed messages between the app and the extension, in memory only |
 
 Units are in the field names (`…Pct`, `…C`, `…Bytes`, `…Bps`, `…Ms`). Values that cannot be read are `null`
 with `available: false` and a plain-words `message`/`detail`, never a guess. Errors are
@@ -107,7 +108,10 @@ every other origin gets 403, pages on other localhost ports too (directly or thr
 some other program serves cannot reach the brain, the key or the backups), and so do no-cors requests from
 another site or another port (`Sec-Fetch-Site` cross-site / same-site). Chrome's private-network
 preflights (a public page calling the 100.x Tailscale address) get
-`Access-Control-Allow-Private-Network: true` for those origins only. A refused API request (403) still carries
+`Access-Control-Allow-Private-Network: true` for those origins only. The relay's three routes alone also take
+`chrome-extension://<id>` origins (and their preflights), and an extension's own fetch that carries no Origin
+(`Sec-Fetch-Mode: cors`, `Sec-Fetch-Dest: empty`: a web page's cross-site CORS request always carries its
+Origin); every other route refuses them. A refused API request (403) still carries
 CORS headers for those origins, so the Jarvis app can tell "refused" from a Core that isn't running behind
 `tailscale serve` (Tailscale then answers 502 without them); Funnel traffic never gets them. **Limits:** 4 KB bodies and 300-character questions,
 8 questions at once then 30 a minute per client, 16 live streams. (The brain's and the senses' own body
@@ -374,6 +378,26 @@ the words must come back; George's warm-up rtf is checked too. `JARVIS_SENSES_TE
 base.en and fp32 picked as on the home base, then the speed check with the real voice engine and the
 switch threshold at 0: fp32 and q8 timed (q8 downloaded if needed) and the faster kept.
 
+## Jarvis for Chrome's relay (Core 1.3)
+
+The Jarvis app (the owner's usual Chrome profile) and Jarvis for Chrome (the extension, in its own "Jarvis"
+profile) can't talk directly, so they leave messages for each other in two boxes here
+(`http/relay-routes.mjs`; the wire is SPEC §32.1). Every message is sealed end to end (AES-GCM-256 with a key
+only the two ends have: it travels in the link code the owner copies from the app and pastes into the
+extension, and never reaches the Core), so the relay holds `{id, iv, ct}` strings it cannot read. It checks
+their shape on the strings' lengths and alphabet, never decodes or decrypts them, and never logs or saves them.
+
+| | |
+|---|---|
+| `POST /api/relay/to-ext`, `POST /api/relay/to-app` | body `{id, iv, ct}` (JSON, at most 24 KB): `id` 22 and `iv` 16 base64url characters, `ct` 24-21,867 → `{ok: true}`; the same `id` again is kept once (a retry). 400 `bad_json` / `bad_envelope`, 413 `too_large`, 415 `unsupported_type`, 429 `rate_limited` |
+| `GET /api/relay/to-ext?after=<id>&wait=<s>`, `GET /api/relay/to-app?…` | `{messages: [{id, iv, ct}], last}`: the messages after `after` (all held ones when it is missing or no longer held), oldest first; `last` is the newest id held (or `after` when none is). With nothing to send it waits up to `wait` seconds (0-25, default 0; at most 8 waiting reads a box) for one, then answers `messages: []`. 400 `bad_after`, `bad_wait` |
+| `GET /api/relay/status` | `{extSeenAt, appSeenAt}`: when each side last read its box (ms since 1970, or `null`); a read waiting right now counts as now. Reading `to-ext` counts as the extension, `to-app` as the app |
+
+Each box keeps at most 50 messages, each for 2 minutes (in memory; a sweep every 10 s, and a restart forgets
+them). 120 requests a minute per box (both methods), and 120 a minute for the status, on top of the API's
+general limit. Tests: `test/server/relay.test.mjs` (the shared vectors `test/fixtures/relay-vectors.json`, the
+sizes, the 2-minute life, the long poll, the rate limit, the origins, and nothing on disk or in the log).
+
 ## What only the real machine can verify
 
 NVIDIA GTX 970 readings through the 580 driver, coretemp on the i7-6700, `tailscale serve` headers end to end,
@@ -383,4 +407,6 @@ The brain's calls to the real Claude API (tested against a local fake of its str
 Push to an iPhone, and real Open-Meteo and news-feed answers (tested with recorded fixtures) are verified
 only on the Alienware. The senses ran for real here (downloads, Whisper, Kokoro, nice 10), on a 4-core
 container that is not an i7-6700: their speed on the Alienware itself, and a real iPhone's recordings, are
-measured only there.
+measured only there. Jarvis for Chrome's relay ran against Node's HTTP client and the app's own tests: which
+headers Chrome's extension worker really sends (an Origin of `chrome-extension://…` or none; both are
+accepted) and whether Tailscale serve keeps a 20-second long poll open are seen only with the real extension.

@@ -26,8 +26,12 @@
 //                   { t: 'back', screen, kind, ref, state }   "Bring back" (then the window closes)
 //                   { t: 'closed', screen, kind, ref, state } the window is going away (hand back)
 //                   { t: 'here', screen, kind, ref, where, label }  answer to { t: 'who' }
+//                   { t: 'focus', screen }  this window got the focus (v8.1: "this window")
+//                   { t: 'state', screen, parts?, selected? }  a hologram's parts and selection (v8.1)
 //   main -> screen  { t: 'content', screen, kind, data, title, report }  the content (live or not)
 //                   { t: 'show', screen, kind, ref, title, report }  show something else here
+//                   { t: 'command', screen, command }  a viewer command said in the main window (v8.1:
+//                     "explode it" while the hologram is here; hologram-commands.js shapes)
 //                   { t: 'close', screen }  close yourself ('*' = every screen)
 //                   { t: 'who' }  the main window (re)started: say what you show
 // Test hooks: [data-testid="screen"] has data-kind, data-state (loading|ready|missing|error),
@@ -321,8 +325,10 @@ export async function startScreenPage(root, { search = location.search } = {}) {
     frame.setDetail('');
     frame.setStatus('', 'idle');
     frame.setState('loading');
-    // A camera screen tells the main window whether its camera runs (the OPTICS indicator there).
-    panel = createScreenPanel(kind, { win: window, frame, compact: false, autoStart, deps: kind === 'camera' ? { ...panelDeps, onCameraState: (state) => post({ t: 'camera', state }) } : panelDeps });
+    // A camera screen tells the main window whether its camera runs (the OPTICS indicator there); a
+    // hologram, its parts and selection (its commands are said there).
+    const deps = kind === 'camera' ? { ...panelDeps, onCameraState: (state) => post({ t: 'camera', state }) } : kind === 'hologram' ? { ...panelDeps, onState: (st) => post({ t: 'state', ...st }) } : panelDeps;
+    panel = createScreenPanel(kind, { win: window, frame, compact: false, autoStart, deps });
     frame.body.append(panel.el);
     frame.scan();
   }
@@ -379,7 +385,13 @@ export async function startScreenPage(root, { search = location.search } = {}) {
       }
       if (m.screen !== params.screenId && m.screen !== '*') return;
       if (m.t === 'close') closeSelf();
-      else if (m.t === 'show' && typeof m.kind === 'string' && KINDS.has(m.kind)) {
+      else if (m.t === 'command' && isObj(m.command) && panel && typeof panel.command === 'function') {
+        try {
+          panel.command(m.command);
+        } catch (err) {
+          console.warn('[jarvis] a command for this screen failed:', err && err.message);
+        }
+      } else if (m.t === 'show' && typeof m.kind === 'string' && KINDS.has(m.kind)) {
         mount(m.kind, isObj(m.ref) ? m.ref : {}, { title: txt(m.title), report: !!m.report, autoStart: m.start === true });
         load();
         post({ t: 'hello', kind, ref });
@@ -398,6 +410,7 @@ export async function startScreenPage(root, { search = location.search } = {}) {
   window.addEventListener('pagehide', () => {
     if (!closing) post({ t: 'closed', kind, ref, state: viewState() });
   });
+  window.addEventListener('focus', () => post({ t: 'focus' }));
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && document.fullscreenEnabled && !/^(INPUT|TEXTAREA)$/.test((e.target && e.target.tagName) || '')) toggleFullscreen();
   });

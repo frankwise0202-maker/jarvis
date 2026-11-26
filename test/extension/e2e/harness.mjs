@@ -13,6 +13,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { TEST_API_KEY } from '../mock/claude-mock.mjs';
+import { createAppPeer, newLinkKey } from '../helpers/fake-relay.mjs';
 
 export class E2EError extends Error {}
 
@@ -89,9 +90,11 @@ export class Run {
    * switch is on. `downloads`: Chrome's own download handling, into this folder. `seed` (default
    * on): a saved key and settings, and (`profile`, default on) the owner's confirmation on the
    * first-run screen that this Chrome profile is just for Jarvis; without `seed` the panel starts
-   * at that screen.
+   * at that screen. `link` (Voice from Jarvis): linked to the test server's fake home base relay
+   * with a fresh key, Tasks from Jarvis on; { approvals: true } turns voice approvals on (and makes
+   * them available, as development builds allow); `run.app` is then Jarvis's end of the link.
    */
-  async start({ settings = {}, seed = true, profile = true, panelSize = { width: 400, height: 860 }, deviceScaleFactor = 1, nativeWindow = false, startUrl = null, approveSteps = true, everyday = [], always = [], downloads = null, launch = {} } = {}) {
+  async start({ settings = {}, seed = true, profile = true, panelSize = { width: 400, height: 860 }, deviceScaleFactor = 1, nativeWindow = false, startUrl = null, approveSteps = true, everyday = [], always = [], downloads = null, launch = {}, link = null } = {}) {
     this.profile = await mkdtemp(path.join(os.tmpdir(), 'jarvis-ext-e2e-'));
     this.downloads = downloads;
     if (downloads) {
@@ -127,6 +130,7 @@ export class Run {
         { key: TEST_API_KEY, base: this.server.apiBase, settings, everyday, always, profile },
       );
       void port;
+      if (link) await this.link(link);
     } else {
       await this.sw.evaluate((base) => chrome.storage.local.set({ 'jarvis.dev.apiBase': base }), this.server.apiBase);
     }
@@ -190,6 +194,26 @@ export class Run {
     p.on('console', (msg) => {
       if (msg.type() === 'error' && label === 'panel') this.issues.push(`${label} console error: ${msg.text()}`);
     });
+  }
+
+  /**
+   * Voice from Jarvis: links the extension to the fake relay (as Settings → Voice from Jarvis →
+   * Link does) and makes `this.app`, Jarvis's end. Resolves once the extension said hello.
+   */
+  async link({ approvals = false, tasksFromJarvis = true } = {}) {
+    this.linkKey = newLinkKey();
+    await this.sw.evaluate(
+      ({ core, key, approvals, tasksFromJarvis }) =>
+        chrome.storage.local.set({
+          'jarvis.voice': { tasksFromJarvis, approvals },
+          ...(approvals ? { 'jarvis.dev.voiceApprovals': true } : {}),
+          chromeLink: { v: 1, core, key, linkedAt: Date.now() },
+        }),
+      { core: this.server.apiBase, key: this.linkKey, approvals, tasksFromJarvis },
+    );
+    this.app = await createAppPeer({ relay: this.server.relay, key: this.linkKey });
+    await this.app.waitFor((m) => m.kind === 'hello', { timeoutMs: 15000, what: 'the extension’s hello' });
+    return this.app;
   }
 
   // ---- panel helpers -----------------------------------------------------------------------

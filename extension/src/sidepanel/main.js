@@ -2,14 +2,16 @@
 // budget), then a chat of task cards. Each card shows Jarvis's live step list with tiny
 // thumbnails, any question for the owner (site permission, approvals, limits), the final answer,
 // the cost and a Retry button. The service worker does the work; this page only renders its state
-// and sends the owner's choices.
+// and sends the owner's choices. Settings → Voice from Jarvis links the extension to Jarvis, the
+// web app (link.js), and addresses Jarvis asked to open that do something wait here for a click.
 
 import { h, append, clear, replaceChildren, setText } from './dom.js';
 import { icon, emblem } from './icons.js';
 import { renderMarkdown } from './markdown.js';
+import { openCard, promptCard } from './cards.js';
 import { PROFILE_CONFIRM, PROFILE_TITLE, PROFILE_WHY, profileElsewhere, profileNote, profileSteps } from './profile.js';
 import { FINAL_STATUSES, PORT_NAME } from '../shared/protocol.js';
-import { createStore, maskKey, validateApiKey } from '../shared/storage.js';
+import { VOICE_TASKS_PER_DAY, createStore, maskKey, parseLinkCode, validateApiKey } from '../shared/storage.js';
 import { DEFAULT_MODEL, MODELS, MODEL_IDS } from '../background/models.js';
 import { MAX_BUDGET_USD, MAX_STEPS, MIN_BUDGET_USD, MIN_STEPS } from '../background/limits.js';
 import { displayText, formatDuration, formatUsd, truncate } from '../shared/util.js';
@@ -36,6 +38,8 @@ const ui = {
   els: {},
   listening: false,
   recognition: null,
+  link: null, // Voice from Jarvis: the link's state (link.js linkState)
+  openCards: [], // Voice from Jarvis: addresses waiting for a click
 };
 
 const EXAMPLES = [
@@ -113,6 +117,14 @@ function onMessage(msg) {
       break;
     case 'error':
       toast(msg.message);
+      break;
+    case 'link':
+      ui.link = msg.link;
+      renderVoiceSection();
+      break;
+    case 'cards':
+      ui.openCards = Array.isArray(msg.cards) ? msg.cards : [];
+      renderCards();
       break;
     default:
       break;
@@ -376,8 +388,9 @@ function renderMain() {
     ),
   );
   els.list = h('div', { class: 'turns', attrs: { 'data-testid': 'turns', 'aria-live': 'polite' } });
+  els.cards = h('div', { class: 'open-cards', attrs: { 'data-testid': 'open-cards', 'aria-live': 'polite' } });
   els.empty = emptyState();
-  els.scroll = h('div', { class: 'scroll' }, els.empty, els.list);
+  els.scroll = h('div', { class: 'scroll' }, els.empty, els.list, els.cards);
   els.dockText = h('span', { class: 'dock__text' });
   els.takeover = h('button', { class: 'btn btn--ghost', type: 'button', attrs: { 'data-testid': 'takeover' }, on: { click: () => send({ type: 'takeover' }) } }, icon('hand', { size: 16 }), 'Take over');
   els.resume = h('button', { class: 'btn btn--primary', type: 'button', attrs: { 'data-testid': 'resume' }, on: { click: () => send({ type: 'resume' }) } }, icon('play', { size: 14 }), 'Continue');
@@ -408,7 +421,19 @@ function renderMain() {
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) els.mic.hidden = true;
   updateHeader();
   renderTasks();
+  renderCards();
   els.input.focus();
+}
+
+/** Voice from Jarvis: the addresses Jarvis asked to open that wait for the owner's click. */
+function renderCards() {
+  const box = ui.els.cards;
+  if (!box) return;
+  const sig = ui.openCards.map((c) => c.id).join(',');
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  replaceChildren(box, ui.openCards.map((card) => openCard(card, { onChoose: (choice) => send({ type: 'open-card', cardId: card.id, choice }) })));
+  if (ui.openCards.length) scrollToEnd();
 }
 
 function emptyState() {
@@ -537,6 +562,7 @@ class TaskCard {
     this.divider = h('div', { class: 'divider', hidden: true }, h('span', { text: 'Fresh start' }));
     this.bubble = h('div', { class: 'bubble', attrs: { 'data-testid': 'task-text' } });
     this.pill = h('span', { class: 'pill', attrs: { 'data-testid': 'task-status' } });
+    this.from = h('span', { class: 'chip chip--voice', hidden: true, attrs: { 'data-testid': 'task-from' }, text: 'From Jarvis (voice)' });
     this.timer = h('span', { class: 'card__timer' });
     this.costEl = h('span', { class: 'card__cost', attrs: { 'data-testid': 'task-cost' } });
     this.stepList = h('ol', { class: 'steps', attrs: { 'data-testid': 'steps' } });
@@ -554,7 +580,7 @@ class TaskCard {
     this.card = h(
       'section',
       { class: 'card' },
-      h('div', { class: 'card__top' }, h('span', { class: 'card__label' }, icon('sparkle', { size: 12 }), 'Task'), this.pill, h('span', { class: 'card__spacer' }), this.costEl, this.timer),
+      h('div', { class: 'card__top' }, h('span', { class: 'card__label' }, icon('sparkle', { size: 12 }), 'Task'), this.pill, this.from, h('span', { class: 'card__spacer' }), this.costEl, this.timer),
       this.stepList,
       this.live,
       this.injections,
@@ -577,6 +603,7 @@ class TaskCard {
     this.retryBtn.title = resumable ? 'Carry on where Jarvis stopped' : 'Run this task again from the start';
     setText(this.bubble, displayText(task.text));
     setText(this.pill, STATUS_TEXT[task.status] || task.status);
+    this.from.hidden = task.from !== 'voice';
     this.pill.dataset.tone = { running: 'active', waiting: 'warn', paused: 'warn', done: 'ok', stopped: 'warn', error: 'err', interrupted: 'warn' }[task.status];
     setText(this.costEl, task.cost > 0 ? `≈ ${formatUsd(task.cost)}` : '');
     this.tick();
@@ -683,34 +710,7 @@ class TaskCard {
     this.promptBox.dataset.key = key;
     clear(this.promptBox);
     if (!prompt) return;
-    const ic = { site: 'globe', confirm: 'shield', budget: 'dollar', steps: 'refresh' }[prompt.kind] || 'info';
-    const choices = h(
-      'div',
-      { class: 'prompt__choices' },
-      (prompt.choices || []).map((c) =>
-        h('button', { class: `btn btn--${c.tone === 'primary' ? 'primary' : c.tone === 'danger' ? 'danger' : 'ghost'}`, type: 'button', attrs: { 'data-testid': 'prompt-choice', 'data-choice': c.id }, on: { click: (e) => {
-          for (const b of e.currentTarget.parentElement.querySelectorAll('button')) b.disabled = true;
-          send({ type: 'decide', promptId: prompt.id, choice: c.id });
-        } } }, c.label),
-      ),
-    );
-    const kindChip = prompt.detail ? h('span', { class: 'chip chip--kind', attrs: { 'data-testid': 'prompt-category' }, text: prompt.detail.charAt(0).toUpperCase() + prompt.detail.slice(1) }) : null;
-    const sourceChip = prompt.source === 'guard'
-      ? h('span', { class: `chip${prompt.consequential ? ' chip--warn' : ''}`, text: prompt.consequential ? 'Stopped by the safety check' : 'Jarvis asks before each step' })
-      : h('span', { class: 'chip', text: 'Jarvis asked first' });
-    const meta = prompt.kind === 'confirm' ? h('div', { class: 'prompt__meta' }, prompt.site ? h('span', { class: 'chip', text: prompt.site }) : null, kindChip, sourceChip) : null;
-    append(
-      this.promptBox,
-      h(
-        'div',
-        { class: 'prompt', attrs: { 'data-testid': 'prompt', 'data-kind': prompt.kind, 'data-prompt-id': prompt.id, 'data-source': prompt.source || '', 'data-consequential': prompt.kind === 'confirm' ? String(!!prompt.consequential) : '', role: 'alertdialog', 'aria-label': prompt.title } },
-        h('div', { class: 'prompt__head' }, h('span', { class: 'prompt__icon' }, icon(ic, { size: 18 })), h('span', { class: 'prompt__title', text: prompt.title })),
-        h('p', { class: 'prompt__body', attrs: { 'data-testid': 'prompt-body' } }, promptBody(prompt)),
-        prompt.facts ? h('p', { class: 'prompt__facts', attrs: { 'data-testid': 'prompt-facts' }, text: displayText(prompt.facts) }) : null,
-        meta,
-        choices,
-      ),
-    );
+    append(this.promptBox, promptCard(prompt, { onChoose: (choice) => send({ type: 'decide', promptId: prompt.id, choice }) }));
     const first = this.promptBox.querySelector('.btn--primary');
     if (first && document.activeElement === document.body) first.focus();
     scrollToEnd();
@@ -732,18 +732,6 @@ class TaskCard {
     if (!t?.answer) return;
     navigator.clipboard.writeText(t.answer).then(() => toast('Answer copied'), () => toast('Could not copy'));
   }
-}
-
-/**
- * A prompt's body as nodes: an address it shows (prompt.address, already made fully visible by the
- * service worker) goes on its own line, in a monospace block, whole; the rest is plain text.
- */
-function promptBody(prompt) {
-  const body = displayText(prompt.body);
-  const address = displayText(prompt.address || '');
-  const at = address ? body.indexOf(address) : -1;
-  if (at < 0) return [body];
-  return [body.slice(0, at), h('code', { class: 'prompt__address', attrs: { 'data-testid': 'prompt-address' }, text: address }), body.slice(at + address.length)];
 }
 
 function stateIcon(s) {
@@ -905,6 +893,7 @@ async function renderSettings() {
       { class: 'sheet__body' },
       profileNote(),
       h('section', { class: 'panel' }, h('div', { class: 'label' }, icon('key', { size: 14 }), 'API key'), keyRow, h('div', { class: 'row-btns' }, replace, remove), h('p', { class: 'hint', text: 'Stored only on this computer (Chrome’s extension storage). Sent only to api.anthropic.com, never synced or logged.' })),
+      (ui.els.voiceSection = h('section', { class: 'panel', attrs: { 'data-testid': 'voice-from-jarvis' } })),
       h('section', { class: 'panel' }, h('div', { class: 'label' }, icon('sparkle', { size: 14 }), 'Model'), modelPicker(s.model, (id) => save({ model: id }), 'settings-model')),
       h(
         'section',
@@ -934,6 +923,108 @@ async function renderSettings() {
       h('p', { class: 'version', text: `Jarvis for Chrome ${chrome.runtime.getManifest().version}` }),
     ),
   );
+  renderVoiceSection();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Settings → Voice from Jarvis: link Jarvis for Chrome to Jarvis, the web app, through the owner's
+// home base (README: Voice from Jarvis). The key stays in chrome.storage.local.
+
+const VOICE_STEPS_TEXT = Object.freeze([
+  'In Jarvis, in your usual Chrome: Settings → Jarvis for Chrome → Link → Copy link code.',
+  'Paste it here and press Link. Chrome asks to let Jarvis for Chrome reach your home base: allow it.',
+]);
+
+/** "Linked · online" and its kin. */
+function linkStatusText(l) {
+  if (!l?.linked) return 'Not linked';
+  if (l.reachable) return l.appOnline ? 'Linked · online' : 'Linked · waiting for Jarvis';
+  return l.failing ? 'Linked · can’t reach your home base' : 'Linked · connecting…';
+}
+
+/** What to do when the link isn't online yet (the owner links once, often across two profiles). */
+function linkStatusHint(l) {
+  if (!l?.linked || (l.reachable && l.appOnline)) return '';
+  if (l.reachable) return 'Keep Jarvis open on this Mac. If Jarvis doesn’t say it is linked within a minute, copy a new link code there (Settings → Jarvis for Chrome → Link), press Unlink here and paste the new code.';
+  if (l.failing) return 'Jarvis for Chrome can’t reach your home base. Check that this Mac is on Tailscale and that the home base is running; it tries again by itself.';
+  return '';
+}
+
+function renderVoiceSection() {
+  const section = ui.els.voiceSection;
+  if (!section || !section.isConnected) return;
+  const l = ui.link || { linked: false };
+  const sig = JSON.stringify(l);
+  if (section.dataset.sig === sig && section.firstChild) return;
+  section.dataset.sig = sig;
+  const head = h('div', { class: 'label' }, icon('mic', { size: 14 }), 'Voice from Jarvis');
+  if (!l.linked) {
+    const input = h('textarea', { class: 'field__input field__input--code', rows: 2, placeholder: 'Paste the link code from Jarvis', spellcheck: false, autocomplete: 'off', attrs: { 'aria-label': 'Link code from Jarvis', 'data-testid': 'link-code' } });
+    const err = h('p', { class: 'field__error', attrs: { role: 'alert', 'data-testid': 'link-error' } });
+    const btn = h('button', { class: 'btn btn--primary btn--sm', type: 'button', attrs: { 'data-testid': 'link-button' } }, 'Link');
+    btn.addEventListener('click', () => linkFromCode(input.value, { err, btn, input }));
+    replaceChildren(
+      section,
+      head,
+      h('p', { class: 'hint', text: 'Let Jarvis, the web app, open pages in this window and start tasks here when you ask it by voice. Every task still asks you here before every step that matters.' }),
+      h('ol', { class: 'profile-steps', attrs: { 'data-testid': 'link-steps' } }, VOICE_STEPS_TEXT.map((t) => h('li', { text: t }))),
+      h('div', { class: 'field' }, input),
+      err,
+      h('div', { class: 'row-btns' }, btn),
+    );
+    return;
+  }
+  const tasks = h('input', { type: 'checkbox', checked: !!l.tasksFromJarvis, attrs: { 'data-testid': 'voice-tasks' }, on: { change: async (e) => {
+    await store.setVoice({ tasksFromJarvis: e.target.checked });
+    toast(e.target.checked ? 'Jarvis may start tasks here' : 'Jarvis can’t start tasks here');
+  } } });
+  const approvals = l.approvalsAvailable
+    ? h('label', { class: 'toggle', attrs: { 'data-testid': 'voice-approvals-row' } }, h('input', { type: 'checkbox', checked: !!l.approvals, attrs: { 'data-testid': 'voice-approvals' }, on: { change: async (e) => {
+      await store.setVoice({ approvals: e.target.checked });
+      toast(e.target.checked ? 'Everyday steps can be approved by voice' : 'Every approval is a click here');
+    } } }), h('span', { class: 'toggle__ui' }), h('span', null, h('strong', { text: 'Approve everyday steps by voice' }), h('span', { class: 'sub', text: 'Say “approve” to Jarvis for an everyday step on a site set to Always: a click, picking an option, and typing before the task has read another site. Buying, paying, sending, posting, deleting, account changes, downloads and everything marked always need a click here.' })))
+    : null;
+  const unlink = h('button', { class: 'btn btn--ghost btn--sm', type: 'button', attrs: { 'data-testid': 'link-unlink' }, on: { click: () => {
+    send({ type: 'unlink' });
+    toast('Unlinked from Jarvis');
+  } } }, 'Unlink');
+  replaceChildren(
+    section,
+    head,
+    h('p', { class: 'link-status', attrs: { 'data-testid': 'link-status', 'data-online': String(!!(l.reachable && l.appOnline)) } }, h('span', { class: 'dot' }), h('span', { text: linkStatusText(l) })),
+    linkStatusHint(l) ? h('p', { class: 'hint hint--warn', attrs: { 'data-testid': 'link-hint' }, text: linkStatusHint(l) }) : null,
+    h('p', { class: 'hint', text: `Through your home base, ${l.host}. It passes on sealed messages it can’t read.` }),
+    h('label', { class: 'toggle' }, tasks, h('span', { class: 'toggle__ui' }), h('span', null, h('strong', { text: 'Tasks from Jarvis' }), h('span', { class: 'sub', text: `Jarvis may start a task here when you ask it by voice: at most ${VOICE_TASKS_PER_DAY} a day, each with its budget, each asking you here as usual.` }))),
+    approvals,
+    h('div', { class: 'row-btns' }, unlink),
+  );
+}
+
+/** Link: the code is checked, then Chrome asks the owner (inside the click) to let the extension reach the home base. */
+function linkFromCode(code, { err, btn, input }) {
+  const parsed = parseLinkCode(code);
+  if (!parsed.ok) {
+    setText(err, parsed.error);
+    return;
+  }
+  setText(err, '');
+  btn.disabled = true;
+  chrome.permissions.request({ origins: [`${parsed.link.core}/*`] }).then(
+    async (granted) => {
+      if (!granted) {
+        btn.disabled = false;
+        setText(err, 'Jarvis for Chrome needs your OK to reach your home base. Press Link again and allow it.');
+        return;
+      }
+      await store.setLink(parsed.link);
+      input.value = '';
+      toast('Linked to Jarvis');
+    },
+    (e) => {
+      btn.disabled = false;
+      setText(err, `Chrome didn’t allow it: ${e?.message || e}`);
+    },
+  );
 }
 
 async function renderHistory(detailId = null) {
@@ -953,7 +1044,7 @@ async function renderHistory(detailId = null) {
         h(
           'section',
           { class: 'card' },
-          h('div', { class: 'card__top' }, h('span', { class: 'pill', dataset: { tone: t.status === 'done' ? 'ok' : t.status === 'error' ? 'err' : 'warn' }, text: STATUS_TEXT[t.status] || t.status }), h('span', { class: 'card__spacer' }), h('span', { class: 'card__cost', text: `≈ ${formatUsd(t.cost)}` })),
+          h('div', { class: 'card__top' }, h('span', { class: 'pill', dataset: { tone: t.status === 'done' ? 'ok' : t.status === 'error' ? 'err' : 'warn' }, text: STATUS_TEXT[t.status] || t.status }), t.from === 'voice' ? h('span', { class: 'chip chip--voice', text: 'From Jarvis (voice)' }) : null, h('span', { class: 'card__spacer' }), h('span', { class: 'card__cost', text: `≈ ${formatUsd(t.cost)}` })),
           h(
             'ol',
             { class: 'steps' },
@@ -994,7 +1085,7 @@ async function renderHistory(detailId = null) {
                   'button',
                   { class: 'history__item', type: 'button', on: { click: () => renderHistory(t.id) } },
                   h('span', { class: 'history__dot', dataset: { status: t.status } }),
-                  h('span', { class: 'history__text' }, h('span', { class: 'history__title', text: truncate(t.text, 90) }), h('span', { class: 'history__meta', text: `${new Date(t.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${STATUS_TEXT[t.status] || t.status} · ≈ ${formatUsd(t.cost)}` })),
+                  h('span', { class: 'history__text' }, h('span', { class: 'history__title', text: truncate(t.text, 90) }), h('span', { class: 'history__meta', text: `${new Date(t.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${STATUS_TEXT[t.status] || t.status} · ≈ ${formatUsd(t.cost)}${t.from === 'voice' ? ' · From Jarvis (voice)' : ''}` })),
                   icon('chevron-right', { size: 16 }),
                 ),
               ),

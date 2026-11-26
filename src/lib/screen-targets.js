@@ -49,6 +49,8 @@ export function screenKindLabel(kind, { report = false } = {}) {
       return 'LINK';
     case 'look':
       return 'LOOK';
+    case 'jarvis':
+      return 'JARVIS';
     default:
       return 'SCREEN';
   }
@@ -65,6 +67,8 @@ export function screenKindName(kind, { report = false } = {}) {
       return 'the camera';
     case 'look':
       return 'the Look';
+    case 'jarvis':
+      return 'Jarvis';
     default:
       return `the ${kind || 'screen'}`;
   }

@@ -4,8 +4,11 @@
 //     -> { action: 'open', what: 'hologram', where: 'other', screen: 2, ordinal: null }
 //   matchScreenCommand('float it')            -> { action: 'open', what: 'this', where: 'beside', … }
 //   matchScreenCommand('open it in a window') -> { action: 'open', what: 'this', where: 'window', … }
-//   matchScreenCommand('bring it back')       -> { action: 'back', … }
-//   matchScreenCommand('close the other screen') -> { action: 'close', where: null, screen: null, … }
+//   matchScreenCommand('bring it back')       -> { action: 'back', what: 'this', all: false, … }
+//   matchScreenCommand('bring the hologram back') -> { action: 'back', what: 'hologram', … } (that one only)
+//   matchScreenCommand('close the other screen') -> { action: 'close', where: 'other', screen: null, all: false, … }
+//   matchScreenCommand('close all screens')   -> { action: 'close', all: true, … }
+//   matchScreenCommand('close the window')    -> { action: 'close', ambiguous: true } (the focused or newest one)
 //   matchScreenCommand('pull up the weather on my other screen') -> null (a job for Jarvis)
 //
 // what:  'this' | 'hologram' | 'blueprint' | 'mission' | 'answer' | 'photo' | 'camera' | 'link'
@@ -90,9 +93,9 @@ const DEICTIC_RE = new RegExp(`\\b(?:${DEICTIC})\\b`);
 const SCREEN_NOUN = '(?:screens?|monitors?|displays?|tv|television)';
 const OTHER_QUAL = '(?:other|second|external|extra|big|bigger|another|next|separate|spare|secondary|outside)';
 const PLACES = [
-  // its own window / tab
-  { where: 'window', re: /\b(?:in|into|as|on|to|inside|onto)(?: (?:a|an|its|it s|the|my|their))?(?: (?:own|new|separate|another|different|seperate))* (?:window|popup|tab|browser window)\b/ },
-  { where: 'window', re: /\b(?:in|into|as) (?:a |an )?(?:another|new|separate|different) (?:window|tab)\b/ },
+  // its own window ("in a new tab" is a Chrome tab: chrome-commands.js, v8.1)
+  { where: 'window', re: /\b(?:in|into|as|on|to|inside|onto)(?: (?:a|an|its|it s|the|my|their))?(?: (?:own|new|separate|another|different|seperate))* (?:window|popup|browser window)\b/ },
+  { where: 'window', re: /\b(?:in|into|as) (?:a |an )?(?:another|new|separate|different) window\b/ },
   // a named screen: the laptop's own (internal) or the main (primary) one
   { where: 'other', target: 'internal', re: /\b(?:(?:on|onto|to|over to|up on|back to|in|into)(?: (?:the|my))? )?(?:laptop|macbook|mac book|built in|builtin|internal|computer s own|own laptop) (?:screen|display|monitor)\b/ },
   { where: 'other', target: 'primary', re: /\b(?:(?:on|onto|to|over to|up on|in|into)(?: (?:the|my))? )?(?:main|primary|first) (?:screen|display|monitor)\b/ },
@@ -114,7 +117,7 @@ const REQUEST_START = /^(?:can i (?:see|get|have|put)|could i (?:see|get|have)|(
 // Words a command may contain besides its object and place.
 const COMMAND_WORDS = new Set(
   (
-    'open opened opens put puts show shows display move moved send throw cast push pull bring take pop place stick drop toss project get load launch mirror ' +
+    'open opened opens put puts show shows display move moved send throw cast push pull bring take pop place stick drop toss project get load launch mirror expand ' +
     'float make keep have see give want need let view slide shift transfer up over out across there here also again too ' +
     'a an the my your our its on onto to in into at for of with from me i can could would will you we us please'
   ).split(' '),
@@ -169,14 +172,16 @@ export function matchScreenCommand(text) {
   if (!s) return null;
   const words = s.split(' ');
   if (words.length > MAX_WORDS) return null;
-  const base = { what: null, where: null, screen: null, target: null, ordinal: null, fullscreen: false, ambiguous: false, text: s };
+  const base = { what: null, where: null, screen: null, target: null, ordinal: null, fullscreen: false, ambiguous: false, all: false, text: s };
 
-  if (BACK_RE.test(s)) return { ...base, action: 'back', what: whatOf(s) };
+  // v8.1: "back" and "close" say which: a named one, the other monitor's, the float, or all of them.
+  if (BACK_RE.test(s)) return { ...base, action: 'back', what: whatOf(s), all: /\b(?:everything|them|all)\b/.test(s) };
   const close = CLOSE_RE.exec(s);
   if (close) {
     const qual = close[1] || close[3] || '';
-    const where = /float|pop|pip|picture|side/.test(qual) ? 'beside' : null;
-    return { ...base, action: 'close', where, screen: close[2] ? Number(close[2]) : null };
+    const where = /float|pop|pip|picture|side/.test(qual) ? 'beside' : close[1] && /\b(?:screens?|monitors?|displays?)$/.test(s) ? 'other' : null;
+    const all = /\b(?:all|both)\b/.test(s) || (!close[2] && /\b(?:screens|windows|panels|displays|monitors|views)$/.test(s));
+    return { ...base, action: 'close', where, screen: close[2] ? Number(close[2]) : null, all };
   }
   if (CLOSE_PLAIN_RE.test(s)) return { ...base, action: 'close', ambiguous: true };
   if (QUESTION_START.test(s) && !REQUEST_START.test(s)) return null;

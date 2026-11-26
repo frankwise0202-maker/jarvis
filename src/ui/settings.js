@@ -27,6 +27,7 @@ import { createBrainSettings } from './brain-settings.js';
 import { createSyncSettings } from './sync.js';
 import { createSensesSettings } from './senses-settings.js';
 import { createJarvisVoiceCard } from './voice-card.js';
+import { createChromeLinkSettings } from './chrome-link-settings.js'; // v8.1 chrome-relay
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -662,9 +663,13 @@ export function createSettingsPanel(o) {
   function hologramsSlot() {
     return [];
   }
-  // Settings → Jarvis for Chrome (chrome-relay): the section's cards ([]: no section).
+  // Settings → Jarvis for Chrome (chrome-relay): the section's cards ([]: no section). The link, its state, Test
+  // and Unlink (src/ui/chrome-link-settings.js), from app.js's link (o.chromeLink); not in the demo.
   function chromeSlot() {
-    return [];
+    if (!o.chromeLink || o.demo) return [];
+    const linkCard = createChromeLinkSettings(o.chromeLink, { toast: o.toast });
+    cleanups.push(() => linkCard.destroy());
+    return [linkCard.el];
   }
 
   // v7.8: "Jarvis's voice" at the top: the voice in use and where it comes from, Test, George's voice

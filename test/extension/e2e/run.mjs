@@ -6,6 +6,9 @@
 //   node test/extension/e2e/run.mjs --only basic,stop  run some scenarios
 //   node test/extension/e2e/run.mjs --list | --headed | --no-build
 //
+// Scenarios marked optIn run only when named with --only: chrome-relay-roundtrip (the extension and
+// Jarvis's own chrome-link in one Chromium; the integrator runs it, see scenarios-roundtrip.mjs).
+//
 // A scenario fails on its own assertions, on page or panel errors, and on any mock API
 // violation (the mock validates every request like the real API). Screenshots go to
 // test/extension/artifacts/. Exits 1 when any scenario fails.
@@ -23,8 +26,10 @@ import { RT3_SCENARIOS } from './scenarios-rt3.mjs';
 import { RT4_SCENARIOS } from './scenarios-rt4.mjs';
 import { RT5_SCENARIOS } from './scenarios-rt5.mjs';
 import { PROFILE_SCENARIOS } from './scenarios-profile.mjs';
+import { RELAY_SCENARIOS } from './scenarios-relay.mjs';
+import { ROUNDTRIP_SCENARIOS } from './scenarios-roundtrip.mjs';
 
-const ALL = [...SCENARIOS, ...RT2_SCENARIOS, ...RT3_SCENARIOS, ...RT4_SCENARIOS, ...RT5_SCENARIOS, ...PROFILE_SCENARIOS];
+const ALL = [...SCENARIOS, ...RT2_SCENARIOS, ...RT3_SCENARIOS, ...RT4_SCENARIOS, ...RT5_SCENARIOS, ...PROFILE_SCENARIOS, ...RELAY_SCENARIOS, ...ROUNDTRIP_SCENARIOS];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS = path.resolve(HERE, '..', 'artifacts');
@@ -46,10 +51,10 @@ function parseArgs(argv) {
 export async function runE2E(argv = process.argv.slice(2)) {
   const opts = parseArgs(argv);
   if (opts.list) {
-    for (const s of ALL) console.log(`${s.name.padEnd(16)} ${s.title}`);
+    for (const s of ALL) console.log(`${s.name.padEnd(16)} ${s.optIn ? '(only with --only) ' : ''}${s.title}`);
     return { passed: 0, failed: 0 };
   }
-  const selected = opts.only.length ? ALL.filter((s) => opts.only.includes(s.name)) : ALL;
+  const selected = opts.only.length ? ALL.filter((s) => opts.only.includes(s.name)) : ALL.filter((s) => !s.optIn);
   if (!selected.length) throw new Error(`no scenarios match ${opts.only.join(',')}`);
 
   const extDir = opts.build ? await mkdtemp(path.join(os.tmpdir(), 'jarvis-ext-dev-')) : path.resolve(HERE, '..', '..', '..', 'dist-extension-dev');
@@ -62,6 +67,9 @@ export async function runE2E(argv = process.argv.slice(2)) {
     // A scenario's screenshots and failure reports from earlier runs go first.
     for (const f of await readdir(ARTIFACTS).catch(() => [])) if (f.startsWith(`${scenario.name}-`)) await rm(path.join(ARTIFACTS, f), { force: true });
     server.mock.reset();
+    server.relay.reset();
+    server.useRelay(null);
+    server.serveApp(null);
     server.resetSites();
     const run = new Run({ pw, extDir, server, artifacts: ARTIFACTS, name: scenario.name, headed: opts.headed });
     const t0 = Date.now();

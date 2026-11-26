@@ -8,7 +8,8 @@
 //   Other flags: --no-zip, --no-minify, --quiet
 //
 // Steps: bundle the page agent (an IIFE string), the service worker (ESM, with the agent inlined
-// via a virtual module), the side panel and the microphone helper page (ESM + CSS) with the repo's
+// via a virtual module), the side panel, the microphone helper page and the small approval window
+// (Voice from Jarvis) (ESM + CSS) with the repo's
 // esbuild; copy the HTML; write manifest.json; render the PNG icons; zip the folder under a single
 // top-level "jarvis-for-chrome/" folder (so unzipping on a Mac gives one folder to Load unpacked).
 //
@@ -18,7 +19,7 @@ import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createManifest } from '../extension/build/manifest.mjs';
+import { VERSION, createManifest } from '../extension/build/manifest.mjs';
 import { makeIcons } from '../extension/build/icons.mjs';
 import { zipFiles } from '../extension/build/zip.mjs';
 
@@ -63,8 +64,8 @@ export async function buildExtension({ dev = false, outDir = DEFAULT_OUT, zip = 
     throw new ExtensionBuildError('esbuild is not installed. Run "npm ci" first.');
   }
   const started = Date.now();
-  const pkg = JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'));
-  const version = String(pkg.version || '1.0.0').replace(/[^0-9.]/g, '') || '1.0.0';
+  // Jarvis for Chrome has its own version (extension/build/manifest.mjs), not the web app's.
+  const version = VERSION;
 
   await rm(outDir, { recursive: true, force: true });
   await mkdir(path.join(outDir, 'icons'), { recursive: true });
@@ -84,7 +85,7 @@ export async function buildExtension({ dev = false, outDir = DEFAULT_OUT, zip = 
     });
     await esbuild.build({
       ...common,
-      entryPoints: { sidepanel: path.join(EXT, 'src/sidepanel/main.js'), mic: path.join(EXT, 'src/sidepanel/mic.js') },
+      entryPoints: { sidepanel: path.join(EXT, 'src/sidepanel/main.js'), mic: path.join(EXT, 'src/sidepanel/mic.js'), approve: path.join(EXT, 'src/sidepanel/approve.js') },
       format: 'esm',
       outdir: outDir,
       sourcemap: dev ? 'linked' : false,
@@ -95,7 +96,7 @@ export async function buildExtension({ dev = false, outDir = DEFAULT_OUT, zip = 
     throw new ExtensionBuildError(`esbuild failed${details ? `:\n${details}` : `: ${err.message}`}`);
   }
 
-  for (const html of ['sidepanel.html', 'mic.html']) await cp(path.join(EXT, 'src/sidepanel', html), path.join(outDir, html));
+  for (const html of ['sidepanel.html', 'mic.html', 'approve.html']) await cp(path.join(EXT, 'src/sidepanel', html), path.join(outDir, html));
   await writeFile(path.join(outDir, 'manifest.json'), `${JSON.stringify(createManifest({ dev, version }), null, 2)}\n`);
   for (const [size, png] of Object.entries(makeIcons())) await writeFile(path.join(outDir, 'icons', `icon-${size}.png`), png);
 
@@ -104,8 +105,9 @@ export async function buildExtension({ dev = false, outDir = DEFAULT_OUT, zip = 
   if (!dev) {
     const bg = await readFile(path.join(outDir, 'background.js'), 'utf8');
     const panel = await readFile(path.join(outDir, 'sidepanel.js'), 'utf8');
-    for (const marker of ['jarvis.dev.apiBase', '__jarvisController', '__jarvisCommand', 'testStop']) {
-      if (bg.includes(marker) || panel.includes(marker)) throw new ExtensionBuildError(`Release build contains the development marker "${marker}".`);
+    const approve = await readFile(path.join(outDir, 'approve.js'), 'utf8');
+    for (const marker of ['jarvis.dev.apiBase', 'jarvis.dev.voiceApprovals', '__jarvisController', '__jarvisCommand', '__jarvisLink', 'testStop']) {
+      if (bg.includes(marker) || panel.includes(marker) || approve.includes(marker)) throw new ExtensionBuildError(`Release build contains the development marker "${marker}".`);
     }
     const manifest = JSON.parse(await readFile(path.join(outDir, 'manifest.json'), 'utf8'));
     if (JSON.stringify(manifest).match(/127\.0\.0\.1|localhost/)) throw new ExtensionBuildError('Release manifest grants localhost access.');
