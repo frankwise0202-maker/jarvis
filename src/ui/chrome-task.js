@@ -25,12 +25,13 @@ import { icon } from './icons.js';
 // would break the Node unit tests that load this file's importers.)
 import {
   CHROME_CONTEXT_MS,
-  DEFAULT_TASK_LIMIT_USD,
   NOTHING_TO_STOP_LINE,
   TASK_ASK_LINE,
   TASK_CHECK_MS,
   TASK_CANCELLED_LINE,
   TASK_STARTED_LINE,
+  TASK_STOPPING_LINE,
+  TASK_STOP_UNREACHED_LINE,
   dollarsShown,
   isTaskAnswerCancel,
   matchTaskAnswer,
@@ -66,6 +67,12 @@ const SAY_RETRY_MS = 400; // a line waits this long between tries while Voice Mo
 const SAY_GIVE_UP_MS = 60000; // ... and is dropped after this (the card still shows it)
 const CLOSED_CARD_MS = 4000; // a prompt answered elsewhere: its card says so this long, then goes
 const CARD_ANSWERS_LINE = 'Chrome’s question is on its card: tap its button to answer.';
+const STOP_CONFIRM_MS = 10000; // a stop Jarvis for Chrome hasn't confirmed by then: the owner is told where to press Stop
+const GONE_LINE = 'That question is no longer open.';
+/** The BroadcastChannel name app.js opens for this device's Jarvis windows (REDTEAM-VOICE-7). */
+export const CHROME_VOICE_CHANNEL = 'jarvis-chrome-voice';
+const PEER_BEAT_MS = 30000; // a window with Voice Mode open says so again this often
+const PEER_FRESH_MS = 75000; // ... and one not heard from for this long counts as gone
 
 // ---------------------------------------------------------------------------------- the views
 
@@ -75,6 +82,7 @@ const STATUS_WORDS = {
   running: 'Working',
   waiting: 'Waiting for you',
   paused: 'Paused: you took over',
+  stopping: 'Stopping…',
   done: 'Done',
   stopped: 'Stopped',
   limit: 'Stopped at its limit',
@@ -330,6 +338,9 @@ export function voiceAdapter(api) {
  *   focusApp()  brings Jarvis forward (a notification's click)
  *   toast(text, { level })    a line in the chat when Voice Mode isn't there to say it
  *   hidden()    Jarvis isn't on screen (the checks wait 5 s instead of 2)
+ *   channel()   (optional) a BroadcastChannel-like object for this device's other Jarvis windows (app.js:
+ *               new BroadcastChannel('jarvis-chrome-voice')): prompts, their closing and a task's end reach
+ *               every window, and only the one where the owner talks says them (REDTEAM-VOICE-7)
  *   now()       the clock (tests)
  */
 export function createChromeVoice(deps = {}) {
@@ -342,22 +353,30 @@ export function createChromeVoice(deps = {}) {
     focusApp = null,
     toast = null,
     hidden = () => (typeof document !== 'undefined' ? !!document.hidden : false),
+    channel: channelDep = null,
     now = () => Date.now(),
   } = deps;
 
   const S = {
     contextUntil: 0, // a Chrome context lasts until then (CHROME_CONTEXT_MS after the last Chrome action)
-    task: null, // the latest task: { id, status, text, narration, lastStep, costUsd, limitUsd, answer, baseUsd }
+    task: null, // the latest task: { id, status, text, narration, lastStep, costUsd, limitUsd, answer, stopping }
     pendingTask: null, // the check before a start: { text, chat, check, cancelled }
     asking: null, // "What should I do in Chrome?" waiting: { handle }
+    busy: null, // "Chrome is busy with another task. Stop it first?" waiting: { pend, handle, taken }
     taskViews: new Set(), // the task card's views (chat and Voice Mode)
     prompts: new Map(), // promptId -> { prompt, hash, views: Set, handle, notified, answering, closing }
-    baseUsd: DEFAULT_TASK_LIMIT_USD, // a task's budget as the extension last said it
+    // A task's budget as Jarvis for Chrome reported it (hello and status, else a task's first limit); null
+    // until it has: the check then says "up to your Chrome budget" (MONEY-3, REDTEAM-VOICE-9).
+    baseUsd: null,
+    linkTaskId: '', // the task the link last reported: its prompts close when it ends or another begins
     sayQueue: [], // lines waiting for Voice Mode to be free: { line, until }
     sayTimer: 0,
     voiceOn: false, // the adapter was there last time we looked
+    peers: new Map(), // other windows: id -> { voice: Voice Mode open there, at }
     destroyed: false,
   };
+  const me = `w${Math.random().toString(36).slice(2, 10)}${now().toString(36)}`;
+  let chan = null;
   let offs = [];
   let attached = null; // the link our listeners are on
   let attachTimer = 0;
@@ -449,7 +468,8 @@ export function createChromeVoice(deps = {}) {
     }
     const t = S.task;
     if (!t) return null;
-    const status = t.status === 'error' || t.status === 'interrupted' ? 'failed' : t.status;
+    // A stop on its way: "Stopping…" until Jarvis for Chrome confirms it (then "Stopped").
+    const status = t.stopping && RUNNING.has(t.status) ? 'stopping' : t.status === 'error' || t.status === 'interrupted' ? 'failed' : t.status;
     return { phase: status, text: t.text, step: t.narration || t.lastStep, costUsd: t.costUsd, limitUsd: t.limitUsd, answer: t.answer, line: t.line };
   }
 
@@ -537,8 +557,12 @@ export function createChromeVoice(deps = {}) {
       return;
     }
     cancelCheck('replaced', { quietly: true });
-    const line = taskCheckLine({ text: words, limitUsd: S.baseUsd });
-    const pend = { text: words, chat: chat === 'same' ? 'same' : 'new', line, ms: 0, countAt: 0, check: null, timer: 0, cancelled: false, refused: false, done: false };
+    learnBudget();
+    // The price said is the budget Jarvis for Chrome reported (or "your Chrome budget" until it has), and the
+    // start carries it: what the owner heard is what it may spend (MONEY-3).
+    const limitUsd = Number(S.baseUsd) > 0 ? S.baseUsd : null;
+    const line = taskCheckLine({ text: words, limitUsd });
+    const pend = { text: words, chat: chat === 'same' ? 'same' : 'new', line, limitUsd, ms: 0, countAt: 0, check: null, timer: 0, cancelled: false, refused: false, done: false };
     S.pendingTask = pend;
     noteContext();
     renderTask();
@@ -559,12 +583,16 @@ export function createChromeVoice(deps = {}) {
               pend.countAt = now();
               renderTask();
             },
+            // "Stop" during it while another task runs: that one stops too (REDTEAM-VOICE-4). Quietly: Voice
+            // Mode says "Okay, nothing sent. Chrome is stopping."
+            onStop: () => stopRunning({ quietly: true }),
           }),
         null,
       );
       if (pend.check) return;
     }
-    // Typed (no Voice Mode): the card shows the price and counts 2 s; Cancel withdraws it.
+    // Typed (no Voice Mode): the card shows the price and counts 2 s; Cancel (or a typed "cancel") withdraws it.
+    pend.line = taskCheckLine({ text: words, limitUsd, typed: true });
     pend.ms = TASK_CHECK_MS;
     pend.countAt = now();
     renderTask();
@@ -581,11 +609,12 @@ export function createChromeVoice(deps = {}) {
 
   /**
    * The check withdrawn: "cancel" (Voice Mode says why itself), the card's Cancel, a correction or other
-   * words (routed again), a new task, Voice Mode closing. Nothing is sent.
+   * words (routed again), a new task, Voice Mode closing. Nothing is sent. A start already refused (busy,
+   * off, …) is no check any more: false, so a "stop" after it reaches the task that runs (REDTEAM-VOICE-2).
    */
   function cancelCheck(how, { quietly = false, fromCheck = false } = {}) {
     const pend = S.pendingTask;
-    if (!pend || pend.done || pend.cancelled) return false;
+    if (!pend || pend.done || pend.cancelled || pend.refused) return false;
     clearTimeout(pend.timer);
     pend.cancelled = true;
     if (!fromCheck && pend.check && typeof pend.check.cancel === 'function') quiet(() => pend.check.cancel());
@@ -605,7 +634,8 @@ export function createChromeVoice(deps = {}) {
     }
     let res = null;
     try {
-      res = await L().startTask({ text: pend.text, chat: pend.chat });
+      // The limit the owner heard goes with it (absent while the budget is unknown: "up to your Chrome budget").
+      res = await L().startTask({ text: pend.text, chat: pend.chat, ...(Number(pend.limitUsd) > 0 ? { limitUsd: pend.limitUsd } : {}) });
     } catch {
       res = { ok: false, reason: 'offline' };
     }
@@ -616,7 +646,7 @@ export function createChromeVoice(deps = {}) {
     }
     pend.done = true;
     S.pendingTask = null;
-    S.task = { id: String(res.id || ''), status: 'starting', text: pend.text, narration: '', lastStep: '', costUsd: 0, limitUsd: S.baseUsd, answer: '', stoppedByOwner: false };
+    S.task = { id: String(res.id || ''), status: 'starting', text: pend.text, narration: '', lastStep: '', costUsd: 0, limitUsd: pend.limitUsd, answer: '', stoppedByOwner: false, stopping: null };
     noteContext();
     syncFromLink();
     renderTask();
@@ -639,23 +669,27 @@ export function createChromeVoice(deps = {}) {
     tell(r.say, r.show, { level: 'warn' });
   }
 
-  /** After a stop: wait (up to 3 s) for the extension to end the task, so a new one isn't "busy". */
-  function stopped(t, ms = 3000) {
-    const until = now() + ms;
-    return new Promise((resolve) => {
-      const look = () => {
-        if (!t || S.task !== t || FINAL.has(t.status) || now() >= until || S.destroyed) resolve();
-        else setTimeout(look, 100);
-      };
-      look();
-    });
+  /** A refused start the owner left (no, or no answer): it goes, and nothing about it stays to catch a "stop". */
+  function dropRefused(pend) {
+    if (S.pendingTask !== pend) return;
+    S.pendingTask = null;
+    renderTask();
   }
 
-  /** "Chrome is busy with another task. Stop it first?": yes stops it and starts this one. */
+  /**
+   * "Chrome is busy with another task. Stop it first?": yes (or "stop it", "stop": the stop layer takes those
+   * and stopFromVoice() counts them as this yes) stops it and, once that is confirmed, starts this one; no, or
+   * no answer, leaves it (REDTEAM-VOICE-2).
+   */
   function askStopFirst(pend) {
     const adapter = v();
     const r = taskRefusal('busy');
-    const handle = quiet(
+    const busy = { pend, handle: null, taken: false };
+    S.busy = busy;
+    const over = () => {
+      if (S.busy === busy) S.busy = null;
+    };
+    busy.handle = quiet(
       () =>
         adapter.question({
           id: 'chrome-busy',
@@ -664,68 +698,175 @@ export function createChromeVoice(deps = {}) {
             { id: 'yes', label: 'Stop it', words: ['yes', 'yes stop it', 'stop it', 'yes please'] },
             { id: 'no', label: 'Leave it', words: ['no', 'leave it', 'no thanks', 'never mind', 'cancel'] },
           ],
-          onAnswer: async (id) => {
+          onAnswer: (id) => {
+            over();
+            if (busy.taken) return;
+            busy.taken = true;
             if (id !== 'yes') {
+              dropRefused(pend);
               tell('Okay, I’ll leave it.');
               return;
             }
-            const running = S.task;
-            await stopTask({ via: 'voice', quietly: true });
-            await stopped(running);
-            if (S.pendingTask !== pend) return;
-            pend.refused = false;
-            renderTask();
-            goTask(pend);
+            stopThenStart(pend);
           },
-          onExpire: () => {},
+          onExpire: () => {
+            // (A stop word dropped it on its way to the stop layer: that stop, in this same turn, is its yes.)
+            setTimeout(() => {
+              over();
+              if (!busy.taken) dropRefused(pend);
+            }, 0);
+          },
         }),
       null,
     );
-    if (!handle) tell(r.say, r.show, { level: 'warn' });
+    if (!busy.handle) {
+      over();
+      tell(r.say, r.show, { level: 'warn' });
+    }
   }
 
-  async function stopTask({ via = 'voice', quietly = false } = {}) {
+  /** The busy question's yes: the running task stops; once Jarvis for Chrome confirms it, the checked one starts. */
+  function stopThenStart(pend) {
+    const running = S.task && RUNNING.has(S.task.status) ? S.task : null;
+    const go = () => {
+      if (S.pendingTask !== pend || S.destroyed) return;
+      pend.refused = false;
+      renderTask();
+      goTask(pend);
+    };
+    if (!running) {
+      go();
+      return;
+    }
+    stopTask({ via: 'voice', quietly: true }).then((r) => {
+      if (r && r.confirmed) go();
+      else dropRefused(pend); // not confirmed: the owner was told where to press Stop; nothing new starts
+    });
+  }
+
+  /**
+   * Stop the running task. The card says "Stopping…", and the task is marked stopped only once Jarvis for
+   * Chrome confirms it: stopTask()'s { ok: true } (REDTEAM-LINK-1; a link that resolves nothing waits for the
+   * task's `done`), or the task's `done`. After 10 s unconfirmed: "I couldn't reach Chrome to stop it. Press
+   * Stop in its side panel." (the link keeps sending it meanwhile). One stop at a time: asking again joins it.
+   * quietly: no "Chrome stopped." when it is confirmed (the caller said its own line). -> Promise<{ none } |
+   * { confirmed: boolean }>
+   */
+  function stopTask({ via = 'voice', quietly = false } = {}) {
     const t = S.task;
     if (!t || !RUNNING.has(t.status)) {
       if (!quietly && via !== 'card') tell(NOTHING_TO_STOP_LINE);
-      return false;
+      return Promise.resolve({ none: true });
+    }
+    if (t.stopping) {
+      if (!quietly) t.stopping.quietly = false;
+      quiet(() => L().stopTask()); // sent again now (the link joins the stop it is already sending)
+      return t.stopping.promise;
     }
     t.stoppedByOwner = true;
+    const st = { quietly, warned: false, settled: false, timer: 0, promise: null, resolve: null };
+    st.promise = new Promise((resolve) => {
+      st.resolve = resolve;
+    });
+    t.stopping = st;
+    renderTask();
+    st.timer = setTimeout(() => {
+      if (st.settled || S.destroyed) return;
+      st.warned = true;
+      tell(TASK_STOP_UNREACHED_LINE, TASK_STOP_UNREACHED_LINE, { level: 'warn' });
+    }, STOP_CONFIRM_MS);
+    let res;
     try {
-      await L().stopTask();
+      res = L().stopTask();
     } catch {
-      /* the extension pauses a voice task by itself once the relay is gone for 20 s */
+      res = null;
     }
-    if (S.task === t && RUNNING.has(t.status)) {
-      t.status = 'stopped';
-      renderTask();
-    }
-    if (!quietly) tell('Chrome stopped.');
+    Promise.resolve(res).then(
+      (r) => {
+        if (r && typeof r === 'object' && r.ok === true) stopConfirmed(t);
+        else if (r && typeof r === 'object' && r.ok === false) stopFailed(t, r.reason);
+        // (void: an older link; the task's `done` confirms it)
+      },
+      () => stopFailed(t, 'offline'),
+    );
+    return st.promise;
+  }
+
+  /** Jarvis for Chrome confirmed the stop (its reply, or the task's end). `say`: false when it ended otherwise. */
+  function stopConfirmed(t, { say = true } = {}) {
+    const st = t && t.stopping;
+    if (!st || st.settled) return;
+    st.settled = true;
+    clearTimeout(st.timer);
+    t.stopping = null;
+    if (RUNNING.has(t.status)) t.status = 'stopped';
+    renderTask();
+    // Said when asked for, and always after "I couldn't reach Chrome…": the owner hears that it did stop.
+    if (say && (!st.quietly || st.warned) && !S.destroyed) tell('Chrome stopped.');
+    st.resolve({ confirmed: true });
+  }
+
+  /** The link gave up on the stop (unlinked, or 2 minutes unconfirmed). */
+  function stopFailed(t, reason) {
+    const st = t && t.stopping;
+    if (!st || st.settled) return;
+    st.settled = true;
+    clearTimeout(st.timer);
+    t.stopping = null;
+    renderTask();
+    if (!st.warned && !S.destroyed) tell(TASK_STOP_UNREACHED_LINE, TASK_STOP_UNREACHED_LINE, { level: 'warn' });
+    st.resolve({ confirmed: false, reason: reason || 'offline' });
+  }
+
+  /** A running task stopped quietly (a stop word said during another task's check): true when one runs. */
+  function stopRunning({ quietly = true } = {}) {
+    const t = S.task;
+    if (!t || !RUNNING.has(t.status)) return false;
+    stopTask({ via: 'voice', quietly });
     return true;
   }
 
   // ---- the link's events ------------------------------------------------------------------------
 
+  /**
+   * The budget Jarvis for Chrome reported (hello and status carry budgetUsd; MONEY-3, REDTEAM-VOICE-9): the
+   * price every check says from now on.
+   */
+  function learnBudget(st = linkState()) {
+    const b = Number(st && st.budgetUsd);
+    if (Number.isFinite(b) && b > 0) {
+      S.baseUsd = Math.round(b * 100) / 100;
+      S.budgetReported = true;
+    }
+  }
+
   /** The link's state changed: the task's status, its latest step and its cost. */
   function syncFromLink() {
     const st = linkState();
+    learnBudget(st);
     const lt = st.task && typeof st.task === 'object' ? st.task : null;
+    // A prompt belongs to the task that asked it: once the link reports that task gone (or another one), any
+    // prompt still open here was closed without a word (a worker restart, a lost prompt-closed: REDTEAM-VOICE-8).
+    const ltId = lt && lt.id ? String(lt.id) : '';
+    if (S.linkTaskId && S.linkTaskId !== ltId) closeAllPrompts();
+    S.linkTaskId = ltId;
     if (lt && lt.id) {
       if (!S.task || S.task.id !== lt.id) {
         if (S.task && S.task.id && RUNNING.has(S.task.status)) S.task.status = 'stopped';
-        S.task = { id: String(lt.id), status: 'running', text: '', narration: '', lastStep: '', costUsd: 0, limitUsd: S.baseUsd, answer: '', stoppedByOwner: false };
+        S.task = { id: String(lt.id), status: 'running', text: '', narration: '', lastStep: '', costUsd: 0, limitUsd: S.baseUsd, answer: '', stoppedByOwner: false, stopping: null };
       }
       const t = S.task;
       if (typeof lt.status === 'string' && !FINAL.has(t.status)) t.status = lt.status;
       if (typeof lt.text === 'string' && lt.text) t.text = lt.text;
       if (typeof lt.narration === 'string') t.narration = lt.narration;
       if (typeof lt.lastStep === 'string') t.lastStep = lt.lastStep;
-      if (Number.isFinite(Number(lt.costUsd))) t.costUsd = Number(lt.costUsd);
+      if (Number.isFinite(Number(lt.costUsd)) && lt.costUsd !== null) t.costUsd = Number(lt.costUsd);
       if (Number(lt.limitUsd) > 0) {
         t.limitUsd = Number(lt.limitUsd);
         if (!t.baseSeen) {
           t.baseSeen = true;
-          S.baseUsd = t.limitUsd; // the first limit of a task is its budget
+          // The first limit of a task is its budget, when Jarvis for Chrome hasn't said its budget itself.
+          if (!S.budgetReported) S.baseUsd = t.limitUsd;
         }
       }
       noteContext();
@@ -733,11 +874,13 @@ export function createChromeVoice(deps = {}) {
     renderTask();
   }
 
-  function onDone(d) {
+  /** A task ended (the link's `done`, or another window's: `relayed`). */
+  function onDone(d, { relayed = false } = {}) {
     const done = d && typeof d === 'object' ? d : {};
+    if (!relayed) share({ t: 'done', done });
     let t = S.task;
     if (!t || (done.id && t.id && String(done.id) !== t.id)) {
-      t = { id: String(done.id || ''), status: 'done', text: '', narration: '', lastStep: '', costUsd: 0, limitUsd: S.baseUsd, answer: '' };
+      t = { id: String(done.id || ''), status: 'done', text: '', narration: '', lastStep: '', costUsd: 0, limitUsd: S.baseUsd, answer: '', stopping: null };
       S.task = t;
     }
     const status = ['done', 'stopped', 'failed', 'limit'].includes(done.status) ? done.status : 'failed';
@@ -745,12 +888,17 @@ export function createChromeVoice(deps = {}) {
     t.status = status;
     t.answer = String(done.answer || '').slice(0, 2000);
     if (Number.isFinite(Number(done.costUsd))) t.costUsd = Number(done.costUsd);
+    // A stop on its way is confirmed: the task is over. ("Chrome stopped." only when it did stop.)
+    if (t.stopping) stopConfirmed(t, { say: status === 'stopped' });
+    // Its prompts are over too, whatever its end (REDTEAM-VOICE-8).
+    closeAllPrompts();
     noteContext();
     renderTask();
-    if (owner) return; // "Chrome stopped." was said when the owner stopped it
+    if (owner) return; // the owner's stop said its own lines
     const line = taskDoneLine({ status, answer: t.answer });
-    // Jarvis says the final answer; with Voice Mode closed, the card shows it (and a notification
-    // tells the owner while Jarvis is hidden).
+    // Jarvis says the final answer where the owner talks to him; with Voice Mode closed everywhere, the card
+    // shows it (and a notification tells the owner while Jarvis is hidden).
+    if (!v() && voiceElsewhere()) return;
     if (!v() && quiet(() => hidden(), false) && typeof notify === 'function') {
       quiet(() => notify({ tag: 'chrome-task', title: 'Chrome', body: sayable(line.show, 180), onClick: () => focusApp && focusApp() }));
       return;
@@ -760,17 +908,24 @@ export function createChromeVoice(deps = {}) {
 
   // ---- prompts (G5) -----------------------------------------------------------------------------
 
-  function onPrompt(raw) {
+  /**
+   * Chrome asks (the link's `prompt`; `relayed`: from the window holding the link, REDTEAM-VOICE-7). Every
+   * window shows its cards; the window where Voice Mode is open says it; with Voice Mode open nowhere, the
+   * window holding the link sends the notification.
+   */
+  function onPrompt(raw, { relayed = false } = {}) {
     if (!raw || typeof raw !== 'object' || !raw.promptId) return;
     const prompt = { ...raw, promptId: String(raw.promptId) };
+    if (!relayed) share({ t: 'prompt', prompt });
     let entry = S.prompts.get(prompt.promptId);
     if (!entry) {
-      entry = { prompt, hash: prompt.hash, views: new Set(), handle: null, notified: false, answering: false, closing: 0, shownAt: now() };
+      entry = { prompt, hash: prompt.hash, views: new Set(), handle: null, notified: false, answering: false, closing: 0, shownAt: now(), direct: !relayed };
       S.prompts.set(prompt.promptId, entry);
     } else {
       entry.prompt = prompt;
       entry.hash = prompt.hash; // a changed prompt is said again before a yes counts (update)
       entry.shownAt = now();
+      if (!relayed) entry.direct = true;
     }
     if (S.task && RUNNING.has(S.task.status)) S.task.status = 'waiting';
     renderTask();
@@ -801,9 +956,11 @@ export function createChromeVoice(deps = {}) {
   /** The answers Voice Mode's prompt channel takes for this prompt, with their checks. */
   function channelAnswers(entry) {
     const hiddenNow = quiet(() => hidden(), false);
+    // "Spend more" adds one more budget: the one Jarvis for Chrome reported, else this task's own first one.
+    const base = Number(S.baseUsd) > 0 ? S.baseUsd : S.task && Number(S.task.limitUsd) > 0 ? S.task.limitUsd : undefined;
     return promptAnswers(entry.prompt).map((a) => {
       if (!a.check) return a;
-      const lines = approvingLine(entry.prompt, a, { task: S.task, baseUsd: S.baseUsd });
+      const lines = approvingLine(entry.prompt, a, { task: S.task, baseUsd: base });
       return { ...a, check: { show: lines.show, say: lines.say, ms: approveCheckMs({ hidden: hiddenNow }) } };
     });
   }
@@ -836,6 +993,9 @@ export function createChromeVoice(deps = {}) {
         return;
       }
     }
+    // Another window has Voice Mode open: it says the prompt there. With Voice Mode open nowhere, only the
+    // window holding the link (which heard it first) sends the notification: one for the owner, not one a window.
+    if (voiceElsewhere() || !entry.direct) return;
     if (!entry.notified && typeof notify === 'function') {
       entry.notified = true;
       const n = promptNotice(entry.prompt);
@@ -874,7 +1034,11 @@ export function createChromeVoice(deps = {}) {
       return;
     }
     if (answer.stopTask) {
-      await stopTask({ via: 'voice' });
+      // "Stop Chrome": "Stopping Chrome…", then "Chrome stopped." once confirmed. Quiet when Voice Mode said its
+      // own line (a stop said during an approval's check: "Okay, not approved. Chrome is stopping.").
+      const quietly = !!(info && info.quiet);
+      if (!quietly && S.task && RUNNING.has(S.task.status) && !S.task.stopping) tell(TASK_STOPPING_LINE);
+      await stopTask({ via: 'voice', quietly });
       return;
     }
     if (!answer.choice) return;
@@ -910,6 +1074,13 @@ export function createChromeVoice(deps = {}) {
       return;
     }
     if (!open) return;
+    // The question isn't open any more in Jarvis for Chrome (not an answer refused for being too late, which
+    // leaves it open): it closes here too, and Jarvis says so (REDTEAM-VOICE-8).
+    if (res && res.reason === 'gone' && !/too late/i.test(String(res.why || ''))) {
+      closePromptEntry(entry, 'No longer open.');
+      if (via === 'voice' || v()) tell(GONE_LINE, GONE_LINE, { level: 'warn' });
+      return;
+    }
     // Refused (the policy, a changed prompt, too soon) or not delivered: the prompt stays open.
     const why = (res && (res.why || res.reason)) || '';
     const line = refusedLine(why === 'offline' ? 'Chrome couldn’t be reached' : why);
@@ -917,21 +1088,83 @@ export function createChromeVoice(deps = {}) {
     if (via === 'voice' || v()) tell(line, line, { level: 'warn' });
   }
 
-  function onPromptClosed(id) {
-    const entry = S.prompts.get(String(id && typeof id === 'object' ? id.promptId : id));
+  /** The prompt was answered or closed in Jarvis for Chrome (the link's `prompt-closed`, or another window's). */
+  function onPromptClosed(id, { relayed = false } = {}) {
+    const promptId = String(id && typeof id === 'object' ? id.promptId : id);
+    if (!relayed) share({ t: 'prompt-closed', promptId });
+    const entry = S.prompts.get(promptId);
     if (!entry) return;
+    closePromptEntry(entry, 'Answered.');
+  }
+
+  /** A prompt is over here: its handle in Voice Mode, its notification and its cards ("Answered.", …) go. */
+  function closePromptEntry(entry, line) {
+    if (S.prompts.get(entry.prompt.promptId) !== entry) return;
     S.prompts.delete(entry.prompt.promptId);
     if (entry.handle && typeof entry.handle.close === 'function') quiet(() => entry.handle.close());
     entry.handle = null;
     closeNoticeOf(entry);
     for (const view of entry.views) {
-      view.closed('Answered.');
+      view.closed(line);
       setTimeout(() => view.destroy(), CLOSED_CARD_MS);
     }
     if (S.task && S.task.status === 'waiting' && ![...S.prompts.values()].length) S.task.status = 'running';
     renderTask();
     // Voice Mode's channel holds one prompt at a time: one still open (rare) goes back to it.
     for (const other of S.prompts.values()) if (!other.handle) toVoiceOrNotice(other);
+  }
+
+  /** Every prompt still open here is over: its task ended, or the link reports another (REDTEAM-VOICE-8). */
+  function closeAllPrompts() {
+    for (const entry of [...S.prompts.values()]) closePromptEntry(entry, 'No longer open.');
+  }
+
+  // ---- this device's other windows (REDTEAM-VOICE-7) ------------------------------------------------
+
+  /** Tell the other windows (the link's events this window heard, and whether Voice Mode is open here). */
+  function share(message) {
+    if (!chan || S.destroyed) return;
+    quiet(() => chan.postMessage({ ...message, from: me }));
+  }
+
+  function onChannel(m) {
+    if (!m || typeof m !== 'object' || m.from === me || S.destroyed) return;
+    const from = String(m.from || '');
+    switch (m.t) {
+      case 'hello':
+        S.peers.delete(from);
+        share({ t: 'voice', on: !!v() });
+        // A window opened while a prompt waits: it gets the prompts this one heard from the link.
+        for (const entry of S.prompts.values()) if (entry.direct) share({ t: 'prompt', prompt: entry.prompt });
+        break;
+      case 'voice':
+        S.peers.set(from, { voice: m.on === true, at: now() });
+        // Voice Mode closed there: a prompt it would have said needs its notification here (the link's window).
+        if (m.on !== true) for (const entry of S.prompts.values()) if (!entry.handle) toVoiceOrNotice(entry);
+        break;
+      case 'bye':
+        S.peers.delete(from);
+        for (const entry of S.prompts.values()) if (!entry.handle) toVoiceOrNotice(entry);
+        break;
+      case 'prompt':
+        onPrompt(m.prompt, { relayed: true });
+        break;
+      case 'prompt-closed':
+        onPromptClosed(m.promptId, { relayed: true });
+        break;
+      case 'done':
+        onDone(m.done, { relayed: true });
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Voice Mode is open in another window of this device (it says Chrome's prompts and news there). */
+  function voiceElsewhere() {
+    const fresh = now() - PEER_FRESH_MS;
+    for (const p of S.peers.values()) if (p.voice && p.at >= fresh) return true;
+    return false;
   }
 
   // ---- what the router runs ---------------------------------------------------------------------
@@ -954,12 +1187,25 @@ export function createChromeVoice(deps = {}) {
       case 'chrome-ask':
         return ask(surface);
       case 'chrome-stop': {
-        // A task still in its check: withdrawn, nothing sent.
-        if (cancelCheck('stop', { quietly: true })) return { ack: TASK_CANCELLED_LINE, show: TASK_CANCELLED_LINE };
-        const t = S.task;
-        if (!t || !RUNNING.has(t.status)) return { ack: NOTHING_TO_STOP_LINE, show: NOTHING_TO_STOP_LINE };
-        stopTask({ via: surface === 'voice' ? 'voice' : 'card', quietly: true });
-        return { ack: 'Chrome stopped.', show: 'Chrome stopped.' };
+        // "Stop Chrome": a task still in its check is withdrawn (nothing sent), and a task that runs stops:
+        // "Stopping Chrome…", then "Chrome stopped." once Jarvis for Chrome confirms it.
+        const out = stopWords({ via: surface === 'voice' ? 'voice' : 'card', say: true });
+        const line = stopLine(out, { named: true });
+        return { ack: line, show: line };
+      }
+      case 'chrome-check-typed': {
+        // Typed (the chat, a hologram's or Optics' field) while a task's countdown runs or a prompt's card waits
+        // (REDTEAM-VOICE-5, -14): the same words as by voice.
+        if (a.how === 'go') {
+          startNow();
+          return { ack: '', show: '' };
+        }
+        if (a.how === 'keep') return { ack: '', show: '' }; // it counts on
+        if (a.how === 'deny') return denyFromTyped();
+        if (a.how === 'card') return { ack: CARD_ANSWERS_LINE, show: CARD_ANSWERS_LINE };
+        const out = a.stop ? stopWords({ via: 'card', say: false }) : { withdrawn: cancelCheck('typed', { quietly: true }) };
+        const line = stopLine(out, { named: !!a.stop });
+        return { ack: line, show: line };
       }
       case 'chrome-status': {
         const open = [...S.prompts.values()].pop();
@@ -974,6 +1220,54 @@ export function createChromeVoice(deps = {}) {
       default:
         return null; // 'chrome-check' and the prompt's answers are Voice Mode's own (its prompt channel)
     }
+  }
+
+  /**
+   * A stop word for Chrome ("stop Chrome", a bare "stop", a stop typed during a countdown): a check is
+   * withdrawn (nothing sent) and a task that runs stops, both. Right after "Chrome is busy with another task.
+   * Stop it first?", "stop it" (which the stop layer takes) is that question's yes: the running task stops
+   * and, once confirmed, the checked one starts (REDTEAM-VOICE-2). say: "Chrome stopped." once confirmed.
+   * -> { withdrawn, stopping, busyYes, none }
+   */
+  function stopWords({ via = 'voice', say = false } = {}) {
+    const busy = S.busy;
+    if (busy && !busy.taken && S.pendingTask === busy.pend && busy.pend.refused) {
+      busy.taken = true;
+      S.busy = null;
+      if (busy.handle && typeof busy.handle.cancel === 'function') quiet(() => busy.handle.cancel());
+      stopThenStart(busy.pend);
+      return { withdrawn: false, stopping: true, busyYes: true, none: false };
+    }
+    const withdrawn = cancelCheck('stop', { quietly: true });
+    const t = S.task;
+    const stopping = !!(t && RUNNING.has(t.status));
+    let confirmed = false;
+    if (stopping) {
+      // Quiet at first: the caller's line comes first. Confirmed at once (rare): that line says it stopped;
+      // otherwise, when asked for, "Chrome stopped." follows once it is confirmed.
+      stopTask({ via, quietly: true });
+      if (t.stopping) {
+        if (say) t.stopping.quietly = false;
+      } else confirmed = !RUNNING.has(t.status);
+    }
+    return { withdrawn, stopping, busyYes: false, none: !withdrawn && !stopping, ...(confirmed ? { confirmed: true } : {}) };
+  }
+
+  /** What a stop word gets said back, from what it did. */
+  function stopLine(out, { named = false } = {}) {
+    if (!out || out.none) return NOTHING_TO_STOP_LINE;
+    if (!out.stopping) return out.withdrawn ? TASK_CANCELLED_LINE : NOTHING_TO_STOP_LINE;
+    const stopping = out.confirmed ? 'Chrome stopped.' : named ? TASK_STOPPING_LINE : 'Chrome is stopping.';
+    return out.withdrawn ? `Okay, nothing sent. ${stopping}` : stopping;
+  }
+
+  /** "Deny", "cancel" or "no" typed while a prompt's card waits: the card's no, for its newest prompt. */
+  function denyFromTyped() {
+    const entry = [...S.prompts.values()].pop();
+    const no = entry ? promptAnswers(entry.prompt).find((x) => x.id === 'deny' && x.choice) : null;
+    if (!entry || !no) return { ack: NOTHING_ASKED_LINE, show: NOTHING_ASKED_LINE };
+    send(entry, no, 'card');
+    return { ack: DENIED_LINE, show: DENIED_LINE };
   }
 
   /** "Click around for me": "What should I do in Chrome?", and the answer is the task (checked). */
@@ -1017,15 +1311,19 @@ export function createChromeVoice(deps = {}) {
   function state() {
     const st = linkState();
     const pend = S.pendingTask && !S.pendingTask.done && !S.pendingTask.cancelled && !S.pendingTask.refused ? S.pendingTask : null;
-    const t = pend ? { id: S.task ? S.task.id : '', status: 'starting', text: pend.text } : S.task ? { id: S.task.id, status: S.task.status, text: S.task.text } : null;
+    // A task over reports done, stopped or failed (its stop layer and the router's words know those).
+    const over = (s) => (s === 'limit' ? 'stopped' : s === 'error' || s === 'interrupted' ? 'failed' : s);
+    const t = pend ? { id: S.task ? S.task.id : '', status: 'starting', text: pend.text } : S.task ? { id: S.task.id, status: over(S.task.status), text: S.task.text } : null;
     // lastTask: the latest task, finished too ("now add the second one too" carries on its chat).
-    const last = S.task && S.task.id ? { id: S.task.id, status: S.task.status, text: S.task.text } : null;
-    return { linked: !!st.linked, online: !!st.online, task: t, lastTask: last, contextUntil: S.contextUntil };
+    const last = S.task && S.task.id ? { id: S.task.id, status: over(S.task.status), text: S.task.text } : null;
+    // checking: a task's countdown runs (typed words take it too: REDTEAM-VOICE-5); waiting: prompts on their cards.
+    return { linked: !!st.linked, online: !!st.online, task: t, lastTask: last, contextUntil: S.contextUntil, checking: !!pend, waiting: S.prompts.size };
   }
 
-  /** Voice Mode opened, closed, slept or woke: cards and prompts follow it. */
+  /** Voice Mode opened, closed, slept or woke: cards and prompts follow it (and the other windows hear of it). */
   function voiceChanged() {
     const on = !!v();
+    if (on !== S.voiceOn) share({ t: 'voice', on });
     if (!on) {
       dropVoiceViews();
       for (const entry of S.prompts.values()) {
@@ -1067,6 +1365,19 @@ export function createChromeVoice(deps = {}) {
       if (S.destroyed || attach()) clearInterval(attachTimer);
     }, 1000);
   }
+  // This device's other Jarvis windows (REDTEAM-VOICE-7): the window holding the link passes on what it hears,
+  // and each says whether Voice Mode is open there (again every 30 s while it is).
+  let beatTimer = 0;
+  chan = typeof channelDep === 'function' ? quiet(() => channelDep(), null) : channelDep;
+  if (chan && typeof chan.postMessage === 'function') {
+    const onMessage = (e) => onChannel(e && e.data);
+    if (typeof chan.addEventListener === 'function') chan.addEventListener('message', onMessage);
+    else chan.onmessage = onMessage;
+    share({ t: 'hello' });
+    beatTimer = setInterval(() => {
+      if (S.voiceOn) share({ t: 'voice', on: true });
+    }, PEER_BEAT_MS);
+  } else chan = null;
 
   return {
     run,
@@ -1077,19 +1388,24 @@ export function createChromeVoice(deps = {}) {
     /** "Start now": the task's check ends at once. */
     startNow: () => startNow(),
     /**
-     * A bare "stop" (voice's stop layer, which says its own line): a check is withdrawn, a running task
-     * stopped, quietly.
+     * A bare "stop" (voice's stop layer, which says its own line from what this did): a check is withdrawn
+     * and a running task stopped, quietly (after a busy refusal: the busy question's yes). -> { withdrawn,
+     * stopping, busyYes, none }
      */
-    stopFromVoice: () => {
-      if (cancelCheck('stop', { quietly: true })) return true;
-      return stopTask({ via: 'voice', quietly: true });
-    },
+    stopFromVoice: () => stopWords({ via: 'voice', say: false }),
     /** Whether a check for a task is on screen (the router's "check" state). */
     checking: () => !!(S.pendingTask && !S.pendingTask.done && !S.pendingTask.cancelled && !S.pendingTask.refused),
+    /** This window is going away (pagehide): the other windows stop counting on its Voice Mode. */
+    bye: () => share({ t: 'bye' }),
     destroy() {
+      share({ t: 'bye' });
       S.destroyed = true;
       clearTimeout(S.sayTimer);
       clearInterval(attachTimer);
+      clearInterval(beatTimer);
+      if (chan && typeof chan.close === 'function') quiet(() => chan.close());
+      chan = null;
+      if (S.task && S.task.stopping) clearTimeout(S.task.stopping.timer);
       if (S.pendingTask) clearTimeout(S.pendingTask.timer);
       for (const off of offs) if (typeof off === 'function') quiet(off);
       for (const view of S.taskViews) view.destroy();

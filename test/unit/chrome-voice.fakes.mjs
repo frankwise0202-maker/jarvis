@@ -129,8 +129,8 @@ export function createFakeChromeLink({ linked = true, online = true, voiceApprov
       if (!state.online) return { ok: false, reason: 'offline' };
       return { ok: true, site: new URL(url).hostname.replace(/^www\./, '') };
     },
-    async startTask({ text, chat } = {}) {
-      calls.startTask.push({ text, chat });
+    async startTask({ text, chat, limitUsd } = {}) {
+      calls.startTask.push(limitUsd === undefined ? { text, chat } : { text, chat, limitUsd }); // (limitUsd: the price the owner heard)
       if (!state.linked) return { ok: false, reason: 'unlinked' };
       if (!state.online) return { ok: false, reason: 'offline' };
       if (typeof startReply === 'function') {

@@ -403,14 +403,24 @@ export function matchChromeStop(text, state = {}) {
   return null;
 }
 
-/** "What are you doing in Chrome?": the latest step (free, local). */
-export function matchChromeStatus(text) {
+/**
+ * "What are you doing in Chrome?": the latest step (free, local). The bare "how's it going?" is an everyday
+ * greeting: it is Chrome's only while a task runs or waits (`state.chrome.task`), or with "Chrome" or "the
+ * task" in it (REDTEAM-VOICE-13).
+ */
+export function matchChromeStatus(text, state = {}) {
   const p = parse(text);
   if (!p) return null;
   const s = p.carrier ? `${p.s} in chrome` : p.s;
   const re =
     /^(?:what are you doing in chrome|what are you up to in chrome|whats happening in chrome|what is happening in chrome|whats going on in chrome|what is going on in chrome|(?:what|whats|what is) chrome doing|(?:how|hows|how is) chrome doing|(?:how|hows|how is) (?:it going|the task going|the chrome task going)(?: in chrome)?|(?:how|hows|how is) the chrome task(?: going)?|where (?:are you|is chrome) (?:at )?(?:in chrome|with the task)|what step is chrome on|what has chrome done(?: so far)?|whats chrome done(?: so far)?|is chrome (?:done|finished)(?: yet)?|chrome status|(?:whats |what is )?the status of the chrome task)$/;
-  return re.test(s) ? { do: 'chrome-status', free: true, undo: true } : null;
+  if (!re.test(s)) return null;
+  if (/^(?:how|hows|how is) it going$/.test(s)) {
+    const chrome = state && typeof state.chrome === 'object' && state.chrome ? state.chrome : {};
+    const t = chrome.task && typeof chrome.task === 'object' ? chrome.task : null;
+    if (!t || !['running', 'waiting', 'paused', 'starting'].includes(t.status)) return null;
+  }
+  return { do: 'chrome-status', free: true, undo: true };
 }
 
 // ------------------------------------------------------------------------------ what is said
@@ -442,11 +452,19 @@ export function taskCheckMs({ hidden = false } = {}) {
   return hidden ? TASK_CHECK_HIDDEN_MS : TASK_CHECK_MS;
 }
 
-/** The spoken (and shown) check: "Chrome, up to a dollar: <the task>. Say cancel to stop." */
-export function taskCheckLine({ text, limitUsd = DEFAULT_TASK_LIMIT_USD } = {}) {
+/** Said for the price while Jarvis for Chrome hasn't told the app its budget yet (MONEY-3, REDTEAM-VOICE-9). */
+export const UNKNOWN_BUDGET_SAID = 'your Chrome budget';
+
+/**
+ * The spoken (and shown) check: "Chrome, up to a dollar: <the task>. Say cancel to stop." The price is the
+ * budget Jarvis for Chrome reported (limitUsd); while none has been reported (null), "up to your Chrome
+ * budget". Typed (`typed`: the chat, a hologram's or Optics' field), nothing listens: "Press Cancel to stop."
+ */
+export function taskCheckLine({ text, limitUsd = DEFAULT_TASK_LIMIT_USD, typed = false } = {}) {
   const words = String(text ?? '').replace(/\s+/g, ' ').trim();
   const stop = /[?!]$/.test(words) ? '' : '.';
-  return `Chrome, up to ${dollarsSaid(limitUsd)}: ${words}${stop} Say cancel to stop.`;
+  const price = Number(limitUsd) > 0 ? dollarsSaid(limitUsd) : UNKNOWN_BUDGET_SAID;
+  return `Chrome, up to ${price}: ${words}${stop} ${typed ? 'Press Cancel to stop.' : 'Say cancel to stop.'}`;
 }
 
 export const TASK_ASK_LINE = 'What should I do in Chrome?';
@@ -454,6 +472,12 @@ export const TASK_STARTED_LINE = 'Chrome is on it.';
 export const TASK_CANCELLED_LINE = 'Okay, nothing sent to Chrome.';
 export const NOTHING_TO_STOP_LINE = 'Okay.';
 export const TASK_STOPPED_LINE = 'Stopped Chrome.';
+/** A stop on its way (the task is marked stopped only once Jarvis for Chrome confirms it). */
+export const TASK_STOPPING_LINE = 'Stopping Chrome…';
+/** A stop not confirmed after 10 s (REDTEAM-LINK-1's resends go on meanwhile). */
+export const TASK_STOP_UNREACHED_LINE = 'I couldn’t reach Chrome to stop it. Press Stop in its side panel.';
+/** On a phone: Chrome tasks run from the Mac (REDTEAM-VOICE-13). */
+export const TASK_PHONE_LINE = { show: 'Jarvis for Chrome works with Jarvis on your Mac.', say: 'Chrome tasks work from Jarvis on your Mac.' };
 
 /**
  * Why a task couldn't start (startTask's reason, contract (f)), as { show, say }: `show` on screen

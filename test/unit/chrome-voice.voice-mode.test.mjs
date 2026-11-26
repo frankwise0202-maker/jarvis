@@ -317,6 +317,68 @@ test('REDTEAM-VOICE-12: "No, I said find a 5K monitor under $300" during the che
   assert.ok(!j.said().some((x) => /Chrome, up to a dollar: open the camera/.test(x)));
 });
 
+// ---- REDTEAM-VOICE-2, -4: stop reaches the running task -------------------------------------------------------
+
+test('REDTEAM-VOICE-4: "stop" during a second task\'s check while the first runs: nothing sent, and the first stops ("Okay, nothing sent. Chrome is stopping.")', async (t) => {
+  const s = await setup(t, { script: (n) => (n === 0 ? TASK_SAID : null) });
+  await s.until(() => s.said().includes('Chrome is on it.'), 'the first task started');
+  await s.env.advance(3000);
+  // The owner taps and says a second task; during its countdown, "Stop."
+  s.next({ text: 'In Chrome, find a USB-C hub.', at: 400 });
+  s.next({ text: 'Stop.', at: 400 });
+  s.vm.tap();
+  await s.until(() => s.said().includes('Okay, nothing sent. Chrome is stopping.'), 'the line');
+  await s.env.advance(3000);
+  assert.equal(s.fake.calls.startTask.length, 1, 'the second task was never sent');
+  assert.equal(s.fake.calls.stopTask, 1, 'the first one was stopped');
+  assert.equal(s.cv.state().task.status, 'stopped', 'and it is stopped once Jarvis for Chrome confirmed it');
+});
+
+test('REDTEAM-VOICE-2: after "Chrome is busy with another task. Stop it first?", "Stop it." stops the running task and, once confirmed, starts the new one', async (t) => {
+  const s = await setup(t, { script: (n) => (n === 0 ? TASK_SAID : null) });
+  await s.until(() => s.said().includes('Chrome is on it.'), 'the first task started');
+  await s.env.advance(3000);
+  s.next({ text: 'In Chrome, find a USB-C hub.', at: 400 });
+  s.vm.tap();
+  await s.until(() => s.said().includes('Chrome is busy with another task. Stop it first?'), 'the busy question');
+  const q = s.env.log.spoken.find((x) => x.text === 'Chrome is busy with another task. Stop it first?');
+  await s.until(() => q.done, 'asked in full');
+  s.next({ text: 'Stop it.', at: 400 });
+  await s.until(() => s.fake.calls.stopTask === 1, 'the stop', 20000);
+  await s.until(() => s.fake.calls.startTask.length === 3, 'the new task started once the stop was confirmed', 20000);
+  assert.equal(s.fake.calls.startTask[2].text, 'find a USB-C hub');
+  assert.ok(s.said().includes('Chrome is stopping.'), `voice's stop says so (${JSON.stringify(s.said())})`);
+  // A later "stop" (no question open, the refusal long gone) still stops what runs.
+  await s.until(() => s.said().filter((x) => x === 'Chrome is on it.').length === 2, 'the second "Chrome is on it."');
+  await s.env.advance(3000);
+  s.next({ text: 'Stop.', at: 400 });
+  s.vm.tap();
+  await s.until(() => s.fake.calls.stopTask === 2, 'the second stop', 20000);
+});
+
+test('REDTEAM-VOICE-2: "No thanks." to the busy question, then "stop Chrome": the running task stops (the refused one never swallows it)', async (t) => {
+  const s = await setup(t, { script: (n) => (n === 0 ? TASK_SAID : null) });
+  await s.until(() => s.said().includes('Chrome is on it.'), 'the first task started');
+  await s.env.advance(3000);
+  s.next({ text: 'In Chrome, find a USB-C hub.', at: 400 });
+  s.vm.tap();
+  await s.until(() => s.said().includes('Chrome is busy with another task. Stop it first?'), 'the busy question');
+  const q = s.env.log.spoken.find((x) => x.text === 'Chrome is busy with another task. Stop it first?');
+  await s.until(() => q.done, 'asked in full');
+  s.next({ text: 'No thanks.', at: 400 });
+  await s.until(() => s.said().includes('Okay, I’ll leave it.'), 'left');
+  await s.env.advance(3000);
+  // Jarvis for Chrome confirms a stop a moment later, as over the relay.
+  const stopNow = s.fake.link.stopTask;
+  s.fake.link.stopTask = () => new Promise((resolve) => setTimeout(() => resolve(stopNow()), 300));
+  s.next({ text: 'Stop Chrome.', at: 400 });
+  s.vm.tap();
+  await s.until(() => s.fake.calls.stopTask === 1, 'the stop', 20000);
+  await s.until(() => s.said().includes('Chrome stopped.'), '"Chrome stopped." once confirmed');
+  assert.ok(s.said().includes('Stopping Chrome…'), '"Stopping Chrome…" first');
+  assert.equal(s.fake.calls.startTask.length, 2, 'the refused task never started');
+});
+
 // ---- REDTEAM-VOICE-6: the prompt and an owner question waiting together ----------------------------------
 
 test('REDTEAM-VOICE-6: Chrome\'s question waiting while Jarvis speaks, then an owner question asked: both are said (neither replaces the other)', async (t) => {

@@ -42,14 +42,16 @@ export function register(router, deps = {}) {
     layer: 'stop',
     match: (text, state) => matchStopWord(text, state),
     run: (action) => {
+      // What each stop did, where it says (the Chrome target: { withdrawn, stopping }), shapes the line.
+      const did = {};
       for (const target of action.targets || []) {
         try {
-          call(deps.stopTarget, target);
+          did[target] = call(deps.stopTarget, target);
         } catch (err) {
           console.warn(`[voice] couldn't stop ${target}`, err);
         }
       }
-      return { say: appCommandLine(action) };
+      return { say: appCommandLine(action, { stopped: did }) };
     },
   });
 
