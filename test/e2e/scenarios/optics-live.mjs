@@ -10,6 +10,8 @@
 //   optics-live-voice     iPhone 13, Voice Mode: "live view" with the camera closed asks for the tap;
 //                         Look then opens Optics and starts it; Voice Mode says the line; "that's
 //                         enough" stops it; the keys fit portrait and held sideways
+//   optics-live-voice-mac Mac, Voice Mode, the camera allowed: "keep watching" with Optics closed opens it
+//                         over Voice Mode and the live view starts by itself; the LIVE pill ends it
 //   optics-live-cap       Mac: 95¢ already spent this hour (another tab): one look every 5 s, then
 //                         paused at $1 with the time it can go on; a reload keeps the spend (it
 //                         starts paused); Resume works from then, back to one look a second
@@ -50,6 +52,8 @@ const meterText = (t, page = t.page) => t.text(page.locator(tid('optics-liveview
 const spentOf = async (page) => Number(await page.locator(tid('optics-liveview-meter')).getAttribute('data-spent-usd')) || 0;
 const noteText = (t, page = t.page) => t.text(page.locator(tid('optics-liveview-note')));
 const said = (page) => page.evaluate(() => (window.__voice ? window.__voice.said.slice() : []));
+// The camera's own tracks (Voice Mode's microphone may hold an audio track meanwhile).
+const liveVideoTracks = (page) => page.evaluate(() => (window.__opticsTracks || []).filter((x) => x.api === 'getUserMedia' && x.track.kind === 'video' && x.track.readyState === 'live').length);
 const userText = (r) => (r.body.messages[0].content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
 
 async function waitOn(t, on, page = t.page, message = '') {
@@ -299,6 +303,38 @@ export default [
         await page.locator(tid('optics-live-pill')).click();
         await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
       });
+    },
+  },
+  {
+    name: 'optics-live-voice-mac',
+    title: 'Live view by voice on a Mac (Voice Mode, the camera allowed): "keep watching" with Optics closed opens it over Voice Mode and the live view starts by itself; the LIVE pill turns it all off',
+    device: 'mac',
+    timeout: 90000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await page.addInitScript(installFakeSpeech);
+      await page.addInitScript(() => {
+        window.__voice.queue = ['Keep watching.'];
+      });
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      configureLive(t.mock, { scene: SCENE });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await t.visible('voice-mode');
+      await t.visible('optics', { timeout: 20000, message: 'Optics to open by voice (the camera is allowed on this Mac)' });
+      await waitLive(t);
+      await waitOn(t, true, page, 'the live view to start by itself once the camera is live');
+      await waitRequests(t, 2);
+      t.assert(t.requests('lead').length === 0, 'the words were not sent to Jarvis');
+      await t.waitFor(async () => (await said(page)).some((s) => /^Live view on\./.test(s)), { timeout: 15000, message: async () => `Voice Mode to say the live view is on (${JSON.stringify(await said(page))})` });
+      t.assert((await t.count('voice-mode')) === 1, 'Voice Mode stays open underneath');
+      // The LIVE pill: Optics closes, the live view stops, the camera is released.
+      await page.locator(tid('optics-live-pill')).click();
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+      t.assert((await liveVideoTracks(page)) === 0, `the camera is released (${await liveVideoTracks(page)} live video tracks)`);
+      await noMoreLooks(t, 'Optics closed', 2500);
     },
   },
   {

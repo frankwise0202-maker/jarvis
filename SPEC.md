@@ -3763,7 +3763,8 @@ hour). Unit `optics.liveview` (the words, the voice rule, the mock and its valid
 `optics-live` (Mac, read aloud: the key beside Watch, about one look a second, the request, caption, lines spoken
 once and only shown within 15 s, meter, month; stop by the key, the Optics mic, typed words, Esc, the LIVE pill),
 `optics-live-voice` (iPhone Voice Mode: the tap rule, Voice Mode says the line, "that's enough"; the keys in portrait,
-sideways and at 320 px), `optics-live-cap` (95¢ spent elsewhere: 5 s apart, paused at $1 with the time, a reload keeps
+sideways and at 320 px), `optics-live-voice-mac` (Mac Voice Mode, the camera allowed: "keep watching" opens Optics and
+starts the live view), `optics-live-cap` (95¢ spent elsewhere: 5 s apart, paused at $1 with the time, a reload keeps
 it, Resume from then), `optics-live-hidden` (slow replies: one in flight; hidden mid-look: stopped, camera released,
 nothing after), `optics-live-ratelimit` (429 with retry-after 3 s, then 529), `optics-live-look` (a question: a Look on
 the main model, paused, Live resumes, its cost counted), `optics-live-hour` (an 8 s session ends by itself and says
