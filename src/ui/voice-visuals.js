@@ -10,6 +10,10 @@
 //                              "Shall I draw a blueprint of the rotor? It costs about 15 cents."
 //   confirmReply(text)         the owner's answer to it: 'yes' | 'no' | null (not an answer)
 //   spokenCost('≈ $0.15')      "about 15 cents"
+//   partHint(words, command)   v8.1 (R10): inside a hologram its part names win, so "open the camera"
+//                              selects the laptop's camera; the hint after the line says how to reach
+//                              the owner's own camera: "Say 'open Optics' for your camera." ('' for none)
+//   nothingBackAck()           v8.1 (C3): "go back" with a hologram and nothing to go back to
 //
 // `command` is what matchHologramCommand (src/lib/hologram-commands.js) returns: { action, partId?,
 // partName?, view?, query? }, or { action: 'which-part', for: 'isolate'|'focus' } (the viewer:
@@ -89,6 +93,27 @@ export function commandAck(command) {
       // close / close-blueprint: the viewer or sheet is gone; blueprint: its outcome speaks for it.
       return '';
   }
+}
+
+// The camera words of Optics (open, turn on, start, show me the camera; camera on) that a camera part
+// of the hologram on screen takes first (R10).
+const CAMERA_WORDS = /\b(?:open|turn on|start|show me|show|switch on|bring up|pull up)\b(?: up)?(?: the| my| your)? (?:camera|webcam|web cam)\b|^\W*(?:camera|webcam) on\W*$/i;
+
+/**
+ * R10: a part of the hologram on screen took words that would otherwise open the camera ("open the
+ * camera" selected the laptop's camera module): the hint said after the line. '' for anything else.
+ */
+export function partHint(words, command) {
+  const cmd = command && typeof command === 'object' ? command : {};
+  if (!['select', 'focus', 'isolate'].includes(cmd.action)) return '';
+  const said = String(words ?? '');
+  if (/\boptics\b/i.test(said) || !CAMERA_WORDS.test(said)) return '';
+  return "Say 'open Optics' for your camera.";
+}
+
+/** C3: "go back" with a hologram on screen and no sheet over it (nothing is swallowed silently). */
+export function nothingBackAck() {
+  return "There's nothing to go back to.";
 }
 
 /** Said when "blueprint the <part>" opened a blueprint that was already saved (no new build). */
