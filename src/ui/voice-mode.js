@@ -421,7 +421,7 @@ function createVoiceMode(opts) {
   //   hiddenIdle hidden, and the owner's follow-up window is over (a hidden listen ended with nothing, or he was
   //              hidden while nothing was under way): Chrome's lines open no microphone (PRIVACY-1). A tap, a
   //              key, a wake, a barge-in, the owner's words or Jarvis on screen again end it.
-  const C = { check: null, saidAt: 0, saidKey: 0, greeting: null, lastDone: null, hint: '', pump: 0, pendingPrompt: null, unheard: 0, hiddenIdle: false };
+  const C = { check: null, saidAt: 0, saidKey: 0, greeting: null, lastDone: null, hint: '', pump: 0, pendingPrompt: null, unheard: 0, hiddenIdle: false, sayings: 0 };
   // holdCapMs (v8.1, tests only: 'jarvis.dev.voice' through app.js): a shorter hold, never a longer one.
   const hold = createVoiceHold(Number(holdCapMs) > 0 ? { capMs: Math.min(HOLD_CAP_MS, Number(holdCapMs)) } : {});
   const listenHidden = typeof listenWhileHidden === 'function' ? listenWhileHidden : () => false;
@@ -3878,6 +3878,8 @@ function createVoiceMode(opts) {
     C.saidKey = p.key;
     C.saidAt = 0; // the window opens when this saying ends
     C.unheard = 0;
+    if (C.pendingPrompt && C.pendingPrompt.key === p.key) C.pendingPrompt = null; // said now: not again from its slot
+    const saying = ++C.sayings; // (an older saying it replaces ends 'cancelled': that one isn't cut short)
     const yes = Array.isArray(p.answers) && p.answers.some((a) => a && a.check);
     const rule = chromeListenRule();
     const tail = rule === 'withheld' && yes ? ' Tap me to answer.' : '';
@@ -3891,12 +3893,12 @@ function createVoiceMode(opts) {
       return;
     }
     const listenAfter = rule !== 'listen' ? false : yes ? { noSpeechMs: ANSWER_WINDOW_MS } : null;
-    speak(line, 'ack', 0, { onEnd: (how) => promptSpoken(p, how, rule === 'withheld'), listenAfter });
+    speak(line, 'ack', 0, { onEnd: (how) => promptSpoken(p, how, rule === 'withheld', saying), listenAfter });
   }
 
-  function promptSpoken(p, how, unheard = false) {
+  function promptSpoken(p, how, unheard = false, saying = C.sayings) {
     const cur = prompts.current();
-    if (!cur || cur.key !== p.key) return;
+    if (!cur || cur.key !== p.key || saying !== C.sayings) return;
     if (how === 'done' || how === 'failed') {
       // Said in full (or the voice failed: shown is all there is). With no listen after it, its 30 s start when
       // the owner next listens (chromeListens).

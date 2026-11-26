@@ -989,13 +989,21 @@ export function createChromeVoice(deps = {}) {
         );
       }
       if (entry.handle) {
-        closeNoticeOf(entry);
+        // Behind other windows, a notification says Chrome is asking too: Voice Mode may say it with no microphone
+        // open for it (PRIVACY-1), so the owner may only see it there. On screen, Voice Mode and its card are enough.
+        if (quiet(() => hidden(), false)) noticeOf(entry);
+        else closeNoticeOf(entry);
         return;
       }
     }
     // Another window has Voice Mode open: it says the prompt there. With Voice Mode open nowhere, only the
     // window holding the link (which heard it first) sends the notification: one for the owner, not one a window.
     if (voiceElsewhere() || !entry.direct) return;
+    noticeOf(entry);
+  }
+
+  /** "Chrome asks: …" as a notification (once per prompt); its click brings Jarvis forward with the card. */
+  function noticeOf(entry) {
     if (!entry.notified && typeof notify === 'function') {
       entry.notified = true;
       const n = promptNotice(entry.prompt);

@@ -414,3 +414,17 @@ test('REDTEAM-VOICE-14: typed in the chat with a prompt\'s card waiting: a no go
   assert.deepEqual(t.fake.calls.answer, [{ promptId: 'p-cart', hash: 'h-cart-1', choice: 'cancel', via: 'card' }]);
   assert.equal(matchTypedChrome('approve', { chrome: { waiting: 0 } }), null, 'nothing waiting: not Chrome\'s');
 });
+
+// ---- PRIVACY-1: Chrome's question while Jarvis is hidden ----------------------------------------------------
+
+test('PRIVACY-1: Chrome\'s question while Jarvis is hidden (Voice Mode open): said there and a notification too (no microphone may follow it); on screen, no notification', async () => {
+  const hiddenT = setup({ hidden: true });
+  hiddenT.fake.prompt(PROMPTS.cart);
+  assert.equal(hiddenT.v.prompts.length, 1, 'Voice Mode\'s channel has it');
+  assert.equal(hiddenT.notices.length, 1, 'and a notification');
+  assert.equal(hiddenT.notices[0].title, 'Chrome asks');
+  const shown = setup({ hidden: false });
+  shown.fake.prompt(PROMPTS.cart);
+  assert.equal(shown.v.prompts.length, 1);
+  assert.equal(shown.notices.length, 0);
+});

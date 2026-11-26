@@ -236,6 +236,21 @@ test('MAC-1: Chrome\'s question cut short by a barge-in is said again by itself,
   assert.equal(s.said().filter((x) => x.startsWith('Chrome asks:')).length, 2, `said again (${JSON.stringify(s.said())})`);
 });
 
+test('MAC-1: a prompt cut by a tap, then "approve" in that listen: said again once (not again from its slot as well), then the yes counts', async (t) => {
+  const s = await setup(t);
+  await s.env.advance(1200);
+  s.fake.prompt(PROMPTS.cart);
+  await s.until(() => s.said().some((x) => x.startsWith('Chrome asks:')), 'the prompt said');
+  await s.env.advance(600);
+  s.next({ text: 'Approve.', at: 400 });
+  s.vm.tap(); // cut short: the owner wants to talk
+  await s.until(() => s.said().filter((x) => x.startsWith('Chrome asks:')).length === 2, 'said again before the yes counts');
+  const again = s.env.log.spoken.filter((x) => x.text.startsWith('Chrome asks:'))[1];
+  await s.until(() => again.done, 'said in full');
+  await s.env.advance(6000);
+  assert.equal(s.said().filter((x) => x.startsWith('Chrome asks:')).length, 2, `not a third time (${JSON.stringify(s.said())})`);
+});
+
 // ---- VT-MISSED-1: the home base hears the owner during the countdown ---------------------------------------
 
 test('VT-MISSED-1: with the home base hearing, its "speech" pauses the countdown, so a late "Cancel." withdraws it; no words after all: it goes on', async (t) => {
