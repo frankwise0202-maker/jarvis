@@ -102,6 +102,9 @@ import { register as registerChromeVoiceCommands } from './commands/chrome-voice
 import { register as registerWindowCommands } from './commands/windows.js';
 import { register as registerOpticsCommands } from './commands/optics.js';
 import { register as registerChromeCommands } from './commands/chrome.js';
+// v8.1 chrome-relay: Jarvis for Chrome, linked through the home base (SPEC §32.1).
+import { installChromeLink } from '../platform/chrome-link.js';
+import { notify as notifyOwner } from './attention.js';
 
 const { sttSupported, startListening } = stt;
 // Speech: the device voice (tts.js), or the opt-in natural voice (Kokoro in a Worker) when it
@@ -378,6 +381,21 @@ export async function startApp(rootEl) {
           }),
         null,
       );
+  // ---- chrome-relay ▸ Jarvis for Chrome, linked through the home base (v8.1, SPEC §32.1): `chromeLink` is
+  // app.chromeLink (contract (f)) for "pull this up in Chrome" and Chrome tasks by voice (pass it in your
+  // register() deps); Settings → Jarvis for Chrome gets `chromeLinkCtl.control`. Computers only; not in the demo.
+  const chromeLinkCtl = state.demo ? null : safe(() => installChromeLink({ getSettings, notice: (n) => chromeLinkNotice(n) }), null);
+  const chromeLink = chromeLinkCtl ? chromeLinkCtl.api : null;
+  /** Something Jarvis for Chrome did that no request is waiting for (D5: a task that started late was stopped). */
+  function chromeLinkNotice(n) {
+    const line = n && typeof n.line === 'string' ? n.line : '';
+    if (!line) return;
+    safe(() => toast(line, { level: 'warn', timeout: 8000 }));
+    const voice = safe(() => (voiceApi && isVoiceModeOpen() ? voiceApi : null), null);
+    if (voice && typeof voice.say === 'function') safe(() => voice.say(line));
+    else if (document.hidden) safe(() => notifyOwner({ tag: 'chrome-link', title: 'Jarvis', body: line }));
+  }
+  // ---- chrome-relay ◂
   const morningCard = brain
     ? safe(
         () =>
@@ -3657,6 +3675,7 @@ export async function startApp(rootEl) {
       // ---- optics ▸
       // ---- optics ◂
       // ---- chrome-relay ▸ (Jarvis for Chrome)
+      chromeLink: chromeLinkCtl ? chromeLinkCtl.control : null,
       // ---- chrome-relay ◂
     });
     const sheet = createSheet({
@@ -4117,6 +4136,10 @@ export async function startApp(rootEl) {
     // ---- optics ▸ (s.optics.mode 'aside', card, sceneChanged)
     // ---- optics ◂
     // ---- chrome-relay ▸ (s.chrome)
+    if (chromeLink) {
+      const c = safe(() => chromeLink.state(), null);
+      if (c) s.chrome = { ...(s.chrome || {}), linked: c.linked, online: c.online, task: c.task };
+    }
     // ---- chrome-relay ◂
     return local ? Object.assign(s, local) : s;
   }
@@ -4285,7 +4308,7 @@ export async function startApp(rootEl) {
     // optics (src/ui/commands/optics.js):
     register('optics', registerOpticsCommands, { ...shared });
     // chrome-relay (src/ui/commands/chrome.js):
-    register('chrome', registerChromeCommands, { ...shared });
+    register('chrome', registerChromeCommands, { ...shared, chromeLink, openSettings: (opts) => openSettings(opts) });
   }
   registerCommandModules();
 

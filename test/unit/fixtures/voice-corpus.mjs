@@ -169,10 +169,36 @@ export const OPTICS = {
 };
 
 // ==== chrome-relay ====================================================================================
+// src/ui/commands/chrome.js: the link's own words (free, local; voice and chat). Its state doesn't change what
+// matches, so the harness's states are enough.
 export const CHROME_RELAY = {
   must: [
+    ['is Jarvis for Chrome linked?', 'V0', 'chrome-link:chrome-link-status'],
+    ['Hey Jarvis, is Chrome linked?', 'V0', 'chrome-link:chrome-link-status'],
+    ['is Jarvis for Chrome online', 'V0', 'chrome-link:chrome-link-status'],
+    ['is Jarvis for Chrome still connected?', 'S', 'chrome-link:chrome-link-status'],
+    ['is the Chrome link working?', 'C0', 'chrome-link:chrome-link-status'],
+    ['are you connected to Chrome?', 'V0', 'chrome-link:chrome-link-status'],
+    ['Jarvis for Chrome status', 'V0', 'chrome-link:chrome-link-status'],
+    ['what is the status of Jarvis for Chrome', 'C0', 'chrome-link:chrome-link-status'],
+    ['link Jarvis for Chrome', 'V0', 'chrome-link:chrome-link-setup'],
+    ['please set up Jarvis for Chrome', 'C0', 'chrome-link:chrome-link-setup'],
+    ['connect Chrome to Jarvis', 'V0', 'chrome-link:chrome-link-setup'],
+    ['can you link Jarvis and Chrome for me', 'VH', 'chrome-link:chrome-link-setup'],
+    ['how do I link Jarvis for Chrome?', 'V0', 'chrome-link:chrome-link-setup'],
+    // Not in a hologram's field or Optics': there they are the Look's question or a follow-up.
+    ['is Jarvis for Chrome linked?', 'H0', null],
+    ['link Jarvis for Chrome', 'OT', null],
   ],
   not: [
+    'is Chrome better than Safari?',
+    'is Chrome slow on a Mac',
+    'how do I link two Google accounts',
+    'what does the Grammarly Chrome extension do',
+    'are you connected to the internet?',
+    'is the link in your answer safe',
+    'set up a new Chrome profile for my kids',
+    'how do I connect my printer to Chrome',
   ],
   states: {
   },

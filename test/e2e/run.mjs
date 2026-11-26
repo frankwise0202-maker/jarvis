@@ -67,6 +67,7 @@ import chromeTab from './scenarios/chrome-tab.mjs';
 // ---- optics ▸
 // ---- optics ◂
 // ---- chrome-relay ▸
+import chromeLink from './scenarios/chrome-link.mjs';
 // ---- chrome-relay ◂
 // ---- chrome-ext ▸
 // ---- chrome-ext ◂
@@ -105,6 +106,7 @@ const V81_SCENARIOS = [
   // ---- optics ▸
   // ---- optics ◂
   // ---- chrome-relay ▸
+  ...chromeLink,
   // ---- chrome-relay ◂
   // ---- chrome-ext ▸
   // ---- chrome-ext ◂

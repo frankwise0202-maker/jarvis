@@ -826,7 +826,22 @@ Buy and add it to the cart".
 
 ##### Linking
 
-<!-- v8.1: chrome-relay writes this part. -->
+Jarvis (in your usual Chrome) and Jarvis for Chrome (in its own profile) can't see each other, on purpose, so they
+leave each other messages on your home base. You link them once, on the Mac:
+
+1. Make sure Jarvis for Chrome is installed (above) and your home base is linked (**Settings → Home base**). It needs
+   Jarvis Core 1.3 or later, which it installs by itself (or run `jarvis-core update` on the Alienware).
+2. In Jarvis, open **Settings → Jarvis for Chrome**, press **Link**, then **Copy link code**.
+3. In the Jarvis window (the Chrome profile with Jarvis for Chrome), open its side panel, then **Settings → Voice
+   from Jarvis**, and paste the code. When Chrome asks, let Jarvis for Chrome reach your home base.
+4. Both sides now say **Linked · online**, and Jarvis clears the code from your clipboard. **Test** checks the link
+   any time, and so does asking "is Jarvis for Chrome linked?" ("link Jarvis for Chrome" brings you to its settings).
+
+The code works once, for 30 minutes: it holds the key that locks your messages, so don't share it. Keep the Jarvis
+window open (it can sit behind other windows): if it's closed, Settings says **Linked · offline**, "pull this up in
+Chrome" opens a normal tab instead, and Jarvis tells you he can't reach Jarvis for Chrome rather than start a task
+there. **Unlink** on either side ends the link. The link belongs to your Mac: on the iPhone, Settings → Jarvis for
+Chrome only points you there.
 
 ##### What to say
 
@@ -944,6 +959,11 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
 - **Photos** you attach are shrunk and stripped of their location data before they are sent.
   Like the rest of the conversation, they are kept on this device only (and are included in
   backups).
+- **Jarvis for Chrome through your home base.** Once you link Jarvis for Chrome, Jarvis and the extension leave
+  each other messages on your home base: the home base relays encrypted messages it can't read, kept 2 minutes in
+  memory (never on its disk or in its log). The key that locks them is made on your Mac and kept only in this
+  browser (like your API key: see "Who can read your key") and in the extension; it is never in backups or sync, so
+  the home base never has it.
 - Anyone who can unlock your device can use your Jarvis, so keep a passcode on your devices.
 
 ### Who can read your key
