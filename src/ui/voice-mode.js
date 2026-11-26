@@ -4568,8 +4568,8 @@ function createVoiceMode(opts) {
     // v8.1 (D3): what waited for the owner comes first ("Chrome is waiting for you: …"), then the greeting.
     const line = [...wakePendingLines(), greetingLine({ now: new Date(), name, home }), suggestionLine({ artist: music ? music.artist : '', part })].join(' ');
     W.line = line;
-    startCount(); // v8.1 (A6), MAC-R2-3: woken by "Hey Jarvis" (or on screen) the questions count from here; by claps
-    // in the background they go on from the last sessions
+    // v8.1 (A6), MAC-R2-3: the count started with the wake (startWake); MAC-R3-1: a "Hey Jarvis" heard since (the
+    // wake window's words, Standby's barge-in) started it again, and it stays so.
     if (music) {
       showMusicCard(music.segment, { fresh: true });
       S.noRelisten = false; // the offer waits for an answer, not for a tap

@@ -654,6 +654,38 @@ test('MAC-R3-3: a TV heard in every listen of three false claps wakes: at most 3
   }
 });
 
+// MAC-R3-1: after the brake, two claps and "Hey Jarvis" in the same breath: the owner called him, so the count starts
+// again (the wake window heard the wake words, or Standby's kept microphone did: barge-in), and the greeting keeps it.
+test('MAC-R3-1: braked, claps with "Hey Jarvis" heard by the wake window: the question in the offer’s listen is answered', async (t) => {
+  const cases = [(n) => (n === 0 ? `hey jarvis ${Q}` : n === 1 ? Q : null), (n) => (n === 0 ? 'hey jarvis' : n === 1 ? Q : null)];
+  for (const say of cases) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    env.say(say);
+    let carried = { asked: 3, braked: true };
+    const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+    env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: ANSWER, extra: { hiddenCount } });
+    await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+    assert.ok(env.log.turns.length >= 1, `answered (${JSON.stringify(env.log.spoken.map((x) => x.text.slice(0, 40)))})`);
+    assert.ok(!env.log.spoken.some((x) => x.text === BRAKE_LINE), 'no brake line');
+  }
+});
+
+test('MAC-R3-1: braked, Standby’s kept microphone hears "Hey Jarvis" during the claps wake window (barge-in): the count starts again', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  env.say((n) => (n === 1 ? Q : null));
+  let carried = { asked: 3, braked: true };
+  const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+  const vm = env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: ANSWER, extra: { hiddenCount } });
+  await until(env, () => vm.isListening(), 'the wake window');
+  await env.advance(600);
+  vm.bargeIn('word');
+  await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+  assert.ok(env.log.turns.length >= 1, 'the question is answered');
+  assert.ok(!env.log.spoken.some((x) => x.text === BRAKE_LINE), 'no brake line');
+});
+
 // MAC-R2-5: a one-breath "Hey Jarvis, <free command>" took the speakerphone line (given once per absence) for a turn's
 // preface that never came: the line was never said. Now it is asked for only when an answer says it.
 test('MAC-R2-5: one breath "Hey Jarvis, play some AC/DC" (a free command) with the speakerphone away: the line isn’t taken, and the next wake’s greeting says it; a one-breath question still says it before its answer', async (t) => {

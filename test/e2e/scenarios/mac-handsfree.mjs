@@ -1146,6 +1146,52 @@ export default [
     },
   },
   {
+    // Ported from the verify's r3-mac-brake-claps-heyjarvis.
+    name: 'mac-handsfree-brake-claps-heyjarvis',
+    title: 'MAC-R3-1: after the brake (hidden, a TV), the owner claps twice and says "Hey Jarvis, what is the capital of France?" in one breath (Standby takes the claps; the wake window hears the words), then asks again: answered, not braked',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 300000,
+    async run(t) {
+      await setup(t, { speech: { noSpeechMs: 6000 } });
+      await enterStandby(t);
+      await setHidden(t.page, true);
+      await t.page.evaluate(() => {
+        window.__voice.queue.length = 0;
+        window.__tv = true;
+        const proto = window.SpeechRecognition.prototype;
+        const start = proto.start;
+        proto.start = function tv(...args) {
+          if (window.__tv && !window.__voice.queue.length) window.__voice.queue.push('What is the capital of Spain?');
+          return start.apply(this, args);
+        };
+      });
+      // A false double bang: the TV runs up 3 paid questions, then the brake, then Standby.
+      await waitListening(t, t.page, 60000);
+      await t.page.waitForTimeout(1700);
+      await play(t.page, DOUBLE_CLAP);
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
+      const afterBrake = leadCount(t);
+      const brakes1 = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+      t.note(`after the brake: ${afterBrake} paid, brake lines ${brakes1}`);
+      // The owner: two claps and "Hey Jarvis, …" in one breath, then the question again in the offer's listen. The TV
+      // is off now.
+      await waitListening(t, t.page, 60000);
+      await t.page.waitForTimeout(1700);
+      await t.page.evaluate(() => {
+        window.__tv = false;
+        window.__voice.queue.length = 0;
+        window.__voice.queue.push('Hey Jarvis, what is the capital of France?', 'What is the capital of France?');
+      });
+      await play(t.page, DOUBLE_CLAP);
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+      await t.waitFor(async () => leadCount(t) > afterBrake || (await said(t.page)).filter((x) => /when you need me/.test(x)).length > brakes1, { timeout: 90000, message: 'an answer or the brake line again' });
+      const brakes = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+      t.note(`claps + "Hey Jarvis": paid ${leadCount(t) - afterBrake}, brake lines ${brakes} (was ${brakes1})`);
+      t.assert(leadCount(t) > afterBrake && brakes === brakes1, `the owner said "Hey Jarvis": the question is answered and no brake line (paid ${leadCount(t) - afterBrake}, brake lines ${brakes1} -> ${brakes})`);
+    },
+  },
   {
     name: 'mac-handsfree-brake-claps-free',
     title: 'MAC-R3-3: after the brake (hidden, a TV), a claps wake still carries out a free command ("play Back in Black": the Music card, no Claude request, no brake line), and a question in the same braked state gets the brake line and is not sent',
