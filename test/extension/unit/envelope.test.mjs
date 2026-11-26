@@ -138,28 +138,32 @@ test('dropped: a plaintext over 16,384 bytes; sealing one refuses too', async ()
 
 const VECTORS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../fixtures/relay-vectors.json');
 
-test('the shared vectors (test/fixtures/relay-vectors.json)', { skip: !existsSync(VECTORS) && 'not in this branch yet' }, async () => {
+test('the shared vectors (test/fixtures/relay-vectors.json): every valid case seals to its ct and opens to its message', async () => {
+  assert.ok(existsSync(VECTORS), 'the shared vectors are in the repository');
   const v = JSON.parse(readFileSync(VECTORS, 'utf8'));
-  await checkVectors(v);
+  assert.equal(v.wire, 1);
+  const key = await importLinkKey(v.key);
+  assert.ok(v.valid.length >= 5, 'valid cases');
+  for (const c of v.valid) {
+    const sealed = await sealBytes(key, { box: c.box, id: c.id, iv: c.iv, plaintext: new TextEncoder().encode(c.plaintext) });
+    assert.equal(sealed.ct, c.ct, `${c.name}: the same ct`);
+    const out = await unseal(key, { box: c.box, msg: { id: c.id, iv: c.iv, ct: c.ct }, now: v.now, seen: new SeenIds() });
+    assert.equal(out.ok, true, `${c.name}: opens (${out.reason})`);
+    assert.deepEqual(out.message, { kind: c.message.kind, id: c.message.id, at: c.message.at, body: c.message.body }, `${c.name}: its message`);
+    // What this extension writes is the same bytes (key order included).
+    assert.equal(plaintextOf(c.message), c.plaintext, `${c.name}: the plaintext as written`);
+  }
 });
 
-/** Every case of the vectors file: sealing gives its ct; opening gives its message; drops drop. */
-export async function checkVectors(v) {
+test('the shared vectors: every must-drop case is dropped, and so is the replay', async () => {
+  const v = JSON.parse(readFileSync(VECTORS, 'utf8'));
   const key = await importLinkKey(v.key);
-  const cases = v.cases || v.valid || [];
-  assert.ok(cases.length > 0, 'vectors to check');
-  for (const c of cases) {
-    const plaintext = new TextEncoder().encode(typeof c.plaintext === 'string' ? c.plaintext : JSON.stringify(c.plaintext));
-    const sealed = await sealBytes(key, { box: c.box, id: c.id, iv: c.iv, plaintext });
-    assert.equal(sealed.ct, c.ct, `${c.name || c.id}: ct`);
-    const now = c.now ?? JSON.parse(new TextDecoder().decode(plaintext)).at;
-    const out = await unseal(key, { box: c.box, msg: { id: c.id, iv: c.iv, ct: c.ct }, now, seen: new SeenIds() });
-    assert.equal(out.ok, true, `${c.name || c.id}: opens (${out.reason})`);
+  assert.ok(v.drop.length >= 10, 'drop cases');
+  for (const c of v.drop) {
+    const out = await unseal(key, { box: c.box, msg: c.envelope, now: v.now, seen: new SeenIds() });
+    assert.equal(out.ok, false, `${c.name}: dropped`);
   }
-  for (const c of v.drop || v.dropped || v.invalid || []) {
-    const msg = c.msg || { id: c.id, iv: c.iv, ct: c.ct };
-    const seen = new SeenIds(c.seen || []);
-    const out = await unseal(key, { box: c.box, msg, now: c.now, seen });
-    assert.equal(out.ok, false, `${c.name || c.why || c.id}: dropped`);
-  }
-}
+  const seen = new SeenIds();
+  assert.equal((await unseal(key, { box: v.replay.box, msg: v.replay.envelope, now: v.now, seen })).ok, true, 'the first time');
+  assert.equal((await unseal(key, { box: v.replay.box, msg: v.replay.envelope, now: v.now, seen })).reason, 'replay', 'the second time');
+});

@@ -23,8 +23,9 @@ import { RT3_SCENARIOS } from './scenarios-rt3.mjs';
 import { RT4_SCENARIOS } from './scenarios-rt4.mjs';
 import { RT5_SCENARIOS } from './scenarios-rt5.mjs';
 import { PROFILE_SCENARIOS } from './scenarios-profile.mjs';
+import { RELAY_SCENARIOS } from './scenarios-relay.mjs';
 
-const ALL = [...SCENARIOS, ...RT2_SCENARIOS, ...RT3_SCENARIOS, ...RT4_SCENARIOS, ...RT5_SCENARIOS, ...PROFILE_SCENARIOS];
+const ALL = [...SCENARIOS, ...RT2_SCENARIOS, ...RT3_SCENARIOS, ...RT4_SCENARIOS, ...RT5_SCENARIOS, ...PROFILE_SCENARIOS, ...RELAY_SCENARIOS];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS = path.resolve(HERE, '..', 'artifacts');
@@ -62,6 +63,7 @@ export async function runE2E(argv = process.argv.slice(2)) {
     // A scenario's screenshots and failure reports from earlier runs go first.
     for (const f of await readdir(ARTIFACTS).catch(() => [])) if (f.startsWith(`${scenario.name}-`)) await rm(path.join(ARTIFACTS, f), { force: true });
     server.mock.reset();
+    server.relay.reset();
     server.resetSites();
     const run = new Run({ pw, extDir, server, artifacts: ARTIFACTS, name: scenario.name, headed: opts.headed });
     const t0 = Date.now();

@@ -1,15 +1,18 @@
 // The end-to-end test server: one port, routed by host name.
-//   127.0.0.1:<port>         the mock Claude API (POST /v1/messages, GET /v1/models, /__mock/*)
+//   127.0.0.1:<port>         the mock Claude API (POST /v1/messages, GET /v1/models, /__mock/*),
+//                            and the fake home base relay (/api/relay/*: helpers/fake-relay.mjs)
 //   <site>.localhost:<port>  the local test websites (sites.mjs)
 //
-//   const srv = await startExtensionTestServer();  // { port, apiBase, siteUrl(site, path), mock, sites, close }
+//   const srv = await startExtensionTestServer();  // { port, apiBase, siteUrl(site, path), mock, sites, relay, close }
 
 import http from 'node:http';
 import { createClaudeMock, writeResponse } from './mock/claude-mock.mjs';
 import { createSites } from './sites.mjs';
+import { createFakeRelay } from './helpers/fake-relay.mjs';
 
 export async function startExtensionTestServer({ port = 0 } = {}) {
   const mock = createClaudeMock();
+  const relay = createFakeRelay();
   let sites = createSites();
   const sockets = new Set();
   const server = http.createServer((req, res) => {
@@ -19,7 +22,9 @@ export async function startExtensionTestServer({ port = 0 } = {}) {
       const body = Buffer.concat(chunks).toString('utf8');
       const host = String(req.headers.host || '').split(':')[0];
       try {
-        if (host === '127.0.0.1') {
+        if (host === '127.0.0.1' && req.url.startsWith('/api/relay/')) {
+          await relay.serve(req, res, body);
+        } else if (host === '127.0.0.1') {
           const out = await mock.handle({ method: req.method, url: req.url, headers: req.headers, bodyText: body });
           await writeResponse(mock, res, out, req);
         } else {
@@ -43,6 +48,7 @@ export async function startExtensionTestServer({ port = 0 } = {}) {
     apiBase: `http://127.0.0.1:${p}`,
     siteUrl: (site, path = '/') => `http://${site}.localhost:${p}${path}`,
     mock,
+    relay,
     get sites() {
       return sites;
     },

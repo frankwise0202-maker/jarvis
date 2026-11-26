@@ -27,6 +27,7 @@ export const SEEN_MAX = 500;
 
 const KEY_BYTES = 32;
 const ID_BYTES = 16;
+const KIND = /^[a-z][a-z-]{0,23}$/;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
@@ -119,7 +120,8 @@ const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v) &
  */
 export async function unseal(key, { box, msg, now = Date.now(), seen = null }) {
   const drop = (reason) => ({ ok: false, reason });
-  if (!isPlainObject(msg) || typeof msg.id !== 'string' || typeof msg.iv !== 'string' || typeof msg.ct !== 'string') return drop('shape');
+  // Exactly { id, iv, ct }: nothing else rides along.
+  if (!isPlainObject(msg) || Object.keys(msg).length !== 3 || typeof msg.id !== 'string' || typeof msg.iv !== 'string' || typeof msg.ct !== 'string') return drop('shape');
   const id = fromB64u(msg.id);
   const iv = fromB64u(msg.iv);
   const ct = fromB64u(msg.ct);
@@ -139,8 +141,8 @@ export async function unseal(key, { box, msg, now = Date.now(), seen = null }) {
   }
   if (!isPlainObject(data) || data.v !== WIRE_VERSION) return drop('version');
   if (data.id !== msg.id) return drop('id');
-  if (typeof data.kind !== 'string' || !data.kind || data.kind.length > 40 || !isPlainObject(data.body)) return drop('shape');
-  if (typeof data.at !== 'number' || !Number.isFinite(data.at)) return drop('clock');
+  if (typeof data.kind !== 'string' || !KIND.test(data.kind) || !isPlainObject(data.body)) return drop('shape');
+  if (!Number.isSafeInteger(data.at) || data.at <= 0) return drop('clock');
   if (data.at < now - MAX_AGE_MS) return drop('old');
   if (data.at > now + MAX_AHEAD_MS) return drop('ahead');
   if (seen?.has(msg.id)) return drop('replay');

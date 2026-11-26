@@ -209,6 +209,86 @@ passwords or card numbers. It can't upload files.
 
 ---
 
+## Voice from Jarvis
+
+Jarvis, the web app in your usual Chrome profile, can reach Jarvis for Chrome in the Jarvis
+window: say *"pull this up in Chrome"* and the page opens here, beside Jarvis; say *"find a 4K
+monitor under $300 and add it to the cart in Chrome"* and the task starts here. Jarvis says each
+of Jarvis for Chrome's questions aloud. The two can't talk to each other directly (they are in two
+profiles on purpose), so their messages go through your home base, Jarvis Core, sealed with a key
+only they have: the home base passes them on without being able to read them, keeps them at most
+2 minutes, in memory only, and never logs them.
+
+### Link it (once)
+
+1. In Jarvis: **Settings** → **Jarvis for Chrome** → **Link** → **Copy link code**.
+2. In the Jarvis window: open the side panel → **Settings** → **Voice from Jarvis**, paste the
+   code and press **Link**.
+3. Chrome asks to let Jarvis for Chrome reach your home base (its `…ts.net` address): allow it.
+   That is the only site it gets this way.
+4. Both sides show **Linked · online**. Linking turns on **Tasks from Jarvis**; you can turn it
+   off in the same place. **Unlink**, on either side, forgets the key on that side and tells the
+   other.
+
+The key stays in Chrome's storage for this extension, in the Jarvis profile; it is never synced
+or sent anywhere. Linking works only with your home base's Tailscale address, as Jarvis has it.
+
+### What Jarvis can ask for
+
+- **Open a page.** It opens in a new tab of the Jarvis window, beside Jarvis (when the camera or
+  a walkthrough is on screen, the window moves next to it and Jarvis keeps the focus). Nothing
+  acts there: Jarvis for Chrome doesn't take control of the tab, and a task that later works there
+  asks for the site as always. An address that looks like it does something (like
+  `?add-to-cart=42` or `/orders/7/cancel`, an installer, or one with hidden or disguised
+  characters) waits for your click: its card shows the whole address in the side panel, and it
+  opens only when you press **Open it**. Chrome's own pages, files, the Chrome Web Store and
+  addresses with a user name or password are never opened.
+- **Start a task**, from your own spoken words (never from a web page or from Claude): only
+  while **Tasks from Jarvis** is on, at most 30 a day, and one at a time, as here. It runs with
+  this extension's model, budget and step limit, and its card says **From Jarvis (voice)**.
+  Jarvis hears what it does (its steps and its answer, never its pictures); none of it goes into
+  Jarvis's own conversation.
+- **Stop the task**: *"stop Chrome"*.
+- **Answer a question the task asks**, as far as the table below allows.
+
+Every question the side panel shows is also sent to Jarvis, which says it aloud and shows it on
+its card. Jarvis for Chrome writes what is said, from its own facts: the kind of step, the site,
+what it looks like (a purchase…), a price. Of the page's own words it quotes at most about 40
+characters, after "the button says", and never words that sound like an answer ("approve",
+"cancel", "yes", "say", "allow", "deny", "stop", "Jarvis"), so a page can't put words in Jarvis's
+mouth.
+
+| Jarvis for Chrome asks | Answered from Jarvis (by voice, or on its card) | A click here |
+| --- | --- | --- |
+| A new site: **Allow once** | *"allow once"*, only for a site you named or opened by voice for this task | yes |
+| A new site: **Always for this site** | no | yes |
+| **Deny**, **Cancel**, **Stop** | yes, at once | yes |
+| An everyday page step on a site set to Always: a click, picking an option, adding to the cart; typing only while the task has read no other site | *"approve"* | yes |
+| A purchase or payment, sending, posting, deleting, account or security, accepting terms, a download, another site's box, a keyboard shortcut, the page's own "Are you sure?", a page load nobody approved, **"Carry on to …?"**, **"Send this address to …?"**, and any other step (a key, a drag, an address) | no: *"That needs a click in the Jarvis window."* | yes |
+| **Budget reached**: Continue (one more budget each time) | *"spend more in Chrome"*, with the new limit said first | yes |
+| **Step limit reached**: Continue | *"more steps in Chrome"* | yes |
+
+- Everything in the middle column except **Deny**, **Cancel** and **Stop** needs **Approve everyday
+  steps by voice**, a setting under Voice from Jarvis, off by default. **It isn't offered yet:**
+  it comes once its own security review has passed. Until then every approval is a click here,
+  and from Jarvis you can only say no.
+- An answer from Jarvis counts only for the question it names, while that question is still open
+  and exactly as it was shown (its card and its choices), and not in the first 1.5 seconds after
+  it appeared. Otherwise it is refused, Jarvis says why, and the question stays open here.
+- An answer from Jarvis goes through the same card as your click: one **Approve** still covers that
+  one step, on that one element, once (see [Approving steps](#approving-steps)). The step list
+  says **Approved by voice from Jarvis**.
+- When no side panel is open, a question that needs a click opens a small Jarvis for Chrome
+  window with the same card, and **Stop**. It closes by itself once nothing waits.
+- If Jarvis for Chrome can't reach your home base for 20 seconds while a task from Jarvis runs,
+  the task pauses itself (as **Take over** does), so a *"stop"* said to Jarvis can't be lost on the
+  way; press **Continue** in the side panel to go on. **⌘⇧.** and the side panel's **Stop** always
+  work.
+
+Opening pages and the relay cost nothing; a task costs what any task costs (see [Costs](#costs)).
+
+---
+
 ## Safety rules
 
 Jarvis follows these rules whatever a web page says.
@@ -371,6 +451,13 @@ anything. These are the limits we know about:
 - Pressing **Cancel** on Chrome's "started debugging this browser" banner ends Jarvis's control at
   once: a page load that was waiting for your answer then goes ahead (Chrome lets it), and the step
   list says it may have happened.
+- **Approving from Jarvis.** Jarvis, the web app, is a less protected place than this side panel:
+  it reads web pages, search results and camera pictures. A page that tricked Jarvis's web app
+  could approve everyday page steps on sites you set to Always (once **Approve everyday steps by
+  voice** is offered and you turn it on), never purchases, payments, sending, deleting or anything
+  else marked: those always need a click here.
+- **Tasks from Jarvis** are capped: at most 30 a day, and each keeps its own budget and step limit
+  (reaching either asks you, as always).
 
 ### What Jarvis asks Chrome for
 
@@ -380,6 +467,10 @@ anything. These are the limits we know about:
 - **Downloads**: to hold a download a page starts during a task until you approve it.
 - **Side panel** and **Storage**: for the panel itself and your settings, key and history (kept on
   this Mac only).
+- **Alarms**: a tick every 30 seconds, only while linked to Jarvis, that keeps the link to your
+  home base going when Chrome rests the extension ([Voice from Jarvis](#voice-from-jarvis)).
+- **Your home base** (`https://<your machine>.<your tailnet>.ts.net`), asked for by name when you
+  press **Link**, and given back when you unlink: to pass Jarvis's sealed messages. No other site.
 
 ---
 
@@ -456,11 +547,32 @@ pages that attack the safety checks).
   from the same site: anything but the one step the owner approved is cancelled. Its control bar's
   host is a plain `<div>` (with `data-jarvis-control`): a page can't take it over by defining a
   custom element of the same name.
+- Voice from Jarvis: `envelope.js` (the relay's envelope: AES-GCM with the link key, WebCrypto;
+  the same wire as Jarvis's `src/lib/relay-envelope.js`, both checked against
+  `test/fixtures/relay-vectors.json`), `relay.js` (the long poll of the home base's `to-ext` box,
+  20 s, and the alarm that restarts it), `voice-policy.js` (what may be answered from Jarvis: the
+  table above as data, the 1.5 s rule, the prompt's hash, the spoken lines; one switch,
+  `VOICE_APPROVALS_AVAILABLE`, keeps voice approvals out of a release until their red-team round)
+  and `link.js` (Jarvis's requests and what goes back; the pause when the relay is gone; the
+  approval window). The wire is SPEC §32.
 - `sidepanel/`: the side panel UI, in the app's HUD style. `profile.js` holds the first-run screen
   ("Use Jarvis in its own Chrome profile") and its steps, which Settings shows again; the store
   (`shared/storage.js`) refuses the API key until the owner has confirmed it (`jarvis.profile`),
-  and the service worker starts no task without it.
+  and the service worker starts no task without it. `cards.js` draws the cards the owner clicks,
+  shared with `approve.html`, the small approval window.
 - `build/`: the manifest, the icon renderer and the zip writer used by `scripts/build-extension.mjs`.
 
 Development builds (`node scripts/build-extension.mjs --dev --out <dir>`) can point the API client
-at a local mock (`jarvis.dev.apiBase` in `chrome.storage.local`). Release builds cannot.
+at a local mock (`jarvis.dev.apiBase` in `chrome.storage.local`), link to a local relay
+(`http://127.0.0.1:<port>`), and turn voice approvals on before they are available
+(`jarvis.dev.voiceApprovals`) so the tests can reach that path. Release builds cannot: the build
+refuses a release that contains any of these.
+
+The Voice from Jarvis tests: unit (`envelope`, `voice-policy`, `link`: the policy table cell by
+cell, the envelope on the shared vectors, the relay loop's back-off and pause) and end to end
+(`relay-open`, `relay-task-voice`, `relay-approve-voice`, `relay-approve-refused`, `relay-replay`,
+`relay-approve-window`), against a fake home base relay (`test/extension/helpers/fake-relay.mjs`)
+with Jarvis's end played from Node. `chrome-relay-roundtrip` runs the extension, the real Jarvis
+page and the fake relay in one Chromium:
+`flock /tmp/jarvis-scratch/live/browser.lock node test/extension/e2e/run.mjs --only chrome-relay-roundtrip`
+(it builds the app too; see the scenario file for what it checks).

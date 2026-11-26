@@ -44,10 +44,13 @@ test('release build: manifest, icons, zip', async () => {
     }
     const entries = listZip(await readFile(zipPath)).map((e) => e.name);
     assert.ok(entries.every((n) => n.startsWith(`${ZIP_FOLDER}/`)), 'one top-level folder');
-    for (const f of ['manifest.json', 'background.js', 'sidepanel.html', 'sidepanel.js', 'sidepanel.css', 'mic.html', 'icons/icon-128.png']) assert.ok(entries.includes(`${ZIP_FOLDER}/${f}`), f);
+    for (const f of ['manifest.json', 'background.js', 'sidepanel.html', 'sidepanel.js', 'sidepanel.css', 'mic.html', 'approve.html', 'approve.js', 'icons/icon-128.png']) assert.ok(entries.includes(`${ZIP_FOLDER}/${f}`), f);
     assert.ok(!entries.some((n) => n.endsWith('.map')));
     const bg = await readFile(path.join(out, 'background.js'), 'utf8');
-    for (const marker of ['jarvis.dev.apiBase', '__jarvisController', 'testStop']) assert.ok(!bg.includes(marker), marker);
+    for (const marker of ['jarvis.dev.apiBase', '__jarvisController', 'testStop', 'jarvis.dev.voiceApprovals', '__jarvisLink']) assert.ok(!bg.includes(marker), marker);
+    // Voice approvals stay off in a release until their red-team round: no way to turn them on.
+    const panel = await readFile(path.join(out, 'sidepanel.js'), 'utf8');
+    assert.ok(!panel.includes('jarvis.dev.voiceApprovals'));
     assert.equal(res.version, m.version);
   } finally {
     await rm(dir, { recursive: true, force: true });
