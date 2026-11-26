@@ -1,0 +1,1026 @@
+// Jarvis for Chrome, linked through the home base (v8.1, SPEC §32.1, wire v1). This makes app.chromeLink
+// (contract (f)), which "pull this up in Chrome" (windows) and Chrome tasks and prompts by voice (chrome-voice) use.
+//
+// The web app (the owner's usual Chrome profile) and Jarvis for Chrome (its own "Jarvis" profile) can't talk
+// directly, so they leave sealed messages for each other on the home base (Jarvis Core 1.3, /api/relay/*;
+// src/lib/relay-envelope.js seals and opens them). Linking: Settings → Jarvis for Chrome → Link makes a key here
+// (32 random bytes); the owner copies the link code ({ v: 1, core, key }) and pastes it into Jarvis for Chrome;
+// its first message proves it has the key, and the link is made. The key lives only in localStorage
+// `jarvis.chromeLink.v1` ({ v: 1, core, key, linkedAt, extSeenAt, madeAt }): never in Settings, an export, a
+// backup or a sync upload (none of them reads that entry), so it never reaches the home base that carries the
+// messages. `jarvis.chromeLink.inbox.v1` keeps where this device has read up to and the last 500 ids it opened
+// (no secret: the relay sees both), so a reload never takes a message twice.
+//
+//   const link = createChromeLink({ getHomeBase, version, ... })   (installChromeLink in app.js)
+//   link.api = app.chromeLink, exactly contract (f):
+//     state() → { linked, online, voiceApprovals, task: null | { id, status, text, narration, lastStep, costUsd, limitUsd } }
+//     subscribe(fn) → unsubscribe                     fn(state()) after each change
+//     open(url, { rect, focus }) → Promise<{ ok: true, site } | { ok: false, reason, why? }>
+//     startTask({ text, chat }) → Promise<{ ok: true, id } | { ok: false, reason: 'unlinked'|'offline'|'off'|'busy'|'cap'|… }>
+//     stopTask() → Promise<void>                       (sent whenever linked: stopping is the safe direction)
+//     answer({ promptId, hash, choice, via }) → Promise<{ ok: true } | { ok: false, reason, why? }>
+//     onPrompt(fn) · onPromptClosed(fn /* promptId, { how } */) · onDone(fn /* { id, status, answer, costUsd } */) → unsubscribe
+//   link.control: what Settings → Jarvis for Chrome needs (info(), onChange(fn), begin(), code(), copyCode(),
+//     cancel(), unlink(), refresh()); link.destroy().
+//
+// Where it runs: on computers only (never on an iPhone), while Jarvis is open (hidden too: hands-free on the Mac).
+// One window per device holds the link (the Web Lock `jarvis-chrome-link`, critique M6): only it long-polls
+// to-app (a 20-second wait; backing off from 2 s to a minute while the home base is unreachable, and 5 minutes on
+// a Core older than 1.3), checks /api/relay/status every 30 s, says hello when it starts, and passes prompts,
+// task news and results to its listeners, so one window speaks each prompt. Any window can send; the holder
+// hands replies meant for another window over BroadcastChannel `jarvis-chrome-link`, with the task and online
+// state.
+//
+// Every request carries an id; the extension answers it with one `reply` whose `re` is that id. A request gets
+// no reply after 10 s → { ok: false, reason: 'offline' }. The extension counts as online while /api/relay/status
+// says it read its box in the last 60 s, or a message from it arrived in the last 60 s. Nothing is sent while
+// it is offline, except stop. Everything that comes back is information, never orders: each field is checked
+// and cut to size here (page text included), and nothing in it starts anything.
+//
+// Nothing here logs; no error carries the key, a code or a message body.
+
+import { readItem, writeItem, removeItem, watchItem } from './storage.js';
+import { requestHomeBase } from './homebase.js';
+import { isIOS, isAndroid } from './env.js';
+import { normalizeHomeBaseUrl } from '../lib/homebase.js';
+import { importLinkKey, newLinkKey, sealEnvelope, openEnvelope, createSeenIds, makeLinkCode, isLinkKey, isCoreOrigin, ID_CHARS } from '../lib/relay-envelope.js';
+
+export const CHROME_LINK_KEY = 'jarvis.chromeLink.v1';
+export const CHROME_LINK_INBOX_KEY = 'jarvis.chromeLink.inbox.v1';
+export const CHROME_LINK_LOCK = 'jarvis-chrome-link';
+export const CHROME_LINK_CHANNEL = 'jarvis-chrome-link';
+export const REPLY_TIMEOUT_MS = 10_000;
+export const ONLINE_MS = 60_000;
+export const POLL_WAIT_S = 20;
+export const STATUS_EVERY_MS = 30_000;
+export const PENDING_MS = 30 * 60_000; // an unused link code is forgotten after half an hour
+export const CLIPBOARD_CLEAR_MS = 10 * 60_000; // the code is cleared from the clipboard once linked, if copied this recently
+export const BACKOFF_MS = Object.freeze([2_000, 4_000, 8_000, 15_000, 30_000, 60_000]);
+export const OLD_CORE_RETRY_MS = 5 * 60_000;
+export const TEXT_MAX = 2000; // a task's words, and what comes back about it
+export const REPLY_REASONS = Object.freeze(['off', 'busy', 'cap', 'blocked', 'needs-click', 'refused', 'gone', 'bad']);
+const MIN_POLL_MS = 1500; // an answer that came back at once with nothing in it is not asked again sooner
+const AFTER_BATCH_MS = 250; // a little time for more of the same burst before the next read
+const READ_MAX_CHARS = 2 * 1024 * 1024; // 50 messages of up to 22 KB
+const SEEN_SAVE_MS = 15_000; // extSeenAt in the stored record: at most this often (other windows read it)
+
+const ID_RE = new RegExp(`^[A-Za-z0-9_-]{${ID_CHARS}}$`);
+const TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+const WORD_RE = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/; // kinds, categories, statuses and choice ids
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const posInt = (v) => (Number.isSafeInteger(v) && v > 0 ? v : null);
+const money = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 1e6 ? Math.round(v * 10000) / 10000 : null);
+
+// eslint-disable-next-line no-control-regex
+const CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
+
+/** Text from the extension (page text included): no control or bidi characters, at most `max` characters. */
+export function cleanText(value, max, { lines = false } = {}) {
+  if (typeof value !== 'string') return '';
+  let s = value.replace(CONTROL_RE, ' ');
+  s = lines ? s.replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim() : s.replace(/\s+/g, ' ').trim();
+  if (s.length > max) s = `${Array.from(s).slice(0, max - 1).join('').trimEnd()}…`;
+  return s;
+}
+
+const token = (v, re = TOKEN_RE) => (typeof v === 'string' && re.test(v) ? v : '');
+
+/** A reply from the extension, checked: { re, ok, reason?, why?, url?, site?, id?, promptId?, status? }. */
+export function cleanReply(body) {
+  if (!isObj(body) || !ID_RE.test(body.re || '') || typeof body.ok !== 'boolean') return null;
+  const out = { re: body.re, ok: body.ok };
+  if (!body.ok) {
+    out.reason = REPLY_REASONS.includes(body.reason) ? body.reason : 'bad';
+    const why = cleanText(body.why, 200);
+    if (why) out.why = why;
+    return out;
+  }
+  const url = cleanText(body.url, 2048);
+  if (url) out.url = url;
+  const site = cleanText(body.site, 253);
+  if (site) out.site = site;
+  const id = token(body.id);
+  if (id) out.id = id;
+  const promptId = token(body.promptId);
+  if (promptId) out.promptId = promptId;
+  if (isObj(body.status)) out.status = cleanStatus(body.status);
+  return out;
+}
+
+/** status { online, tasksFromJarvis, voiceApprovals, task: null | { id, status } }. */
+export function cleanStatus(body) {
+  const b = isObj(body) ? body : {};
+  const t = isObj(b.task) ? { id: token(b.task.id), status: token(b.task.status, WORD_RE) } : null;
+  return { online: b.online === true, tasksFromJarvis: b.tasksFromJarvis === true, voiceApprovals: b.voiceApprovals === true, task: t && t.id ? t : null };
+}
+
+/** task { id, status, text, narration, lastStep, costUsd, limitUsd } (no pictures). */
+export function cleanTask(body) {
+  if (!isObj(body)) return null;
+  const id = token(body.id);
+  if (!id) return null;
+  return {
+    id,
+    status: token(body.status, WORD_RE) || 'running',
+    text: cleanText(body.text, TEXT_MAX),
+    narration: cleanText(body.narration, TEXT_MAX),
+    lastStep: cleanText(body.lastStep, 500),
+    costUsd: money(body.costUsd),
+    limitUsd: money(body.limitUsd),
+  };
+}
+
+const DONE_STATUSES = ['done', 'stopped', 'failed', 'limit'];
+/** done { id, status, answer (2,000 characters at most), costUsd }. */
+export function cleanDone(body) {
+  if (!isObj(body)) return null;
+  const id = token(body.id);
+  if (!id) return null;
+  return { id, status: DONE_STATUSES.includes(body.status) ? body.status : 'failed', answer: cleanText(body.answer, TEXT_MAX, { lines: true }), costUsd: money(body.costUsd) };
+}
+
+/**
+ * prompt { promptId, hash, kind, category, consequential, site, title, spoken, body, address, choices, voice }.
+ * Unknown or missing safety fields fall to the safe side: consequential unless it says false, voice not allowed
+ * unless it says true (the extension decides again when the answer comes).
+ */
+export function cleanPrompt(body) {
+  if (!isObj(body)) return null;
+  const promptId = token(body.promptId);
+  const hash = ID_RE.test(body.hash || '') ? body.hash : '';
+  const kind = token(body.kind, WORD_RE);
+  const choices = (Array.isArray(body.choices) ? body.choices.slice(0, 8) : [])
+    .map((c) => (isObj(c) ? { id: token(c.id, WORD_RE), label: cleanText(c.label, 60) } : null))
+    .filter((c) => c && c.id && c.label);
+  if (!promptId || !hash || !kind || !choices.length) return null;
+  const voice = isObj(body.voice) ? body.voice : {};
+  return {
+    promptId,
+    hash,
+    kind,
+    category: token(body.category, WORD_RE),
+    consequential: body.consequential !== false,
+    site: cleanText(body.site, 253),
+    title: cleanText(body.title, 200),
+    spoken: cleanText(body.spoken, 400),
+    body: cleanText(body.body, 1000, { lines: true }),
+    address: cleanText(body.address, 2048),
+    choices,
+    voice: { allowed: voice.allowed === true, why: cleanText(voice.why, 200) },
+  };
+}
+
+/** A page address the extension may be asked to open: http(s), no user name or password, 2,048 characters at most. */
+export function cleanOpenUrl(url) {
+  if (typeof url !== 'string' || !url || url.length > 2048) return null;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if ((u.protocol !== 'https:' && u.protocol !== 'http:') || u.username || u.password || !u.hostname) return null;
+  return u.href;
+}
+
+/** Where the Jarvis window should go: { left, top, width, height } in whole screen pixels, or null. */
+export function cleanRect(rect) {
+  if (!isObj(rect)) return null;
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) || 0 : null);
+  const left = n(rect.left);
+  const top = n(rect.top);
+  const width = n(rect.width);
+  const height = n(rect.height);
+  if ([left, top, width, height].some((v) => v === null)) return null;
+  if (Math.abs(left) > 100_000 || Math.abs(top) > 100_000 || width < 100 || height < 100 || width > 100_000 || height > 100_000) return null;
+  return { left, top, width, height };
+}
+
+function readJson(read, key) {
+  try {
+    const text = read(key);
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The stored link, checked: { v, core, key, linkedAt, extSeenAt, madeAt } or null. */
+export function readLinkRecord(read = readItem) {
+  const raw = readJson(read, CHROME_LINK_KEY);
+  if (!isObj(raw) || raw.v !== 1 || !isCoreOrigin(raw.core) || !isLinkKey(raw.key)) return null;
+  return { v: 1, core: raw.core, key: raw.key, linkedAt: posInt(raw.linkedAt), extSeenAt: posInt(raw.extSeenAt), madeAt: posInt(raw.madeAt) };
+}
+
+function defaultComputer() {
+  try {
+    return !(isIOS() || isAndroid());
+  } catch {
+    return true;
+  }
+}
+
+function defaultVersion() {
+  try {
+    const m = document.querySelector('meta[name="jarvis-version"]');
+    const v = m && m.getAttribute('content');
+    return v && !v.startsWith('__') ? cleanText(v, 24) : 'dev';
+  } catch {
+    return 'dev';
+  }
+}
+
+function defaultChannel() {
+  try {
+    return typeof BroadcastChannel === 'function' ? new BroadcastChannel(CHROME_LINK_CHANNEL) : null;
+  } catch {
+    return null;
+  }
+}
+
+function defaultLocks() {
+  try {
+    const l = globalThis.navigator && globalThis.navigator.locks;
+    return l && typeof l.request === 'function' ? l : null;
+  } catch {
+    return null;
+  }
+}
+
+function defaultClipboard() {
+  try {
+    const c = globalThis.navigator && globalThis.navigator.clipboard;
+    return c && typeof c.writeText === 'function' ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+const problemOf = (r) => {
+  if (r.kind === 'http' && r.status === 404) return 'old-core';
+  if (r.kind === 'refused') return 'refused';
+  if (r.kind === 'down') return 'down';
+  if (r.kind === 'rate') return 'rate';
+  if (r.kind === 'unreachable' || r.kind === 'starting') return 'unreachable';
+  return 'error';
+};
+
+/**
+ * createChromeLink(deps) → { api, control, destroy() }. Every dependency can be replaced (tests):
+ *   getHomeBase()  this device's home base address (settings.homeBaseUrl: 'https://<host>.ts.net/' or '')
+ *   version        this app's version, for hello
+ *   storage        { read, write, remove, watch } (platform/storage.js)
+ *   fetchImpl, locks (navigator.locks), channel (a BroadcastChannel or null), clipboard ({ writeText })
+ *   computer       true on a computer (default: not an iPhone, iPad or Android device)
+ *   now, setTimer, clearTimer, random, win (focus events and document.hasFocus for clearing the clipboard)
+ */
+export function createChromeLink({
+  getHomeBase = () => '',
+  version = defaultVersion(),
+  storage = { read: readItem, write: writeItem, remove: removeItem, watch: watchItem },
+  fetchImpl,
+  locks = defaultLocks(),
+  channel = defaultChannel(),
+  clipboard = defaultClipboard(),
+  computer = defaultComputer(),
+  now = () => Date.now(),
+  setTimer = (fn, ms) => setTimeout(fn, ms),
+  clearTimer = (t) => clearTimeout(t),
+  random = Math.random,
+  win = typeof window !== 'undefined' ? window : null,
+} = {}) {
+  let destroyed = false;
+  let record = null; // the stored link (checked)
+  let holding = null; // { abort, release } while this window holds the link
+  let lockCtl = null; // the lock request in flight or held
+  let problem = null; // 'unreachable' | 'down' | 'refused' | 'old-core' | 'rate' | 'error' | null
+  let note = null; // 'ext-unlinked' | 'expired' | null: shown once by Settings
+  let heard = 0; // the last authenticated message from the extension (ms)
+  let statusSeen = 0; // the relay's extSeenAt (ms)
+  let savedSeen = 0; // the extSeenAt last written to storage
+  let voiceApprovals = false;
+  let task = null;
+  let extVersion = '';
+  let copied = null; // { at } when this window put the link code on the clipboard
+  let clearedAt = 0;
+  let cryptoKey = null; // { key: the text it came from, value: CryptoKey }
+  let seen = createSeenIds();
+  let cursor = null;
+  let onlineTimer = null;
+  let pendingTimer = null;
+  let lastSig = '';
+  const pending = new Map(); // envelope id → { kind, resolve }
+  const listeners = new Set();
+  const controlListeners = new Set();
+  const promptListeners = new Set();
+  const closedListeners = new Set();
+  const doneListeners = new Set();
+  const timers = new Set();
+
+  const later = (fn, ms) => {
+    const t = setTimer(() => {
+      timers.delete(t);
+      fn();
+    }, ms);
+    timers.add(t);
+    return t;
+  };
+  const cancelLater = (t) => {
+    if (t === null || t === undefined) return;
+    timers.delete(t);
+    clearTimer(t);
+  };
+  const sleep = (ms, ctl) =>
+    new Promise((resolve) => {
+      const t = later(resolve, ms);
+      if (ctl) ctl.abort.signal.addEventListener('abort', () => {
+        cancelLater(t);
+        resolve();
+      }, { once: true });
+    });
+  const call = (set, ...args) => {
+    for (const fn of Array.from(set)) {
+      try {
+        fn(...args);
+      } catch {
+        /* a listener's trouble is its own */
+      }
+    }
+  };
+
+  // ---- the stored link --------------------------------------------------------------------------------
+  const phaseOf = (rec) => (!rec ? 'off' : rec.linkedAt ? 'linked' : 'pending');
+  const phase = () => phaseOf(record);
+  const baseOf = (core) => `${core}/`;
+
+  function load() {
+    let rec = readLinkRecord(storage.read);
+    if (rec && !rec.linkedAt && (!rec.madeAt || now() - rec.madeAt > PENDING_MS)) {
+      // An unused link code is forgotten (and the key with it).
+      storage.remove(CHROME_LINK_KEY);
+      storage.remove(CHROME_LINK_INBOX_KEY);
+      rec = null;
+      note = 'expired';
+    }
+    return rec;
+  }
+
+  function save(rec) {
+    storage.write(CHROME_LINK_KEY, JSON.stringify({ v: 1, core: rec.core, key: rec.key, linkedAt: rec.linkedAt, extSeenAt: rec.extSeenAt, madeAt: rec.madeAt }));
+  }
+
+  function loadInbox() {
+    const raw = readJson(storage.read, CHROME_LINK_INBOX_KEY);
+    const ok = isObj(raw) && record && raw.core === record.core;
+    cursor = ok && ID_RE.test(raw.cursor || '') ? raw.cursor : null;
+    seen = createSeenIds({ ids: ok && Array.isArray(raw.seen) ? raw.seen : [] });
+  }
+
+  function saveInbox() {
+    if (!record) return;
+    storage.write(CHROME_LINK_INBOX_KEY, JSON.stringify({ core: record.core, cursor, seen: seen.list() }));
+  }
+
+  /** Read the stored link again (another window changed it, or this one did). */
+  function reload() {
+    const before = record;
+    record = load();
+    const keyChanged = !before || !record || before.key !== record.key;
+    if (keyChanged) {
+      cryptoKey = null;
+      cursor = null;
+      seen = createSeenIds();
+      if (holding && record) loadInbox();
+      heard = 0;
+      statusSeen = 0;
+      savedSeen = record ? record.extSeenAt || 0 : 0;
+      task = null;
+      voiceApprovals = false;
+      extVersion = '';
+      for (const [, entry] of Array.from(pending)) entry.resolve({ ok: false, reason: 'unlinked' });
+    }
+    if (record && record.extSeenAt) savedSeen = Math.max(savedSeen, record.extSeenAt);
+    if (record && record.linkedAt && (!before || !before.linkedAt)) maybeClearClipboard();
+    // A link code nobody used is forgotten after half an hour, even in a window left open.
+    cancelLater(pendingTimer);
+    pendingTimer = record && !record.linkedAt ? later(reload, Math.max(1000, record.madeAt + PENDING_MS - now() + 1000)) : null;
+    syncLock();
+    changed();
+  }
+
+  function forget(why = null) {
+    storage.remove(CHROME_LINK_KEY);
+    storage.remove(CHROME_LINK_INBOX_KEY);
+    note = why;
+    problem = null;
+    reload();
+  }
+
+  async function keyOf(rec) {
+    if (cryptoKey && cryptoKey.key === rec.key) return cryptoKey.value;
+    const value = await importLinkKey(rec.key);
+    cryptoKey = { key: rec.key, value };
+    return value;
+  }
+
+  // ---- state and changes --------------------------------------------------------------------------------
+  /** The newest sign of life from the extension; a time far ahead of this clock is not believed. */
+  function seenAt() {
+    const t = now();
+    let best = 0;
+    for (const v of [heard, statusSeen, record ? record.extSeenAt || 0 : 0]) if (v && v - t < ONLINE_MS && v > best) best = v;
+    return best;
+  }
+
+  const isLinked = () => computer && !destroyed && phase() === 'linked';
+  const isOnlineNow = () => isLinked() && now() - seenAt() < ONLINE_MS;
+
+  function state() {
+    const linked = isLinked();
+    return { linked, online: linked && isOnlineNow(), voiceApprovals: linked && voiceApprovals, task: linked && task ? { ...task } : null };
+  }
+
+  function info() {
+    return {
+      computer,
+      phase: computer ? phase() : 'off',
+      homeBase: !!homeBaseCore(),
+      core: record ? record.core : null,
+      linkedAt: record ? record.linkedAt : null,
+      online: isOnlineNow(),
+      seenAt: seenAt() || null,
+      holder: !!holding,
+      problem,
+      note,
+      extVersion,
+      copied: !!copied,
+      clearedAt: clearedAt || null,
+    };
+  }
+
+  function changed() {
+    cancelLater(onlineTimer);
+    onlineTimer = null;
+    if (isOnlineNow()) onlineTimer = later(changed, Math.max(50, seenAt() + ONLINE_MS - now() + 50));
+    const s = state();
+    const sig = JSON.stringify(s);
+    if (sig !== lastSig) {
+      lastSig = sig;
+      call(listeners, s);
+    }
+    call(controlListeners, info());
+  }
+
+  function noteHeard() {
+    heard = now();
+    if (record && !record.linkedAt) {
+      // The first message sealed with this key: Jarvis for Chrome has the code. Linked.
+      record = { ...record, linkedAt: heard, extSeenAt: heard };
+      savedSeen = heard;
+      save(record);
+      maybeClearClipboard();
+      sendHello();
+    } else if (record && heard - savedSeen >= SEEN_SAVE_MS) {
+      record = { ...record, extSeenAt: heard };
+      savedSeen = heard;
+      save(record);
+    }
+  }
+
+  function broadcast(message) {
+    if (!channel) return;
+    try {
+      channel.postMessage(message);
+    } catch {
+      /* closed */
+    }
+  }
+
+  const shareState = () => broadcast({ t: 'state', task, voiceApprovals, heard, extVersion });
+
+  // ---- what comes in ------------------------------------------------------------------------------------
+  function handle(message) {
+    const { kind, body } = message;
+    noteHeard();
+    switch (kind) {
+      case 'reply': {
+        const reply = cleanReply(body);
+        if (!reply) break;
+        const entry = pending.get(reply.re);
+        if (entry) entry.resolve(interpret(entry.kind, reply));
+        else broadcast({ t: 'reply', reply }); // another window's request
+        break;
+      }
+      case 'hello':
+        if (body.ext === 'jarvis-for-chrome') extVersion = cleanText(body.version, 24);
+        break;
+      case 'status': {
+        const s = cleanStatus(body);
+        voiceApprovals = s.voiceApprovals;
+        if (!s.task) task = null;
+        else if (!task || task.id !== s.task.id) task = { id: s.task.id, status: s.task.status || 'running', text: '', narration: '', lastStep: '', costUsd: null, limitUsd: null };
+        else task = { ...task, status: s.task.status || task.status };
+        break;
+      }
+      case 'task': {
+        const t = cleanTask(body);
+        if (t) task = t;
+        break;
+      }
+      case 'done': {
+        const d = cleanDone(body);
+        if (!d) break;
+        if (task && task.id === d.id) task = null;
+        call(doneListeners, d);
+        break;
+      }
+      case 'prompt': {
+        const p = cleanPrompt(body);
+        if (p) call(promptListeners, p);
+        break;
+      }
+      case 'prompt-closed': {
+        const promptId = token(body.promptId);
+        const how = ['clicked', 'voice', 'stopped', 'expired'].includes(body.how) ? body.how : 'clicked';
+        if (promptId) call(closedListeners, promptId, { how });
+        break;
+      }
+      case 'unlinked':
+        forget('ext-unlinked');
+        return;
+      default:
+        break; // a kind this version doesn't know: nothing
+    }
+    shareState();
+    changed();
+  }
+
+  async function receive(rec, data) {
+    if (!isObj(data) || !Array.isArray(data.messages)) return 0;
+    const value = await keyOf(rec);
+    let opened = 0;
+    for (const env of data.messages.slice(0, 64)) {
+      if (record !== rec && (!record || record.key !== rec.key)) return opened; // unlinked meanwhile
+      const r = await openEnvelope(value, env, { box: 'to-app', now: now(), seen });
+      if (!r.ok) continue; // dropped, silently
+      opened += 1;
+      handle(r.message);
+    }
+    if (typeof data.last === 'string' && ID_RE.test(data.last)) cursor = data.last;
+    saveInbox();
+    return opened;
+  }
+
+  // ---- what goes out -------------------------------------------------------------------------------------
+  function post(rec, envelope, signal) {
+    return requestHomeBase(baseOf(rec.core), 'relay/to-ext', { method: 'POST', body: envelope, timeoutMs: REPLY_TIMEOUT_MS, fetchImpl, signal, probe: false });
+  }
+
+  async function sealFor(rec, kind, body) {
+    return sealEnvelope(await keyOf(rec), { box: 'to-ext', kind, body, at: now() });
+  }
+
+  /** A message that wants no reply (hello, unlinked). Resolves when the home base took it (or didn't). */
+  async function tell(kind, body = {}, rec = record) {
+    if (!rec) return false;
+    try {
+      const r = await post(rec, await sealFor(rec, kind, body));
+      return !!r.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  function sendHello() {
+    if (record && record.linkedAt) tell('hello', { app: 'jarvis', version: cleanText(version, 24) || 'dev' });
+  }
+
+  /** A request: one reply whose `re` is its id, or { ok: false, reason: 'offline' } after 10 s. */
+  async function request(kind, body, { needOnline = true } = {}) {
+    const rec = record;
+    if (!isLinked() || !rec) return { ok: false, reason: 'unlinked' };
+    if (needOnline && !isOnlineNow()) return { ok: false, reason: 'offline' };
+    let envelope;
+    try {
+      envelope = await sealFor(rec, kind, body);
+    } catch {
+      return { ok: false, reason: 'bad' };
+    }
+    return new Promise((resolve) => {
+      const entry = {
+        kind,
+        resolve(value) {
+          if (pending.get(envelope.id) !== entry) return;
+          pending.delete(envelope.id);
+          cancelLater(entry.timer);
+          resolve(value);
+        },
+      };
+      entry.timer = later(() => entry.resolve({ ok: false, reason: 'offline' }), REPLY_TIMEOUT_MS);
+      pending.set(envelope.id, entry);
+      post(rec, envelope).then(
+        (r) => {
+          if (!r.ok) entry.resolve({ ok: false, reason: 'offline' });
+        },
+        () => entry.resolve({ ok: false, reason: 'offline' }),
+      );
+    });
+  }
+
+  function interpret(kind, reply) {
+    if (!reply.ok) return { ok: false, reason: reply.reason, ...(reply.why ? { why: reply.why } : {}) };
+    if (kind === 'open') {
+      let site = reply.site || '';
+      if (!site && reply.url) {
+        try {
+          site = new URL(reply.url).hostname;
+        } catch {
+          site = '';
+        }
+      }
+      return { ok: true, site };
+    }
+    if (kind === 'start') return reply.id ? { ok: true, id: reply.id } : { ok: false, reason: 'bad' };
+    if (kind === 'ping') {
+      if (reply.status) voiceApprovals = reply.status.voiceApprovals;
+      return { ok: true, status: reply.status || null };
+    }
+    return { ok: true };
+  }
+
+  // ---- holding the link: the long poll and the status ------------------------------------------------------
+  function backoff(failures, r) {
+    if (r && r.kind === 'http' && r.status === 404) return OLD_CORE_RETRY_MS;
+    const base = BACKOFF_MS[Math.min(failures, BACKOFF_MS.length) - 1] || BACKOFF_MS[0];
+    return Math.round(base * (0.8 + 0.4 * random()));
+  }
+
+  function setProblem(p) {
+    if (problem === p) return;
+    problem = p;
+    changed();
+  }
+
+  async function pollLoop(ctl) {
+    let failures = 0;
+    while (holding === ctl && !destroyed && record) {
+      const rec = record;
+      const q = [`wait=${POLL_WAIT_S}`];
+      if (cursor) q.push(`after=${cursor}`);
+      const started = now();
+      let r;
+      try {
+        r = await requestHomeBase(baseOf(rec.core), `relay/to-app?${q.join('&')}`, { timeoutMs: (POLL_WAIT_S + 15) * 1000, fetchImpl, signal: ctl.abort.signal, probe: false, maxChars: READ_MAX_CHARS });
+      } catch {
+        r = { ok: false, kind: 'unreachable' };
+      }
+      if (holding !== ctl || destroyed) break;
+      if (r.ok) {
+        failures = 0;
+        setProblem(null);
+        let opened = 0;
+        try {
+          opened = await receive(rec, r.data);
+        } catch {
+          opened = 0;
+        }
+        if (opened) await sleep(AFTER_BATCH_MS, ctl);
+        else if (now() - started < MIN_POLL_MS) await sleep(MIN_POLL_MS, ctl);
+        continue;
+      }
+      if (r.kind === 'aborted') break;
+      failures += 1;
+      setProblem(problemOf(r));
+      await sleep(backoff(failures, r), ctl);
+    }
+  }
+
+  async function checkStatus(signal) {
+    const rec = record;
+    if (!rec) return;
+    let r;
+    try {
+      r = await requestHomeBase(baseOf(rec.core), 'relay/status', { timeoutMs: REPLY_TIMEOUT_MS, fetchImpl, signal, probe: false });
+    } catch {
+      r = { ok: false, kind: 'unreachable' };
+    }
+    if (record !== rec || destroyed) return;
+    if (!r.ok) {
+      if (r.kind !== 'aborted') setProblem(problemOf(r));
+      return;
+    }
+    const ext = posInt(r.data.extSeenAt);
+    if (ext && ext > statusSeen) statusSeen = ext;
+    if (problem === 'old-core' || problem === 'unreachable' || problem === 'down') problem = null;
+    if (record.linkedAt && statusSeen - savedSeen >= SEEN_SAVE_MS && statusSeen - now() < ONLINE_MS) {
+      record = { ...record, extSeenAt: Math.min(statusSeen, now()) };
+      savedSeen = record.extSeenAt;
+      save(record);
+    }
+    shareState();
+    changed();
+  }
+
+  async function statusLoop(ctl) {
+    while (holding === ctl && !destroyed && record) {
+      if (record.linkedAt) await checkStatus(ctl.abort.signal);
+      if (holding !== ctl || destroyed) break;
+      await sleep(STATUS_EVERY_MS, ctl);
+    }
+  }
+
+  function hold(ctl) {
+    if (lockCtl !== ctl || destroyed) {
+      if (ctl.release) ctl.release();
+      return;
+    }
+    holding = ctl;
+    loadInbox();
+    if (record && record.linkedAt) sendHello();
+    pollLoop(ctl);
+    statusLoop(ctl);
+    changed();
+  }
+
+  function wantLock() {
+    return computer && !destroyed && !!record;
+  }
+
+  function syncLock() {
+    if (wantLock()) {
+      if (!lockCtl) acquire();
+    } else if (lockCtl) {
+      release();
+    }
+  }
+
+  function acquire() {
+    const ctl = { abort: new AbortController(), release: null };
+    lockCtl = ctl;
+    if (!locks) {
+      hold(ctl);
+      return;
+    }
+    let request;
+    try {
+      request = locks.request(CHROME_LINK_LOCK, { signal: ctl.abort.signal }, () =>
+        new Promise((resolve) => {
+          ctl.release = resolve;
+          hold(ctl);
+        }),
+      );
+    } catch {
+      hold(ctl);
+      return;
+    }
+    if (request && typeof request.catch === 'function') request.catch(() => {}); // aborted before it was granted
+  }
+
+  function release() {
+    const ctl = lockCtl;
+    lockCtl = null;
+    if (!ctl) return;
+    if (holding === ctl) holding = null;
+    ctl.abort.abort();
+    if (ctl.release) ctl.release();
+    changed();
+  }
+
+  // ---- the clipboard ----------------------------------------------------------------------------------------
+  function maybeClearClipboard() {
+    if (!copied || !clipboard) return;
+    if (now() - copied.at > CLIPBOARD_CLEAR_MS) {
+      copied = null;
+      return;
+    }
+    const clear = () => {
+      if (!copied) return;
+      Promise.resolve()
+        .then(() => clipboard.writeText(''))
+        .then(
+          () => {
+            copied = null;
+            clearedAt = now();
+            changed();
+          },
+          () => {
+            // Not allowed now (the window isn't focused): try again when it is.
+            if (win && typeof win.addEventListener === 'function') win.addEventListener('focus', clear, { once: true });
+          },
+        );
+    };
+    let focused = true;
+    try {
+      focused = !win || !win.document || typeof win.document.hasFocus !== 'function' || win.document.hasFocus();
+    } catch {
+      focused = true;
+    }
+    if (focused) clear();
+    else if (win && typeof win.addEventListener === 'function') win.addEventListener('focus', clear, { once: true });
+  }
+
+  // ---- other windows ------------------------------------------------------------------------------------------
+  function onChannel(event) {
+    const m = event && event.data;
+    if (!isObj(m) || destroyed) return;
+    if (m.t === 'reply') {
+      const reply = cleanReply(m.reply);
+      const entry = reply && pending.get(reply.re);
+      if (entry) entry.resolve(interpret(entry.kind, reply));
+    } else if (m.t === 'state' && !holding) {
+      task = isObj(m.task) ? cleanTask(m.task) : null;
+      voiceApprovals = m.voiceApprovals === true;
+      if (posInt(m.heard) && m.heard > heard) heard = m.heard;
+      extVersion = cleanText(m.extVersion, 24);
+      changed();
+    } else if (m.t === 'ask' && holding) {
+      shareState();
+    }
+  }
+
+  // ---- Settings → Jarvis for Chrome -------------------------------------------------------------------------
+  function homeBaseCore() {
+    const base = (() => {
+      try {
+        return getHomeBase() || '';
+      } catch {
+        return '';
+      }
+    })();
+    const r = base ? normalizeHomeBaseUrl(base) : null;
+    return r && r.ok ? r.url.replace(/\/$/, '') : null;
+  }
+
+  const control = {
+    info,
+    onChange(fn) {
+      if (typeof fn !== 'function') return () => {};
+      controlListeners.add(fn);
+      return () => controlListeners.delete(fn);
+    },
+    /** Link: a new key (kept here only) and a link code to copy. */
+    begin() {
+      if (!computer) return { ok: false, reason: 'phone' };
+      if (record) return record.linkedAt ? { ok: false, reason: 'linked' } : { ok: true };
+      const core = homeBaseCore();
+      if (!core || !isCoreOrigin(core)) return { ok: false, reason: 'no-home-base' };
+      note = null;
+      clearedAt = 0;
+      storage.remove(CHROME_LINK_INBOX_KEY);
+      save({ v: 1, core, key: newLinkKey(), linkedAt: null, extSeenAt: null, madeAt: now() });
+      reload();
+      return record ? { ok: true } : { ok: false, reason: 'storage' };
+    },
+    /** The link code while a link waits for Jarvis for Chrome (null otherwise). */
+    code() {
+      return record && !record.linkedAt ? makeLinkCode({ core: record.core, key: record.key }) : null;
+    },
+    /** Put the link code on the clipboard; it is cleared once linked (if within 10 minutes). */
+    async copyCode() {
+      const code = control.code();
+      if (!code) return { ok: false, reason: 'no-code' };
+      if (!clipboard) return { ok: false, reason: 'clipboard' };
+      try {
+        await clipboard.writeText(code);
+      } catch {
+        return { ok: false, reason: 'clipboard' };
+      }
+      copied = { at: now() };
+      changed();
+      return { ok: true };
+    },
+    /** Stop waiting for Jarvis for Chrome: the unused key is forgotten. */
+    cancel() {
+      if (record && !record.linkedAt) forget(null);
+    },
+    /** Unlink: tell Jarvis for Chrome if it can be reached (5 s at most), then forget the key here. */
+    async unlink() {
+      const rec = record;
+      if (!rec) return;
+      if (rec.linkedAt) {
+        await Promise.race([tell('unlinked', {}, rec), new Promise((r) => later(r, 5000))]);
+      }
+      if (record && record.key === rec.key) forget(null);
+    },
+    /** Ask the home base now whether Jarvis for Chrome is reading its box (Settings opened). */
+    async refresh() {
+      if (!isLinked()) return info();
+      await checkStatus(null);
+      return info();
+    },
+    /** A round trip to Jarvis for Chrome: { ok: true, status } or { ok: false, reason }. */
+    ping() {
+      return request('ping', {});
+    },
+    dismissNote() {
+      note = null;
+      changed();
+    },
+  };
+
+  // ---- app.chromeLink (contract (f)) ---------------------------------------------------------------------------
+  const api = {
+    state,
+    subscribe(fn) {
+      if (typeof fn !== 'function') return () => {};
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    open(url, { rect = null, focus } = {}) {
+      const href = cleanOpenUrl(url);
+      if (!href) return Promise.resolve({ ok: false, reason: 'bad' });
+      const where = cleanRect(rect);
+      return request('open', { url: href, rect: where, focus: typeof focus === 'boolean' ? focus : !where });
+    },
+    startTask({ text, chat = 'new' } = {}) {
+      const words = cleanText(text, TEXT_MAX);
+      if (!words) return Promise.resolve({ ok: false, reason: 'bad' });
+      return request('start', { text: words, chat: chat === 'same' ? 'same' : 'new', from: 'voice' });
+    },
+    async stopTask() {
+      // Stop goes out even when the extension seems offline: it is the safe direction, and the relay keeps it
+      // for 2 minutes.
+      await request('stop', {}, { needOnline: false });
+    },
+    answer({ promptId, hash, choice, via = 'voice' } = {}) {
+      const p = token(promptId);
+      const c = token(choice, WORD_RE);
+      if (!p || !ID_RE.test(hash || '') || !c) return Promise.resolve({ ok: false, reason: 'bad' });
+      return request('answer', { promptId: p, hash, choice: c, via: via === 'card' ? 'card' : 'voice' }).then((r) => (r.ok ? { ok: true } : r));
+    },
+    onPrompt(fn) {
+      if (typeof fn !== 'function') return () => {};
+      promptListeners.add(fn);
+      return () => promptListeners.delete(fn);
+    },
+    onPromptClosed(fn) {
+      if (typeof fn !== 'function') return () => {};
+      closedListeners.add(fn);
+      return () => closedListeners.delete(fn);
+    },
+    onDone(fn) {
+      if (typeof fn !== 'function') return () => {};
+      doneListeners.add(fn);
+      return () => doneListeners.delete(fn);
+    },
+  };
+
+  // ---- start ------------------------------------------------------------------------------------------------
+  const unwatch = storage.watch ? storage.watch(CHROME_LINK_KEY, () => reload()) : () => {};
+  if (channel) {
+    try {
+      channel.onmessage = onChannel;
+    } catch {
+      /* ignore */
+    }
+  }
+  record = computer ? load() : null;
+  if (record && record.extSeenAt) savedSeen = record.extSeenAt;
+  syncLock();
+  broadcast({ t: 'ask' });
+  changed();
+
+  function destroy() {
+    if (destroyed) return;
+    destroyed = true;
+    try {
+      unwatch();
+    } catch {
+      /* ignore */
+    }
+    release();
+    for (const [, entry] of Array.from(pending)) entry.resolve({ ok: false, reason: 'offline' });
+    for (const t of Array.from(timers)) cancelLater(t);
+    if (channel) {
+      try {
+        channel.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    listeners.clear();
+    controlListeners.clear();
+    promptListeners.clear();
+    closedListeners.clear();
+    doneListeners.clear();
+  }
+
+  return { api, control, destroy };
+}
+
+/**
+ * app.js (part 2): one call. Returns { api: app.chromeLink, control: for Settings, destroy }.
+ *   getSettings: platform/settings.js getSettings (the home base's address).
+ */
+export function installChromeLink({ getSettings, version } = {}) {
+  return createChromeLink({
+    getHomeBase: () => {
+      try {
+        return (getSettings && getSettings().homeBaseUrl) || '';
+      } catch {
+        return '';
+      }
+    },
+    ...(version ? { version } : {}),
+  });
+}
