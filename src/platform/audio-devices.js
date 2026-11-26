@@ -450,6 +450,8 @@ export function createAudioDevices({ getSettings = () => ({}), scope = globalThi
     return openMic(want, { scope }).then(
       (mic) => {
         const dev = trackDevice({ label: mic.label, id: mic.deviceId });
+        // Its microphone going away (ended) or switching (mute, unmute): the watcher has a look.
+        for (const type of ['ended', 'mute', 'unmute']) safe(() => mic.track.addEventListener(type, () => check()));
         if (chime) {
           firstSound(mic.track, SWITCH_CHIME_MAX_MS, scope).then(() => releaseChime());
         }

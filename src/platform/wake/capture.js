@@ -14,6 +14,8 @@
 //                            of 'no-mic'
 //                            onRelease({ id, label }) (v8.1): the microphone was let go (a Bluetooth one makes
 //                            George wait a moment: the speakerphone switches back to its music mode)
+//                            onTrack(type) (v8.1): the live track's 'ended', 'mute' or 'unmute' (the device
+//                            watcher checks whether the chosen microphone went away)
 //   cap.prepare()            inside a tap: create/resume the AudioContext (iOS starts audio only there)
 //   await cap.start({ clap, sensitivity, word })  -> { ok: true } | { ok: false, reason }
 //                            reason: 'unsupported' | 'denied' | 'no-mic' | 'busy' | 'error'
@@ -37,7 +39,7 @@ import { audioConstraints } from '../../lib/audio-devices.js';
 const RAW = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 const PROCESSED = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
-export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WORKLET_PATH, onClap = () => {}, onState = () => {}, processed = false, device = null, onRelease = null } = {}) {
+export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WORKLET_PATH, onClap = () => {}, onState = () => {}, processed = false, device = null, onRelease = null, onTrack = null } = {}) {
   let ctx = null;
   let moduleReady = null; // Promise of addModule (per context)
   let stream = null;
@@ -203,11 +205,27 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
         if (stream && stream.getAudioTracks().includes(track) && state === 'live') {
           stop({ quiet: true });
           setState('off', { reason: 'ended' });
+          tell('ended');
         }
       });
+      // v8.1: a track muted or unmuted by the system (a Bluetooth device switching or leaving): worth a look.
+      for (const type of ['mute', 'unmute']) {
+        track.addEventListener(type, () => {
+          if (stream && stream.getAudioTracks().includes(track)) tell(type);
+        });
+      }
     }
     setState('live', fellBack ? { fellBack: true } : {});
     return fellBack ? { ok: true, fellBack: true } : { ok: true };
+  }
+
+  function tell(type) {
+    if (typeof onTrack !== 'function') return;
+    try {
+      onTrack(type);
+    } catch {
+      /* decoration */
+    }
   }
 
   function fireClap(ev) {

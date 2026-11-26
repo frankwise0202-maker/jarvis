@@ -43,7 +43,16 @@ function fakeScope({ devices = [...MAC, ...SP], userAgent = MAC_UA, permission =
         throw e;
       }
       md.live += 1;
-      const track = { kind: 'audio', label: dev.label, readyState: 'live', getSettings: () => ({ deviceId: dev.deviceId }), addEventListener() {} };
+      const on = new Map();
+      const track = {
+        kind: 'audio',
+        label: dev.label,
+        readyState: 'live',
+        getSettings: () => ({ deviceId: dev.deviceId }),
+        addEventListener: (type, fn) => on.set(type, [...(on.get(type) || []), fn]),
+        fire: (type) => (on.get(type) || []).forEach((fn) => fn({ type })),
+      };
+      md.tracks = [...(md.tracks || []), track];
       track.stop = () => {
         if (track.readyState === 'live') md.live -= 1;
         track.readyState = 'ended';
@@ -142,6 +151,18 @@ test('Standby’s capture: today’s request with nothing chosen; the chosen dev
   assert.deepEqual(cap.device, { id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)', fellBack: false });
   cap.stop();
   assert.deepEqual(released, [{ id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)', fellBack: false }]);
+
+  // The system mutes, unmutes or ends the live track: the device watcher is told (onTrack).
+  const told = [];
+  const watched = createStandbyCapture({ scope, device: () => ({ id: 'sp-mic', processing: null }), onTrack: (type) => told.push(type) });
+  await watched.start({ clap: true });
+  const tr = scope.md.tracks[scope.md.tracks.length - 1];
+  tr.fire('mute');
+  tr.fire('unmute');
+  tr.fire('ended');
+  assert.deepEqual(told, ['mute', 'unmute', 'ended']);
+  assert.equal(watched.state, 'off', 'an ended track stops the capture, as before');
+  watched.close();
 
   // The speakerphone is off: OverconstrainedError → the default device, with a note (not 'no-mic').
   const states = [];
