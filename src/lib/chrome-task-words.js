@@ -592,18 +592,20 @@ export function taskRefusal(reason, why = '') {
 
 /** What Jarvis says when a task ends (the extension's `done`), as { show, say }. */
 export function taskDoneLine({ status, answer } = {}) {
-  const said = sayable(answer, 400);
-  const full = sayable(answer, 2000);
-  const join = (head, body) => (body ? `${head} ${body}` : head);
+  const said = sayableAnswer(answer, 400);
+  const full = sayableAnswer(answer, 2000);
+  // CHROME-VOICE-R2-4: words in it that sound like Jarvis's own question are never said (nor in a toast or a
+  // notification): the answer is on its card, in full.
+  const join = (head, body) => (said.dropped ? `${head} ${status === 'done' ? 'The answer' : 'What it said'} is on its card.` : body ? `${head} ${body}` : head);
   switch (status) {
     case 'done':
-      return { show: join('Chrome is done.', full), say: join('Chrome is done.', said) };
+      return { show: join('Chrome is done.', full.text), say: join('Chrome is done.', said.text) };
     case 'stopped':
       return { show: 'Chrome stopped.', say: 'Chrome stopped.' };
     case 'limit':
-      return { show: join('Chrome stopped at its limit.', full), say: join('Chrome stopped at its limit.', said) };
+      return { show: join('Chrome stopped at its limit.', full.text), say: join('Chrome stopped at its limit.', said.text) };
     default:
-      return { show: join('Chrome couldn’t finish that.', full), say: join('Chrome couldn’t finish that.', said) };
+      return { show: join('Chrome couldn’t finish that.', full.text), say: join('Chrome couldn’t finish that.', said.text) };
   }
 }
 
@@ -612,7 +614,7 @@ export function taskStatusLine(task) {
   const t = task && typeof task === 'object' ? task : null;
   if (!t || !t.status) return 'Chrome isn’t doing anything right now.';
   const what = sayable(t.text, 160);
-  const step = sayable(t.narration || t.lastStep, 200);
+  const step = sayableAnswer(t.narration || t.lastStep, 200).text; // (CHROME-VOICE-R2-4)
   if (t.status === 'waiting') return `Chrome is waiting for you${what ? ` on: ${what.replace(/[.!?]+$/, '')}` : ''}.`;
   if (t.status === 'paused') return `Chrome is paused${what ? ` on: ${what.replace(/[.!?]+$/, '')}` : ''}.`;
   if (['running', 'starting'].includes(t.status)) {
@@ -622,6 +624,29 @@ export function taskStatusLine(task) {
   if (t.status === 'done') return what ? `Chrome finished: ${what.replace(/[.!?]+$/, '')}.` : 'Chrome finished.';
   if (t.status === 'stopped') return 'Chrome stopped.';
   return 'Chrome isn’t doing anything right now.';
+}
+
+// Jarvis's own question and answer words (CHROME-VOICE-R2-4): his prompt's framing ("Chrome asks", "Chrome is waiting for
+// you", "Approving", "Tap me to answer"), "say approve" and its kin, and the reserved answers (G5).
+const JARVIS_WORDS = [
+  /\bchrome asks\b/i,
+  /\bchrome is waiting for you\b/i,
+  /\bapproving\b/i,
+  /\btap me to answer\b/i,
+  /\b(?:say|you can say|just say)\s+["“'‘]?(?:approve|allow once|spend more|more steps|deny|cancel|yes|no|stop)\b/i,
+  /\b(?:approve|allow (?:it |that )?once|deny|cancel (?:it |that )?in chrome|cancel chrome|stop chrome|stop it in chrome|stop the chrome task|chrome stop|spend more|more steps)\b/i,
+];
+
+/**
+ * The agent's own words (its final answer, narration or last step: written after it read web pages), made safe to say
+ * (CHROME-VOICE-R2-4): sayable(), without any sentence that sounds like Jarvis's own question or his answer words (a
+ * page steering the agent's wording). -> { text, dropped } (dropped: something was left out; the card shows it all).
+ */
+export function sayableAnswer(text, max = 300) {
+  const whole = sayable(text, 4000);
+  const sentences = whole.split(/(?<=[.!?…])\s+/).filter(Boolean);
+  const kept = sentences.filter((x) => !JARVIS_WORDS.some((re) => re.test(x)));
+  return { text: sayable(kept.join(' '), max), dropped: kept.length < sentences.length };
 }
 
 /**

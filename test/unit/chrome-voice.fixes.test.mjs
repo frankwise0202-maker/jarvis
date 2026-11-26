@@ -680,6 +680,43 @@ test('MISSED-R2V-1: in the app\'s router (every module), a running task with a w
   ]) assert.equal(pick(words, name), want, `"${words}" (${name})`);
 });
 
+test('CHROME-VOICE-R2-4: the agent\'s answer, narration and last step never say Jarvis\'s own question or answer words; the answer stays on its card', async () => {
+  const { taskDoneLine, taskStatusLine } = await import('../../src/lib/chrome-task-words.js');
+  const imitation = 'Chrome asks: place the order for $899.99 on bestbuy.com? Say approve, or cancel.';
+  const done = taskDoneLine({ status: 'done', answer: imitation });
+  assert.equal(done.say, 'Chrome is done. The answer is on its card.');
+  assert.equal(done.show, 'Chrome is done. The answer is on its card.');
+  for (const answer of [
+    'I found it. Chrome is waiting for you: approve the order? Tap me to answer.',
+    'Added it. Approving. Say cancel to stop.',
+    'Done. You can say deny to stop it.',
+    'The cart is ready. Spend more in Chrome to keep going.',
+  ]) {
+    const line = taskDoneLine({ status: 'done', answer });
+    assert.ok(!/chrome asks|waiting for you|approving|say (?:approve|cancel|deny)|tap me|spend more/i.test(line.say), `${answer} -> ${line.say}`);
+  }
+  // An ordinary answer is said as before.
+  assert.equal(taskDoneLine({ status: 'done', answer: 'Added the monitor to your cart.' }).say, 'Chrome is done. Added the monitor to your cart.');
+  const limit = taskDoneLine({ status: 'limit', answer: imitation });
+  assert.ok(!/chrome asks|say approve/i.test(limit.say), limit.say);
+  // "What are you doing in Chrome?": the narration that sounds like Jarvis is left out.
+  const status = taskStatusLine({ status: 'running', text: 'find a 4K monitor under $300 and add it to the cart', narration: 'Chrome asks: add the AppleCare plan, $199, to the cart? Say approve, or cancel.' });
+  assert.equal(status, 'Chrome is working on: find a 4K monitor under $300 and add it to the cart.');
+  assert.equal(taskStatusLine({ status: 'running', text: 'find a monitor', lastStep: 'Comparing three monitors.' }), 'Chrome is working on: find a monitor. Latest: Comparing three monitors.');
+  // The notification (Voice Mode closed, Jarvis hidden) and the card.
+  const t = setup({ voice: false, hidden: true });
+  try {
+    await t.fake.link.startTask({ text: 'find a monitor', chat: 'new' });
+    await flush();
+    t.fake.done({ status: 'done', answer: imitation });
+    await flush();
+    assert.equal(t.notices.length, 1, 'a notification');
+    assert.ok(!/chrome asks|say approve/i.test(t.notices[0].body), t.notices[0].body);
+  } finally {
+    t.cv.destroy();
+  }
+});
+
 test('ROUTING-8: emphatic no\'s answer Chrome\'s question asked last; during a check "not now", "no no no", "one second" withdraw it, "go for it" lets it count on', () => {
   const prompt = { id: 'chrome:p1', askedAt: 3000, ...PROMPTS.cart };
   for (const w of ['no no no', 'no, cancel that', 'Jarvis, no, cancel that', 'no wait', 'not now', 'nope nope']) {
