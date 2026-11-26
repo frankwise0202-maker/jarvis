@@ -3783,3 +3783,67 @@ it, Resume from then), `optics-live-hidden` (slow replies: one in flight; hidden
 nothing after), `optics-live-ratelimit` (429 with retry-after 3 s, then 529), `optics-live-look` (a question: a Look on
 the main model, paused, Live resumes, its cost counted), `optics-live-hour` (an 8 s session ends by itself and says
 so) and `optics-live-watch` (Watch and the live view stop each other; "stop watching").
+
+## 28. v8.1: Hands-free on a Mac
+
+<!-- v8.1: mac-hf writes 28.1, 28.4 and 28.5; mac-dev writes 28.2 and 28.3. -->
+
+### 28.1 Listening in the background
+
+<!-- v8.1: mac-hf writes this part. -->
+
+### 28.2 Microphone and speaker
+
+<!-- v8.1: mac-dev writes this part. -->
+
+### 28.3 The speakerphone coming and going
+
+<!-- v8.1: mac-dev writes this part. -->
+
+### 28.4 Interrupting by voice
+
+<!-- v8.1: mac-hf writes this part. -->
+
+### 28.5 The follow-up window, the brake and one window
+
+<!-- v8.1: mac-hf writes this part. -->
+
+## 29. v8.1: Walkthroughs
+
+<!-- v8.1: tours writes 29.1 and 29.3; tour-render writes 29.2. -->
+
+### 29.1 The tour and the planner
+
+<!-- v8.1: tours writes this part. -->
+
+### 29.2 The renderer
+
+<!-- v8.1: tour-render writes this part. -->
+
+### 29.3 Narration and voice
+
+<!-- v8.1: tours writes this part. -->
+
+## 30. v8.1: One router
+
+<!-- v8.1: voice writes this part. -->
+
+## 31. v8.1: Windows and tabs
+
+<!-- v8.1: windows writes this part. -->
+
+## 32. v8.1: Jarvis for Chrome by voice
+
+<!-- v8.1: chrome-relay writes 32.1, chrome-ext 32.2 and chrome-voice 32.3. -->
+
+### 32.1 The link and the relay
+
+<!-- v8.1: chrome-relay writes this part. -->
+
+### 32.2 The extension's side and the voice policy
+
+<!-- v8.1: chrome-ext writes this part. -->
+
+### 32.3 Asking by voice
+
+<!-- v8.1: chrome-voice writes this part. -->

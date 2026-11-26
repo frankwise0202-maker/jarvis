@@ -46,6 +46,27 @@ import homebaseSync from './scenarios/homebase-sync.mjs';
 import homebaseSenses from './scenarios/homebase-senses.mjs';
 import voiceGeorge from './scenarios/voice-george.mjs';
 import voiceGeorgeStuck from './scenarios/voice-george-stuck.mjs';
+// ==== v8.1: each builder imports its new scenario files between its two markers (keep the markers) ====
+// ---- mac-dev ▸
+// ---- mac-dev ◂
+// ---- mac-hf ▸
+// ---- mac-hf ◂
+// ---- tour-render ▸
+// ---- tour-render ◂
+// ---- tours ▸
+// ---- tours ◂
+// ---- voice ▸
+// ---- voice ◂
+// ---- chrome-voice ▸
+// ---- chrome-voice ◂
+// ---- windows ▸
+// ---- windows ◂
+// ---- optics ▸
+// ---- optics ◂
+// ---- chrome-relay ▸
+// ---- chrome-relay ◂
+// ---- chrome-ext ▸
+// ---- chrome-ext ◂
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -59,7 +80,31 @@ const presence = await optionalScenarios('./scenarios/presence.mjs');
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
 // Optics and the natural voice (v7 senses) run last; Optics' scenarios start a Chromium of their own
 // with a fake camera (browserArgs, one such browser open at a time).
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...homebaseBrain, ...homebaseSync, ...homebaseSenses, ...voiceGeorge, ...voiceGeorgeStuck, ...optics, ...opticsCamera, ...opticsLive, ...naturalVoice];
+// v8.1: each builder's scenario arrays (...audioDevices,) go between its two markers (keep the markers).
+// They run after today's scenarios.
+const V81_SCENARIOS = [
+  // ---- mac-dev ▸
+  // ---- mac-dev ◂
+  // ---- mac-hf ▸
+  // ---- mac-hf ◂
+  // ---- tour-render ▸
+  // ---- tour-render ◂
+  // ---- tours ▸
+  // ---- tours ◂
+  // ---- voice ▸
+  // ---- voice ◂
+  // ---- chrome-voice ▸
+  // ---- chrome-voice ◂
+  // ---- windows ▸
+  // ---- windows ◂
+  // ---- optics ▸
+  // ---- optics ◂
+  // ---- chrome-relay ▸
+  // ---- chrome-relay ◂
+  // ---- chrome-ext ▸
+  // ---- chrome-ext ◂
+];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...homebaseBrain, ...homebaseSync, ...homebaseSenses, ...voiceGeorge, ...voiceGeorgeStuck, ...optics, ...opticsCamera, ...opticsLive, ...naturalVoice, ...V81_SCENARIOS];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

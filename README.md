@@ -253,6 +253,18 @@ you off.
   Black" → "play Back in Black"). In Chrome, Jarvis also tells the speech service which words to
   expect ("Jarvis", the commands and the hologram's parts).
 
+#### Everything by voice
+
+<!-- v8.1: voice writes this part. -->
+
+#### Hands-free on a Mac
+
+<!-- v8.1: mac-hf writes this part. -->
+
+#### Always on: the Mac checklist
+
+<!-- v8.1: mac-dev writes this part. -->
+
 ### Wake Jarvis (Standby)
 
 "Jarvis, wake up. Daddy's home." Put Jarvis on **Standby**, clap twice (or say "Hey Jarvis"), and
@@ -434,6 +446,10 @@ Jarvis's home screen now tells you what is going on before you ask.
   chat: a note at the top of the chat offers **Start one**, and Voice Mode starts a new chat by
   itself. Your old chats stay in History.
 
+#### Walkthroughs
+
+<!-- v8.1: tours writes this part. -->
+
 ### Screens: your other monitor, or a panel beside you
 
 Say or type it, in the chat, a hologram's command box, the camera (Optics) or Voice Mode:
@@ -472,6 +488,14 @@ it**) button appears; tap it. To skip that tap for windows, allow pop-ups for th
 (the blocked pop-up icon at the right of Chrome's address bar → Always allow). Floating panels
 always need one tap. Safari can't choose a screen or float a panel, so Jarvis opens a window you
 can drag across; on an iPhone (one screen) it opens full screen in the app.
+
+#### Windows by voice
+
+<!-- v8.1: windows writes this part. -->
+
+#### Pull it up in Chrome
+
+<!-- v8.1: windows writes this part. -->
 
 ### Apple Music
 
@@ -560,6 +584,10 @@ runs on your own computer at home, and nothing goes to any cloud.
 - **A better iPhone voice for when George isn't speaking** (free): on the iPhone, open Settings >
   Accessibility > Spoken Content > Voices > English, pick a British voice (Daniel or Arthur, for
   example) and download its Enhanced or Premium version. Jarvis already prefers those automatically.
+
+#### Microphone and speaker (Mac)
+
+<!-- v8.1: mac-dev writes this part. -->
 
 ### A more natural voice
 
@@ -730,6 +758,16 @@ Buy and add it to the cart".
   fixed, but pages built specially to fool an AI assistant can still find tricks. That is why it
   lives in its own profile and asks before anything that changes a page.
 - **Costs:** you set a budget per task (default $1); a task stops and asks before going over it.
+
+#### By voice from Jarvis
+
+##### Linking
+
+<!-- v8.1: chrome-relay writes this part. -->
+
+##### What to say
+
+<!-- v8.1: chrome-voice writes this part. -->
 
 ## What it costs
 

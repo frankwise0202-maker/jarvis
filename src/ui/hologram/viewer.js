@@ -15,6 +15,9 @@
 //                           spoken: Voice Mode says the acknowledgement, so no toast; later: the
 //                           reply that builds it still streams, so a 2D request waits ({ later: true })
 //   v.submit(text)          what the command field does: local command first, else a chat message
+//                           (v8.1: deps.route(text, opts), the app's router, picks the command:
+//                           this hologram's, Screens or Apple Music; without it, this hologram's)
+//   v.parts()               [{ id, name, aka }]: the parts its commands match (the router's state)
 //   v.follow(run)           caption a reply that Voice Mode follows (text only: Voice Mode opens
 //                           what it shows)
 //   v.note(text)            a caption from Voice Mode ("I'll take that once the hologram is built.")
@@ -1158,6 +1161,19 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     if (turn && turn.status && turn.status !== 'running') onEnd(turn);
   }
 
+  /** v8.1: a local command the app carried out (Screens, Apple Music): its line in the caption, once known. */
+  function showNotice(notice) {
+    showCaption({ status: 'thinking', text: '' });
+    Promise.resolve(notice).then(
+      (line) => {
+        if (!disposed) showCaption({ status: 'done', text: String(line ?? '') });
+      },
+      (err) => {
+        if (!disposed) showCaption({ status: 'error', text: (err && err.message) || 'That message couldn’t be sent.' });
+      },
+    );
+  }
+
   async function sendToJarvis(text) {
     if (typeof deps.sendMessage !== 'function') {
       say('That isn’t a viewer command.');
@@ -1450,6 +1466,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     isOpen: () => !disposed,
     /** The parts' names and other names (aka): what Voice Mode listens for while this is open. */
     partNames: () => partNamesForVoice(),
+    /** v8.1: the parts its commands match, [{ id, name, aka }] (the command router's state). */
+    parts: () => partsForMatcher(),
     getState: () => ({ ...state, status: model.status, libraryId: model.libraryId, segmentId: model.segmentId, title: (model.spec && model.spec.title) || model.title, panel }),
     /** A newer copy of a hologram segment (forwarded by the app for any run). */
     update: (seg) => onSegment(seg),
@@ -1528,8 +1546,30 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       syncVoiceMic();
       el.dataset.voice = voiceInfo ? (voiceInfo.listening ? 'listening' : voiceInfo.state || 'idle') : '';
     },
-    /** The command field: a local command first, otherwise a chat message to Jarvis. */
+    /**
+     * The command field: a local command first, otherwise a chat message to Jarvis. v8.1: the app's
+     * router (deps.route) picks the command, in this surface's order (today: this hologram's, then
+     * Screens, then Apple Music): its result, { handled: true, notice: Promise<line> } (shown in the
+     * caption) or null (the words go to Jarvis). Without a router: this hologram's commands first.
+     */
     submit(text, opts = {}) {
+      if (typeof deps.route === 'function') {
+        let routed;
+        try {
+          routed = deps.route(text, { ...opts, viewer: api });
+        } catch (err) {
+          console.warn('[jarvis] the router failed', err);
+          routed = undefined;
+        }
+        if (routed && routed.handled) {
+          if (routed.notice) showNotice(routed.notice);
+          return routed;
+        }
+        if (routed === null) {
+          sendToJarvis(String(text || '').trim());
+          return { handled: false };
+        }
+      }
       const res = api.command(text, opts);
       if (!res.handled) sendToJarvis(String(text || '').trim());
       return res;
