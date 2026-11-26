@@ -5,7 +5,7 @@
 //
 //   const standby = createStandby({ getSettings, onSettingsChange, createCore, wakeLock,
 //                                   createCapture, createWakeWord, statusLine, stateWord, chronometer,
-//                                   onWake, onExit, unlock, pauseWhenHidden, isIOS });
+//                                   onWake, onExit, unlock, pauseWhenHidden, isIOS, createLock, bargeIn });
 //   standby.enter()       inside a tap where possible (iOS starts audio only there): show it, listen
 //   standby.enter({ again: true })   v7.8.1: entered again without a tap (Voice Mode closed into Standby):
 //                         unlock({ tap: false }), so what the voice knows about stuck audio stays
@@ -21,6 +21,17 @@
 //
 // The page hidden: on a phone (pauseWhenHidden) listening pauses and comes back when Jarvis is on
 // screen again (iOS stops it anyway); on a Mac it keeps listening in a background tab or window.
+//
+// v8.1 (SPEC §28.4, §28.5):
+//   createLock(onChange)  one Jarvis per Mac answers (A9): platform/standby-lock.js. Standby takes the lock
+//                         before it listens and keeps it through a woken session; while another window
+//                         holds it, this one doesn't listen and says so ("Standby is on in another Jarvis
+//                         window"), with Use this window. Without it (or without Web Locks): as before.
+//   bargeIn               { keep() -> boolean, detected({ trigger }) -> boolean } (A8): at a wake where
+//                         keep() says so (a Mac in setup 1 or 3, the hands-free Test passed), the
+//                         microphone and "Hey Jarvis" stay on through the session instead of being released;
+//                         two claps or "Hey Jarvis" then go to detected() (Voice Mode decides: George
+//                         speaking, not his own "Jarvis"), and Standby takes the same microphone back after.
 // OLED: a black page, dim text, the content shifted a few pixels every minute, dimmer after 5 min.
 
 import { h, setText } from './dom.js';
@@ -56,6 +67,8 @@ export function createStandby(deps = {}) {
     unlock = () => {},
     pauseWhenHidden = false,
     isIOS = false,
+    createLock = null,
+    bargeIn = null,
   } = deps;
 
   let phase = 'closed'; // 'closed' | 'open' | 'awaiting' (woken: Voice Mode is up)
@@ -75,7 +88,9 @@ export function createStandby(deps = {}) {
   let offs = [];
   let lastTrigger = 0;
   let prevFocus = null;
+  let kept = false; // v8.1: the microphone stayed on through the woken session (barge-in)
   const els = {};
+  const lock = typeof createLock === 'function' ? safeLock(() => createLock((st) => onLockChange(st))) : null;
 
   const settings = () => {
     try {
@@ -105,8 +120,9 @@ export function createStandby(deps = {}) {
     els.pillText = h('span', { class: 'standby-pill-text' });
     els.pill = h('p', { class: 'standby-pill', attrs: { 'data-testid': 'standby-pill', role: 'status' } }, els.pillDot, els.pillText);
     els.hint = h('p', { class: 'standby-hint', attrs: { 'data-testid': 'standby-hint' } });
+    els.useHere = h('button', { class: 'btn btn-sm standby-use-here', type: 'button', hidden: true, attrs: { 'data-testid': 'standby-use-here' }, on: { click: onUseHere } }, h('span', { text: 'Use this window' }));
     els.leave = h('span', { class: 'standby-leave', attrs: { 'aria-hidden': 'true' } }, icon('moon', { size: 14 }), h('span', { text: 'Tap anywhere to leave Standby' }));
-    const foot = h('div', { class: 'standby-foot' }, els.pill, els.hint, els.leave);
+    const foot = h('div', { class: 'standby-foot' }, els.pill, els.hint, els.useHere, els.leave);
     els.live = h('p', { class: 'visually-hidden', attrs: { 'aria-live': 'polite', 'data-testid': 'standby-announcer' } });
     root = h(
       'div',
@@ -231,6 +247,7 @@ export function createStandby(deps = {}) {
       offs = [listenOn(document, 'visibilitychange', onVisibility), listenOn(window, 'pagehide', onPageHide), listenOn(document, 'keydown', onKey, true)];
     }
     if (typeof onSettingsChange === 'function' && !unsubSettings) unsubSettings = onSettingsChange(() => applySettings());
+    if (lock) lock.acquire(); // v8.1: one window listens (its answer starts listening: onLockChange)
     render();
     announce(`Standby. ${listenSummary()}`);
     startListening();
@@ -241,8 +258,10 @@ export function createStandby(deps = {}) {
     if (phase === 'closed') return;
     const was = phase;
     phase = 'closed';
+    kept = false;
     teardown();
     stopWord({ terminate: true });
+    if (lock) lock.release();
     if (capture) {
       try {
         capture.close();
@@ -289,15 +308,20 @@ export function createStandby(deps = {}) {
 
   /** Two claps or "Hey Jarvis": release the microphone, then wake (Voice Mode, the routine). */
   function trigger(kind) {
+    if (phase === 'awaiting') return kept ? interrupt(kind) : false;
     if (phase !== 'open') return false;
     const now = Date.now();
     if (now - lastTrigger < 1500) return false;
     lastTrigger = now;
     phase = 'awaiting';
-    // The microphone goes first: Voice Mode's speech recognition must find it free (iOS).
-    if (capture) capture.stop();
-    listen = 'off';
-    wordPortGiven = false;
+    // v8.1 barge-in (a Mac in setup 1 or 3): the microphone and "Hey Jarvis" stay on through the session.
+    kept = listen === 'live' && !!capture && capture.live === true && keepForBargeIn();
+    if (!kept) {
+      // The microphone goes first: Voice Mode's speech recognition must find it free (iOS).
+      if (capture) capture.stop();
+      listen = 'off';
+      wordPortGiven = false;
+    }
     if (word) word.reset();
     teardown();
     unmount();
@@ -309,6 +333,79 @@ export function createStandby(deps = {}) {
     return true;
   }
 
+  function keepForBargeIn() {
+    try {
+      return !!bargeIn && typeof bargeIn.keep === 'function' && bargeIn.keep() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** v8.1: two claps or "Hey Jarvis" heard during the woken session (the microphone kept): Voice Mode decides. */
+  function interrupt(kind) {
+    const now = Date.now();
+    if (now - lastTrigger < 1500 || !bargeIn || typeof bargeIn.detected !== 'function') return false;
+    let acted = false;
+    try {
+      acted = bargeIn.detected({ trigger: kind === 'word' ? 'word' : 'clap' }) === true;
+    } catch (err) {
+      console.error('[jarvis] barge-in failed:', err);
+    }
+    if (acted) {
+      lastTrigger = now;
+      if (word) word.reset(); // the same "Hey Jarvis" is not heard twice
+    }
+    return acted;
+  }
+
+  // ------------------------------------------------------------------------------ the lock (v8.1)
+
+  function safeLock(fn) {
+    try {
+      return fn() || null;
+    } catch (err) {
+      console.warn('[jarvis] standby lock unavailable', err);
+      return null;
+    }
+  }
+
+  /** This window may listen: it holds the lock (or there is no lock: as before). */
+  function lockHeld() {
+    return !lock || lock.state === 'held' || lock.state === 'unsupported';
+  }
+
+  function onLockChange(st) {
+    if (phase === 'open') {
+      if (st === 'held') startListening();
+      else if (st === 'elsewhere' && listen !== 'elsewhere') {
+        // Another window took Standby ("Use this window" there): this one stops listening.
+        if (capture) capture.stop();
+        if (word) word.reset();
+        wordPortGiven = false;
+        listen = 'elsewhere';
+        announce('Standby is on in another Jarvis window.');
+      }
+      render();
+    } else if (phase === 'awaiting' && st === 'elsewhere' && kept) {
+      // Taken during a woken session: the microphone kept for barge-in goes too.
+      kept = false;
+      if (capture) capture.stop();
+      listen = 'off';
+      wordPortGiven = false;
+    }
+  }
+
+  /** "Use this window": Standby moves here from the window that has it. */
+  function onUseHere(event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation(); // not the tap that leaves Standby
+    }
+    if (phase !== 'open' || !lock || lock.state !== 'elsewhere') return;
+    lock.take();
+    render();
+  }
+
   // ------------------------------------------------------------------------------ listening
 
   async function startListening() {
@@ -316,10 +413,33 @@ export function createStandby(deps = {}) {
     const wantClap = clapOn();
     const wantWord = wordOn();
     if (!wantClap && !wantWord) {
+      kept = false;
       capture.stop();
       listen = 'off';
       render();
       return;
+    }
+    if (!lockHeld()) {
+      // Another Jarvis window has Standby (or the answer is on its way): this one doesn't listen.
+      kept = false;
+      capture.stop();
+      wordPortGiven = false;
+      listen = lock.state === 'elsewhere' ? 'elsewhere' : 'off';
+      render();
+      return;
+    }
+    if (kept) {
+      // Back from a session that kept the microphone (barge-in): the same capture listens on.
+      kept = false;
+      if (capture.live === true && listen === 'live') {
+        capture.configure({ clap: wantClap, sensitivity: sensitivity() });
+        if (wantWord) {
+          ensureWord();
+          connectWord();
+        }
+        render();
+        return;
+      }
     }
     if (pauseWhenHidden && document.hidden) {
       listen = 'paused';
@@ -337,6 +457,10 @@ export function createStandby(deps = {}) {
     const res = await capture.start({ clap: wantClap, sensitivity: sensitivity(), word: wantWord && wordReady() });
     if (phase !== 'open') {
       if (res.ok) capture.stop();
+      return;
+    }
+    if (!lockHeld()) {
+      if (res.ok) capture.stop(); // v8.1: another window took Standby while the microphone started
       return;
     }
     if (res.ok && !clapOn() && !wordReady()) {
@@ -488,6 +612,21 @@ export function createStandby(deps = {}) {
 
   function onKey(event) {
     if (phase !== 'open') return;
+    const useHere = !!els.useHere && !els.useHere.hidden;
+    if (useHere && document.activeElement === els.useHere && (event.key === 'Enter' || event.key === ' ')) {
+      onUseHere(event); // v8.1: the one other control
+      return;
+    }
+    if (useHere && event.key === 'Tab') {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        (document.activeElement === els.useHere ? root : els.useHere).focus({ preventScroll: true });
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
     if (event.key === 'Escape' || event.key === 'Esc' || event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       event.stopPropagation();
@@ -585,6 +724,11 @@ export function createStandby(deps = {}) {
     } else {
       pill = 'NOT LISTENING';
     }
+    if (listen === 'elsewhere') {
+      pill = 'NOT LISTENING IN THIS WINDOW'; // v8.1: another Jarvis window has Standby
+      tone = 'off';
+    }
+    els.useHere.hidden = listen !== 'elsewhere';
     setText(els.pillText, pill);
     els.pill.dataset.tone = tone;
     els.pill.setAttribute('aria-label', what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : micOn ? `The microphone is on, on this device only${wordComing ? '; “Hey Jarvis” is getting ready' : ''}.` : pill.toLowerCase());
@@ -597,6 +741,7 @@ export function createStandby(deps = {}) {
 
   function hintText(what, ws) {
     const both = clapOn() && wordOn();
+    if (listen === 'elsewhere') return 'Standby is on in another Jarvis window.';
     if (listen === 'denied') return 'Allow the microphone for Jarvis in your browser’s settings to wake him by clapping or by voice.';
     if (listen === 'no-mic') return 'Connect a microphone to wake Jarvis by clapping or by voice.';
     if (listen === 'needs-tap') return 'This browser needs one tap before it listens.';
