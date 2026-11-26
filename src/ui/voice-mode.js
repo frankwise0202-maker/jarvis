@@ -1069,7 +1069,7 @@ function createVoiceMode(opts) {
     // the same thing): one reading, and no 2-second check (Enter sends; a command acts at once).
     const local = { ...routeLocal([text]), via: 'typed' };
     let hit = routeWords([text], local);
-    if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt')) questions.dropTop('dropped');
+    if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt' && hit.id !== 'chrome-prompt')) questions.dropTop('dropped');
     while (hit) {
       // An approval for Chrome keeps its check, typed too (it approves a step on a web page).
       if (act(hit, [text], { reviewed: hit.id !== 'prompt', typed: true })) return;
@@ -3021,8 +3021,9 @@ function createVoiceMode(opts) {
     // withdraw it (nothing goes to Chrome), and are routed as usual.
     if (C.check && !(hit && hit.action && hit.action.do === 'chrome-check')) withdrawCheck(C.check, 'other');
     // A question waiting that doesn't keep goes once other words are heard ("Shall I draw a blueprint
-    // of …?": anything but yes or no drops it, and the words are taken as usual).
-    if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt')) questions.dropTop('dropped');
+    // of …?": anything but yes or no drops it, and the words are taken as usual). Words for Chrome's question
+    // or its check (chrome-prompt) are an answer too, like the prompt's own.
+    if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt' && hit.id !== 'chrome-prompt')) questions.dropTop('dropped');
     while (hit) {
       if (act(hit, readings, opts)) return;
       hit = routeWords(readings, local, hit);
