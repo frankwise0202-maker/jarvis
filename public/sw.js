@@ -175,6 +175,14 @@ self.addEventListener('notificationclick', (event) => {
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const client of list) {
         if (!client.url.startsWith(scope) || !('focus' in client)) continue;
+        // v8.1: a notification of notify() (attention.js): the page runs its own click (NOTIFY_CLICK).
+        if (data && typeof data.notifyTag === 'string') {
+          try {
+            client.postMessage({ type: 'NOTIFY_CLICK', tag: data.notifyTag });
+          } catch {
+            /* it is focused all the same */
+          }
+        }
         if (link) {
           try {
             client.postMessage({ type: 'HOMEBASE_LINK', link });

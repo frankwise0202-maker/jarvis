@@ -133,6 +133,14 @@ dropped); `errors` maps a look number (from 1, rate-limited looks included) to
 errors are not violations. The validator accepts `thinking: { type: 'disabled' }` only on Claude
 Haiku 5.5 at effort high or below (with no other keys), as the real API does.
 
+### v8.1 hooks: walkthroughs and research
+
+`behavior.mjs` asks two hooks while it plans a lead response; each returns a plan or null (null
+leaves the routing as it was): `walkthroughPlan(env)` and `walkthroughFollowUp(env)` in
+`walkthrough.mjs` (Track 2: `[[walkthrough]]`, `show_walkthrough`), and `researchPlan(env)` in
+`optics.mjs` (Track 5: "research this"). Both are empty in Phase 0; their owners document their
+directives here.
+
 ### Voice Mode turns (the spoken reply channel)
 
 A lead request whose newest `<turn_context>` holds the line `Reply channel: spoken` (Voice Mode's
