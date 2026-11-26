@@ -1,5 +1,5 @@
 /* Settings → Jarvis for Chrome (v8.1, src/ui/chrome-link-settings.js): the link's state, the steps while linking,
-   the link code shown only when it couldn't be copied. */
+   the link code shown only when it couldn't be copied. @imported by app.css. */
 
 .cl-card {
   display: flex;
