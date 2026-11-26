@@ -23,8 +23,9 @@ import {
 } from './visuals.mjs';
 import {
   OPTICS_TOOL_NAMES, cameraIsLive, conversationFrameOf, hologramSubjectOf, isLiveRequest, isWatchRequest, liveLookPlan, lookThroughCameraPlan, opticsFollowUpPlan,
-  opticsFollowUpTextPlan, opticsFrameOf, opticsHologramSample, opticsLookPlan, watchAnswer,
+  opticsFollowUpTextPlan, opticsFrameOf, opticsHologramSample, opticsLookPlan, researchPlan, watchAnswer,
 } from './optics.mjs';
+import { walkthroughFollowUp, walkthroughPlan } from './walkthrough.mjs';
 
 const sentenceCase = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
@@ -269,6 +270,12 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
       return { plan: blueprintPlan({ think, sample, forIds: request.model ? { model: request.model, part: request.part } : null, partName: request.partName, spoken }) };
     }
     if (d.has('swarm') || d.has('waves')) return { plan: deployPlan(env, { wave: 1, count: d.int('swarm', 3, 1, 20) }) };
+    // v8.1 hooks (test/mock/walkthrough.mjs, Track 2; optics.mjs researchPlan, Track 5): null goes on.
+    const hookEnv = { body, d, prompt: stripDirectives(prompt), ctx, spoken, think, hasTool: (name) => hasTool(body, name), userMsg, msgs, frame: conversationFrameOf(msgs), pace };
+    const walkthrough = walkthroughPlan(hookEnv);
+    if (walkthrough) return { plan: walkthrough };
+    const research = researchPlan(hookEnv);
+    if (research) return { plan: research };
     if (d.has('hologram') && hasTool(body, 'show_hologram')) return { plan: hologramPlan({ think, sample: hologramSample(d), spoken, slow: d.has('slowbuild') }) };
     if (d.has('blueprint') && hasTool(body, 'draw_blueprint')) {
       const named = d.arg('blueprint');
@@ -334,6 +341,10 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
     const blocks = Array.isArray(msgs[i].content) ? msgs[i].content : [];
     uses.unshift(...blocks.filter((b) => b?.type === 'tool_use'));
   }
+
+  // v8.1 hook (test/mock/walkthrough.mjs, Track 2): a walkthrough's tool round; null goes on.
+  const walkthroughNext = walkthroughFollowUp({ body, d, prompt: stripDirectives(prompt), ctx, spoken, think, hasTool: (name) => hasTool(body, name), userMsg, msgs, frame: conversationFrameOf(msgs), pace, uses, results });
+  if (walkthroughNext) return { plan: walkthroughNext };
 
   const opticsUse = [...uses].reverse().find((b) => OPTICS_TOOL_NAMES.includes(b.name));
   if (opticsUse && results.has(opticsUse.id)) {
