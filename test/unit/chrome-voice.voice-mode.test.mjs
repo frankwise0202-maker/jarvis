@@ -844,3 +844,66 @@ test('CHROME-VOICE-R3-2: "Hey Jarvis" over Chrome\'s question, then "Be quiet." 
     }
   }
 });
+
+// ---- v8.1.1 re-verify: CHROME-VOICE-R4-1, R4-3 -------------------------------------------------------------------
+
+test('CHROME-VOICE-R4-1: "Chrome, cancel that." (and its kin) to the busy question, or during the new task\'s check, never stops the running task nor starts the new one', async (t) => {
+  for (const words of ['Chrome, cancel that.', 'Chrome, cancel it.', 'Chrome, cancel.', 'Okay Chrome, cancel that.', 'Chrome, cancel the search.', 'Tell Chrome to cancel that.']) {
+    // The busy question.
+    const s = await setup(t, { script: (n) => (n === 0 ? TASK_SAID : null) });
+    await s.until(() => s.said().includes('Chrome is on it.'), 'the first task started');
+    await s.env.advance(3000);
+    s.next({ text: 'In Chrome, find a USB-C hub.', at: 400 });
+    s.vm.tap();
+    await s.until(() => s.said().includes('Chrome is busy with another task. Stop it first?'), 'the busy question');
+    const q = s.env.log.spoken.find((x) => x.text === 'Chrome is busy with another task. Stop it first?');
+    await s.until(() => q.done, 'asked in full');
+    const starts = s.fake.calls.startTask.length;
+    s.next({ text: words, at: 400 });
+    await s.env.advance(12000);
+    assert.equal(s.fake.calls.stopTask, 0, `${words} (busy): the running task goes on (said ${JSON.stringify(s.said())})`);
+    assert.equal(s.fake.calls.startTask.length, starts, `${words} (busy): nothing new starts`);
+    // The new task's check, while the first runs.
+    const c = await setup(t, { script: (n) => (n === 0 ? TASK_SAID : null) });
+    await c.until(() => c.said().includes('Chrome is on it.'), 'the first task started');
+    await c.env.advance(3000);
+    c.next({ text: 'In Chrome, find a USB-C hub.', at: 400 });
+    c.next({ text: words, at: 400 });
+    c.vm.tap();
+    await c.env.advance(15000);
+    assert.equal(c.fake.calls.stopTask, 0, `${words} (check): the running task goes on (said ${JSON.stringify(c.said())})`);
+    assert.equal(c.fake.calls.startTask.length, 1, `${words} (check): nothing new starts`);
+  }
+});
+
+test('CHROME-VOICE-R4-3: "Okay, be quiet." over Chrome\'s question is the hush (asked once), never the hint', async (t) => {
+  const s = await setup(t);
+  s.env.voice('natural');
+  await s.env.advance(1500);
+  s.fake.task({ id: 't1', status: 'running', text: 'find a monitor' });
+  s.fake.prompt(PROMPTS.cart);
+  await s.until(() => asks(s) === 1, 'the question said');
+  await s.env.advance(400);
+  s.next({ text: 'Okay, be quiet.', at: 700 });
+  assert.equal(s.vm.bargeIn('word'), true);
+  await s.env.advance(15000);
+  assert.equal(asks(s), 1, `not said again (said ${JSON.stringify(s.said())})`);
+  assert.ok(!s.said().some((x) => /Say approve, or cancel\.$/.test(x) && !x.startsWith('Chrome asks')), 'no hint');
+});
+
+test('CHROME-VOICE-R4-4: a task running, "Tell Chrome to knock it off." (then "Yes.") stops it and never starts a task', async (t) => {
+  const s = await setup(t, {
+    before: async ({ fake }) => {
+      await fake.link.startTask({ text: 'find a 4K monitor', chat: 'new' });
+    },
+  });
+  await s.env.advance(3000);
+  s.next({ text: 'Tell Chrome to knock it off.', at: 600 });
+  s.vm.tap();
+  await s.env.advance(6000);
+  s.next({ text: 'Yes.', at: 600 });
+  s.vm.tap();
+  await s.env.advance(8000);
+  assert.equal(s.fake.calls.stopTask, 1, `the running task got its stop (said ${JSON.stringify(s.said())})`);
+  assert.equal(s.fake.calls.startTask.length, 1, 'no task started');
+});

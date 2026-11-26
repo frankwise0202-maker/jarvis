@@ -303,6 +303,10 @@ export function matchChromeAnswer(text, state = {}, readings = null) {
     if (fixed) return check.kind === 'task' ? answerAction({ do: 'chrome-check', how: 'correct', words: fixed }) : null;
     const said = normalizeAnswer(text);
     if (!said) return null;
+    // "Chrome, cancel that", "tell Chrome to cancel": the check's own cancel, never a stop for a task that runs (R4-1).
+    if (/^(?:(?:tell|ask|get|have) (?:jarvis for )?chrome (?:to )?|chrome )cancel(?: (?:it|that|this|the task|the search|everything))?$/.test(said)) {
+      return answerAction({ do: 'chrome-check', how: 'withdraw' });
+    }
     if (WITHDRAW_WORDS.test(said) || WITHDRAW_LEAD.test(said)) {
       return answerAction({ do: 'chrome-check', how: 'withdraw', ...(STOP_CHECK_WORDS.test(said) ? { stop: true } : {}) });
     }
@@ -343,7 +347,10 @@ export function matchChromeAnswer(text, state = {}, readings = null) {
     const asking = ASKING.test(rest) && !/^do (?:it|that|this)(?:\s|$)/.test(rest);
     // (Not one about Jarvis's own windows, screens or viewers: "okay, we'll do this in this window" is the windows'.)
     const his = /(?:^|\s)(?:window|windows|tab|tabs|screen|screens|hologram|camera|optics|blueprint)(?:\s|$)/.test(rest);
-    if (YES_LED.test(plain) && !isNoWord(text) && !NO_IN_IT.test(plain) && !asking && !his && !/\?\s*$/.test(String(text))) {
+    // Only when the rest answers it (CHROME-VOICE-R4-3): "okay, be quiet", "okay, pause the music", "yes, open YouTube in
+    // Chrome" are the owner's own commands, never the hint.
+    const answering = /^(?:(?:please|just|then) )*(?:add|do|go ahead|go for it|allow|let|spend|keep going|keep at it|continue|carry on|go on|buy|pay|order|confirm|approve|accept|proceed|book|reserve|purchase|place|submit|send|use|take|get|grab|pick|choose|select|sign|that|thats|this|it|of course|sure|fine)(?:\s|$)/.test(rest);
+    if (YES_LED.test(plain) && answering && !isNoWord(text) && !NO_IN_IT.test(plain) && !asking && !his && !/\?\s*$/.test(String(text))) {
       const others = (Array.isArray(st.questions) && st.questions.length) || (st.tour && st.tour.active);
       if (!others && askedLast(st)) return answerAction({ do: 'chrome-hint' });
     }

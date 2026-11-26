@@ -1270,7 +1270,7 @@ export function createChromeVoice(deps = {}) {
       case 'chrome-stop': {
         // "Stop Chrome": a task still in its check is withdrawn (nothing sent), and a task that runs stops:
         // "Stopping Chrome…", then "Chrome stopped." once Jarvis for Chrome confirms it.
-        const out = stopWords({ via: surface === 'voice' ? 'voice' : 'card', say: true });
+        const out = stopWords({ via: surface === 'voice' ? 'voice' : 'card', say: true, cancel: !!action.cancel });
         const line = stopLine(out, { named: true });
         return { ack: line, show: line };
       }
@@ -1310,12 +1310,17 @@ export function createChromeVoice(deps = {}) {
    * and, once confirmed, the checked one starts (REDTEAM-VOICE-2). say: "Chrome stopped." once confirmed.
    * -> { withdrawn, stopping, busyYes, none }
    */
-  function stopWords({ via = 'voice', say = false } = {}) {
+  function stopWords({ via = 'voice', say = false, cancel = false } = {}) {
     const busy = S.busy;
     if (busy && !busy.taken && S.pendingTask === busy.pend && busy.pend.refused) {
       busy.taken = true;
       S.busy = null;
       if (busy.handle && typeof busy.handle.cancel === 'function') quiet(() => busy.handle.cancel());
+      if (cancel) {
+        // "Cancel" (CHROME-VOICE-R4-1): the new task goes, the one that runs stays (never this question's yes).
+        dropRefused(busy.pend);
+        return { withdrawn: true, stopping: false, busyYes: false, none: false };
+      }
       stopThenStart(busy.pend);
       return { withdrawn: false, stopping: true, busyYes: true, none: false };
     }
