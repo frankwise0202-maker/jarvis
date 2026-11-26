@@ -52,7 +52,8 @@
 // data-model (library id), data-meshing (pending|settled: hull bodies and panels still meshing) and
 // data-mesher (worker|main: where they were meshed), so tests never depend on raycasting pixels.
 // Walkthroughs: data-tour (on), data-tour-status, data-tour-step, data-tour-index, data-tour-total,
-// data-tour-view, and the renderer's emphasis as data-glow, data-ghost and data-hide (part ids).
+// data-tour-view, data-tour-hold (on|off: Voice Mode's session held for it), the renderer's emphasis
+// as data-glow, data-ghost and data-hide (part ids), and data-flying (the camera still moving).
 // Text from specs and replies is only ever set with textContent.
 
 import { h, setText, clear } from '../dom.js';
@@ -606,6 +607,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     ds.glow = emphasis && Array.isArray(emphasis.glow) ? emphasis.glow.join(' ') : '';
     ds.ghost = emphasis && Array.isArray(emphasis.ghost) ? emphasis.ghost.join(' ') : '';
     ds.hide = emphasis && Array.isArray(emphasis.hide) ? emphasis.hide.join(' ') : '';
+    ds.flying = state.flying ? 'true' : 'false'; // the camera is still moving (a tour's flyTo)
     if (panel === 'parts') markSelectedRow();
     ds.segment = model.segmentId || '';
     loading.hidden = !!(holo && holoReady && (state.ready || !building)) || ds.state === 'nogl';
@@ -1606,7 +1608,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     safe(() => t.player.end(reason));
     t.bar.destroy();
     const ds = el.dataset;
-    for (const k of ['tour', 'tourStatus', 'tourStep', 'tourIndex', 'tourTotal', 'tourView']) delete ds[k];
+    for (const k of ['tour', 'tourStatus', 'tourStep', 'tourIndex', 'tourTotal', 'tourView', 'tourHold']) delete ds[k];
     if (!caption.hidden && caption.dataset.state === 'tour') hideCaption();
     layoutSoon();
     return true;
@@ -1621,6 +1623,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     ds.tourIndex = String(st.index || 0);
     ds.tourTotal = String(st.total || 0);
     ds.tourView = st.view || '';
+    ds.tourHold = st.holding ? 'on' : 'off';
     // Phones: the bar keeps the count and the buttons; the step's words are the caption.
     if (!isDesktop() && st.status !== 'ended') {
       const words = st.status === 'choice' ? st.ask : st.say;
@@ -1746,9 +1749,10 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     };
   }
 
-  // ←, →, Space (not while typing): the tour's steps; Esc ends it first (onEscape).
+  // ←, →, Space (not while typing): the tour's steps; Esc ends it first (onEscape). Heard on the window,
+  // as the overlay's Esc is, while this viewer is on top (an overlay over it makes it inert).
   function onTourKey(e) {
-    if (!tour || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (!tour || disposed || el.inert || e.altKey || e.ctrlKey || e.metaKey) return;
     const target = e.target && typeof e.target.closest === 'function' ? e.target : null;
     if (target && target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return;
     const space = e.key === ' ' || e.key === 'Spacebar';
@@ -1761,8 +1765,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     else if (e.key === 'ArrowRight') p.next();
     else p.toggle();
   }
-  el.addEventListener('keydown', onTourKey);
-  el.addEventListener('keyup', onTourKey); // Space on another button (Close) must not click it during a tour
+  window.addEventListener('keydown', onTourKey);
+  window.addEventListener('keyup', onTourKey); // Space on another button (Close) must not click it during a tour
 
   // A touch or drag on the model pauses the tour (Play goes on from that step).
   const onStagePress = () => {
@@ -1919,8 +1923,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       disposed = true;
       if (active === api) active = null;
       while (readyWaiters.length) readyWaiters.shift()(false);
-      el.removeEventListener('keydown', onTourKey);
-      el.removeEventListener('keyup', onTourKey);
+      window.removeEventListener('keydown', onTourKey);
+      window.removeEventListener('keyup', onTourKey);
       stage.removeEventListener('pointerdown', onStagePress);
       document.removeEventListener('visibilitychange', onVisibility);
       clearTimeout(liveTimer);

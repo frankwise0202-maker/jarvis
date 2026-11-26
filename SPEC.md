@@ -3880,6 +3880,104 @@ and `liveSpentText`.
 
 <!-- v8.1: tours writes this part. -->
 
+The owner asked: "walk me through it … move the hologram into that one part that's talking about … it explodes it,
+zooms into the battery … it asks me a question … Do you want to see this enclosed or opened? … show me that enclosed,
+it assembles it and then it shows me the battery where it's at enclosed." A walkthrough is that, free and local.
+
+**Files.** `src/lib/tour.js` (pure: the plan format, its checks, the local planner, the words, the narration sync);
+`src/ui/hologram/tour-player.js` (`createTourPlayer`, `silentNarrator`, `createTourBar`); `src/ui/commands/tours.js`
+(the router's matchers); `src/ui/hologram/viewer.js` (the tour's host); `src/styles/hologram.css` (the bar);
+`test/unit/fixtures/laptop-generic.json` (a generic 16-part laptop, no brand or model).
+
+**The plan (v1).** `{ v: 1, title, for: partId | null, source: 'local' | 'claude', steps }`. A step: `id`, `say`
+(spoken and shown, at most 280 characters), `parts` (the main one first), `show` (what a step leaves out stays as it
+was: `explode` 0..1, `glow`, `ghost` (ids or `'shells'`), `hide`, `others` 0..1, `labels` `none` | `parts` | `all`,
+`frame` `parts` | `all`, `camera` (a view name, `'access'`: from the side the main part comes out of, or
+`{ dir }`), `zoom`, `card` (the main part's card: its material on screen, not said), `photos`), `wait` (waits for
+"next"), `ask` + `choices` (2-4 of `{ id, label, goto, words }`) + `default` (a decision: it always waits), `next`.
+`normalizeTourPlan(plan, spec)` → `{ plan, warnings, ok }`: unknown part ids dropped with a warning; text cleaned
+like `cleanText`; ids made unique; at most 24 steps and 3,000 spoken characters (the rest dropped); a `next` must
+point to a later step (a plan can't loop by itself); a choice's `goto` must name a step; a decision with fewer than
+2 choices is said instead (or dropped); a step with no words and no parts is dropped; `lift` is read as `hide`.
+
+**The local planner.** `localTourPlan(spec, { partId })` (null without a hologram or for an unknown part):
+- *Object tour* ("walk me through it"): overview, assembled → taken apart ("it has 16 main parts") → one step per
+  group on its most important part (accent or warning tone first, then the biggest; shells last), its first info
+  sentence → the end. Without groups: one step per big part (at most 6), in spec order. Group steps give way to keep
+  the limits.
+- *Part tour* ("walk me through the battery"), in the owner's order: overview → apart, the part glowing, the camera
+  flying in from its side ("Taken apart, this is the battery.") → `VIEW_QUESTION` "Do you want to see it enclosed,
+  or opened?" (Enclosed, Opened, Both, You pick; `DEFAULT_VIEW_CHOICE` enclosed) → `enclosed` (assembled, `ghost:
+  'shells'`, the part glowing, framed whole from its side) | `opened` (assembled with the cover on its way out
+  hidden, framed on the part from that side; with no cover found, taken apart) | `both` (enclosed, then opened) →
+  its info (`card: true`) → its neighbours (touching parts that aren't shells, nearest first, then biggest; at most
+  3) → the end. No explode vector: no decision, no opened step.
+- `partPlacement(spec, partId)`: the covers (shells that contain the part's center or lie over it: 60 % across two
+  axes, beyond it on the third), `clear` (one or two covers, all on one axis, with different spoken names), `where`
+  ("low down, toward the front, between the bottom cover and the palm rest"; unclear: "inside the body shell" when
+  exactly one shell contains it, else "inside the case"), `access` (the covers on the side it comes out of: hidden
+  in the opened view either way), `wayIn` (said only when clear and one cover), `neighbours`. Shells:
+  `isShellPart` (tone secondary, or a shell-like name: cover, case, casing, housing, shell, lid, cowl, can, sleeve,
+  enclosure). Material is never said.
+- Sizes on the fixtures: the laptop's part tour 9 steps / about 680 characters, its object tour 9 / 650; the Camry
+  9 / 650 and 9 / 920; the alternator's object tour 8 / 730.
+
+**Starting one.** `matchTourStart(text, { parts, title })`: "walk me through it / this", "walk me through" alone,
+"give me a tour", "show me around", "take me through it", "start the walkthrough", and the same with the hologram's
+title (the object tour) or a part named plainly (score 0.8 or better, at most 5 words: the part tour). "Walk me
+through how to replace the battery" and "walk me through replacing it" stay questions. The matcher `tour.start`
+(registered as `tour-start` while the router's ids can't hold a dot) claims them only while a hologram is on screen
+(`state.hologram`) or when the newest reply showed one (`state.tourReply`, app.js `newestReplyHologram()`: never an
+older reply, critique L3); then `deps.tours.openReply()` opens it first. Surfaces: Voice Mode, the hologram's field,
+the chat box. With a part selected and no tour, it also takes "show it enclosed / opened" (`matchShowView`): the
+viewer applies `partViewShow` and says "Here's the battery, enclosed: the case is see-through." or "Here's the
+battery, with the bottom cover off." (a part with no way out: it says so); the look goes with the next command that
+changes what is shown.
+
+**The player.** `viewer.startTour({ partId, plan })` → `{ ok }` or `{ ok: false, reason: 'building' | 'nogl' | 'none' |
+'closed' }` creates `createTourPlayer({ plan, target, narrator, asker, holder, say, spec, onChange })` on the
+renderer's `tourTarget()` (contract (e), through a proxy that waits for the renderer). `start()` holds the idle
+rotation off, clears the selection, waits for `settled(10000)`, then plays *runs*: from a step up to a `wait` step or
+a decision, one `narrate()` each (§29.3). A step's look is applied when its words start to be heard: `setEmphasis`
+with the whole look, `explode`, `setLabels(true | false | [ids])`, `select` for `card`, `flyTo({ ids, frame, view |
+dir })`. Statuses: `starting`, `playing`, `paused` (by the owner, a touch, cut speech, a hidden page, a jump),
+`choice`, `waiting`, `done` (the bar stays until End), `ended`. `next` (the default at a decision), `back` (the
+step's look as it was, then its words), `repeat`, `pause`, `resume` (Play says the step again from its first word),
+`toggle` (at the end: from the start), `choose`, `jump(partId)` (its step, else the camera on it, paused, "Say
+continue to go back to the tour."), `showView`, `setHidden`, `setVoice` (Voice Mode opened or closed under it),
+`end` (the emphasis, labels and rotation hold go; the hologram stays where it is). Without a voice, or when speech
+fails, `silentNarrator` moves the words on by estimate (14.5 characters a second, at least 2.6 s a line).
+
+**The bar and keys.** `createTourBar`: the step's words (two lines, desktop only), "3 of 8" (`tourPath`: the steps
+from the first with the choices made so far, else the defaults), Back, Pause/Play, Next, End, and the choices at a
+decision (in place of Pause and Next). While a tour runs it takes the place of the assembly row and the tools
+(`.hv[data-tour='on']`); its height never changes during the tour. Phones keep the count and the buttons; the step's
+words are the viewer's caption (`data-state="tour"`). ← and → step and Space plays or pauses (heard on the window
+while the viewer is on top, never in a text field; Space on another button never clicks it); Esc ends the tour first,
+then closes as before. A press on the model pauses it. A hidden page pauses it and lets go of the hold; shown again,
+it goes on (an owner's pause stays paused).
+
+**The words.** `matchTourCommand(text, { atChoice, choices, defaultId, parts, stepWaits, paused, justSaid })`, whole
+sentences after fillers: next ("next", "next step", "go on", "continue", "keep going", "skip"; "okay", "got it",
+"yes" only while a step waits), back ("back", "go back", "previous", "back one step", "last step"), repeat ("repeat",
+"say that again", "again"; "what?" only right after a step), pause ("pause", "wait", "hold on", "one second",
+"stop"), resume ("resume", "play"; "continue" while paused), end ("stop / end / exit the tour", "that's enough",
+"we're done"), a choice at a decision (`choiceReply`: the view words, any choice's label and words, "the first one",
+"you pick" → the pick choice or the default), "show it enclosed / opened" and bare "enclosed" / "opened" away from a
+decision, jump ("skip to / go to / take me to" a part). The matcher `tour` (top layer, before the hologram's words;
+Voice Mode and the hologram's field) claims them only while a tour runs (`state.tour`: `{ active, atChoice, choices,
+defaultId, stepId, status, paused, waits, justSaid, index, total, view, parts }`, viewer `tour()`). "Back" alone
+means the tour only then. A bare "stop" belongs to the stop layer: it stops Jarvis's voice, and a narration cut short
+pauses the tour. Lines (R9): pause "Paused. Say continue when you're ready." (at a decision: "I'll wait."), end
+"Okay, that's the end of the tour.", next at the end "That was the last step. …"; a word that moves the tour on says
+none of its own (its step is the line).
+
+**Test hooks.** On the viewer: `data-tour`, `data-tour-status`, `data-tour-step`, `data-tour-index`,
+`data-tour-total`, `data-tour-view`, `data-tour-hold`, the renderer's emphasis as `data-glow`, `data-ghost`,
+`data-hide`, and `data-flying`. The bar: `tour-bar` (`data-status`, `data-step`, `data-decision`), `tour-words`,
+`tour-count`, `tour-back`, `tour-toggle`, `tour-next`, `tour-end`, `tour-choice` (`data-choice`). The mock's
+`[[hologram:laptop]]` streams the generic laptop (test/mock/walkthrough.mjs).
+
 ### 29.2 The renderer
 
 <!-- v8.1: tour-render writes this part. -->
@@ -3887,6 +3985,46 @@ and `liveSpentText`.
 ### 29.3 Narration and voice
 
 <!-- v8.1: tours writes this part. -->
+
+**Narration.** A run is said as one `api.narrate({ text, kind: 'tour', onChunk, onEnd, listenAfter })` (§ contract
+(a)), one step per line (`narrationText(steps)`: `{ text, lines: [{ id, start, end }] }`; a line break is one space in
+what the voice engine gets, so the offsets are the same in both). The speech kind `tour` shows Jarvis speaking. Each
+chunk event (its start offset in `text`) goes to `createLineSync`, which shows every line whose start is at or before
+the chunk's (each once, in order). The camera never moves when the speech is asked for: George's first words come
+1-2 s later.
+- **Fallbacks per voice** (critique M5). `narrate()` returns `voice`: `{ kind: 'george' }` (the home base's or the
+  on-device George, or a stream still waiting for him) or `{ kind: 'device', startEvents }`. With no chunk event by
+  the fallback, the first line is shown anyway and the rest follow by estimate until a real chunk arrives:
+  `voicePacing` gives George 4 s (his stall watchdog waits up to 3.5 s) and 13 characters a second; the device voice
+  1.5 s when it sends start events, else 3 s (its own assumption), at 14.5 characters a second × the rate. Whether
+  the device voice sends start events is learned from a tour's first chunk (within 2 s: yes), per page; unknown is
+  3 s.
+- **How a run ends.** `done`: the rest is shown, then the decision is asked, or a `wait` step waits, or the tour is
+  done. `failed`: the rest goes on in the bar by estimate. Cut by someone else (a tap, a listen, Stop, barge-in,
+  another line): the tour pauses at its step. When George fails mid-run, the voice router's device voice says the
+  rest from the same offset, so the chunk events go on.
+- **Listening.** `listenAfter`: false before a decision (the question listens), null (today's rule) after a `wait`
+  step and at the end. Voice Mode never listens between steps of a run, so a Bluetooth speakerphone switches less.
+- **Decisions.** `api.question({ id: 'tour:<step>', say, choices, match: choiceReply, keep: true })`: anything else
+  heard is routed as usual (a question about the part is one paid turn, and the tour stays at its decision). While a
+  tour's question is on top, Voice Mode listens after it is said (Continuous or not) and again after each silent
+  listen, until its 60 s run out (critique H5); then the bar's buttons and the tour's words still answer it. A tap on
+  a choice cancels the spoken question.
+- **The hold.** Playing, waiting or at a decision, the tour holds a woken session (`api.hold('tour')`; Voice Mode's
+  2-minute cap after the owner's last words still applies); hidden, ended or closed, it lets go
+  (`api.release('tour')`).
+- **Voice Mode's line after a word.** A word that moved the tour on returns no line; `speakAck('')` while a tour
+  narration (or a spoken question) plays leaves it alone (no "Your turn", no early listen).
+- **Without Voice Mode** (typed in the viewer, or Voice Mode closed under it), the words show in the bar and move on
+  by estimate; Voice Mode opening under the viewer gives the tour its voice from the next run (`setVoice`).
+
+**What is on screen, for Claude (B6).** While a hologram viewer is open, every turn sent (a viewer's words, Voice Mode
+over it) carries one line in the new message's `<turn_context>` (`startTurn({ viewer })`, `buildViewerLine`):
+`On screen: the hologram "14-inch laptop", exploded; glowing: "Battery (57 Wh)" (id: battery). Walkthrough: step 4 of
+7, the battery, opened. "This" or "that" in the owner's words most likely means that part.` The glowing parts come
+from the renderer's emphasis (at most 4), the selected part when nothing glows, the step from the player
+(`viewer.viewerContext()`). Text from the hologram can't open or close our tags and has no double quotes. It is
+per-turn text, so the cached prefix never changes and older chats get it too. No viewer: no line.
 
 ## 30. v8.1: One router
 

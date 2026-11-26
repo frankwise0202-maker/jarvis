@@ -564,6 +564,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
       partId: (plan && plan.for) || null,
       source: (plan && plan.source) || 'local',
       asking: !!question,
+      holding, // a woken session is held for the tour (Voice Mode's api.hold('tour'))
     };
   }
 

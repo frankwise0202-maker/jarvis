@@ -3213,9 +3213,9 @@ function createVoiceMode(opts) {
   function speakAck(text) {
     if (S.closed) return;
     const line = String(text || '').trim();
-    // v8.1: a word that moved a walkthrough on ("next", "enclosed") has no line of its own: the step
-    // being said is it, so the narration goes on undisturbed.
-    if (!line && S.speech && S.speech.kind === 'tour') {
+    // v8.1: a word that moved a walkthrough on ("next", "enclosed", "repeat" at its question) has no
+    // line of its own: the step (or the question) being said is it, so that speech goes on undisturbed.
+    if (!line && S.speech && (S.speech.kind === 'tour' || S.speech.kind === 'ack')) {
       setVoiceState('speaking');
       setStatus('Speaking', 'speaker');
       renderControls();
