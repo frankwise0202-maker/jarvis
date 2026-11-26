@@ -357,6 +357,7 @@ function createVoiceMode(opts) {
     answer: null, // { md, summary (what was spoken), full, more }
     showFull: false,
     lastLine: '', // v8.1: the last short line said ("repeat that" when no answer was given yet)
+    preface: null, // v8.1: { text, at }: said before the next turn's answer (Optics' "New look.")
     karaoke: null, // { spans, els, texts, cursor, word }
     userEl: null,
     silentTries: 0,
@@ -2375,7 +2376,7 @@ function createVoiceMode(opts) {
       goIdle('offline-kept');
       return { error: 'You’re offline. Reconnect and try again.' };
     }
-    const pending = { pending: true };
+    const pending = { pending: true, preface: takePreface() };
     S.run = pending;
     setVoiceState('thinking');
     setStatus('Thinking…', 'sparkle');
@@ -2433,7 +2434,7 @@ function createVoiceMode(opts) {
     // answerFrom: where the answer itself (text after the last search or mission) starts in the
     // live speech's text; answerHeard: a chunk of it began to play.
     // visuals: ids of the holograms and blueprints of this reply already shown over Voice Mode.
-    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '', feed: null, feedTimer: 0, liveDone: false, liveOff: false, answerFrom: -1, answerHeard: false, visuals: new Set() };
+    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '', feed: null, feedTimer: 0, liveDone: false, liveOff: false, answerFrom: -1, answerHeard: false, visuals: new Set(), preface: (pending && pending.preface) || '' };
     S.run = R;
     if (speaksWhileStreaming(R)) {
       R.feed = createSpokenFeed({ convert: speechMarkdown });
@@ -3448,6 +3449,9 @@ function createVoiceMode(opts) {
     const cmd = res.command && typeof res.command === 'object' ? res.command : {};
     showCaption('quote', `“${text}”`);
     if (res.done && typeof res.done.then === 'function') {
+      // v8.1 (E1, optics): a Look taken by the picture-aside rule says "New look." first: its reply's
+      // speech starts with it (a line said now would be cut by the turn the Look starts).
+      if (cmd.action === 'optics' && cmd.kind === 'look' && typeof cmd.ack === 'string' && cmd.ack.trim()) S.preface = { text: clip(singleLine(cmd.ack), 60), at: Date.now() };
       waitForBlueprint(res.done, cmd, ctl);
       return;
     }
@@ -4394,7 +4398,19 @@ function createVoiceMode(opts) {
     }
     startEstimator(sp);
     renderControls();
+    if (R.preface) {
+      const line = R.preface;
+      R.preface = '';
+      appendLive(sp, `${line} `);
+    }
     return sp;
+  }
+
+  /** v8.1: a short line said before the next turn's answer ("New look."), if it is still fresh. */
+  function takePreface() {
+    const p = S.preface;
+    S.preface = null;
+    return p && Date.now() - p.at < 15000 ? p.text : '';
   }
 
   function appendLive(sp, piece) {
@@ -4422,6 +4438,13 @@ function createVoiceMode(opts) {
     if (S.karaoke === sp.karaoke) finishKaraoke();
     if (S.run && S.run === sp.run) renderRunNow();
     else renderControls();
+  }
+
+  /** The answer said at the end, after the turn's preface ("New look.") when its live speech never said it. */
+  function withPreface(R, text) {
+    const line = R && R.preface ? R.preface : '';
+    if (R) R.preface = '';
+    return line ? `${line} ${text}` : text;
   }
 
   function deliverAnswer(turn, R) {
@@ -4471,7 +4494,7 @@ function createVoiceMode(opts) {
         play('reply-done');
         haptic('success');
         announce('Answer ready');
-        speak(S.answer.summary, 'summary', sounds ? REPLY_CHIME_MS : 0);
+        speak(withPreface(R, S.answer.summary), 'summary', sounds ? REPLY_CHIME_MS : 0);
         return;
       }
     }
@@ -4486,7 +4509,7 @@ function createVoiceMode(opts) {
     haptic('success');
     announce('Answer ready');
     if (S.ttsOk) {
-      speak(summary, 'summary', sounds ? REPLY_CHIME_MS : 0);
+      speak(withPreface(R, summary), 'summary', sounds ? REPLY_CHIME_MS : 0);
     } else {
       renderSpoken(summary, 'answer');
       finishKaraoke();
@@ -4507,6 +4530,12 @@ function createVoiceMode(opts) {
     const name = ownerName();
     if (err && err.kind === 'refusal') {
       fail('Can’t help with that', `I’m afraid I can’t help with that one, ${name}.`);
+      return;
+    }
+    // v8.1 (E0, optics): the live view's dollar this hour would be passed: said as it is (it says what
+    // to do: wait, or "stop live view"), and Jarvis listens again as after any line.
+    if (err && err.kind === 'live_cap' && err.message) {
+      speakAck(asSentence(clip(singleLine(err.message), 240)));
       return;
     }
     const message = asSentence(clip(singleLine((err && err.message) || 'Something went wrong on my end.'), 220));
