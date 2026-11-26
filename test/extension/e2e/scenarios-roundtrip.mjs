@@ -63,10 +63,14 @@ const roundtrip = {
       const req = route.request();
       const origin = req.headers().origin;
       const cors = origin ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
-      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type' } });
-      const out = await answer({ method: req.method(), url: new URL(req.url()), body: req.postData(), contentType: req.headers()['content-type'] });
-      if (!out) return route.abort('internetdisconnected');
-      return route.fulfill({ status: out.status, contentType: 'application/json; charset=utf-8', headers: { ...cors, 'cache-control': 'no-store' }, body: JSON.stringify(out.body) });
+      try {
+        if (req.method() === 'OPTIONS') return await route.fulfill({ status: 204, headers: { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type' } });
+        const out = await answer({ method: req.method(), url: new URL(req.url()), body: req.postData(), contentType: req.headers()['content-type'] });
+        if (!out) return await route.abort('internetdisconnected');
+        return await route.fulfill({ status: out.status, contentType: 'application/json; charset=utf-8', headers: { ...cors, 'cache-control': 'no-store' }, body: JSON.stringify(out.body) });
+      } catch {
+        /* the page or the browser went while a long poll waited */
+      }
     });
 
     // The test key on both sides: the extension's chromeLink, Jarvis's jarvis.chromeLink.v1.
