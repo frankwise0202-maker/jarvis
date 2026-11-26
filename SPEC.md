@@ -4222,7 +4222,12 @@ microphone with claps (and the "Hey Jarvis" worker when the wake word is on) whi
 when a detector fired, 'passed' when none did, null when George didn't speak it (the Mac's own voice isn't in
 Chrome's echo reference) or the capture couldn't start; (3) Yes / No → `heardSpeaker`. Each step is saved as it
 ends, in localStorage `jarvis.handsFreeTest.v1` = `{ at, hiddenWords: true|false|null, selfTrigger:
-'passed'|'failed'|null, heardSpeaker: true|false|null }` (`normalizeHandsFreeTest`), and shown on the card.
+'passed'|'failed'|null, heardSpeaker: true|false|null, measured }` (`normalizeHandsFreeTest`), and shown on the card.
+`measured` (MAC-9; `handsFreeMeasure({ plan, settings })`) is what step 2 ran on: `{ setup, wakeMic, speaker, clap,
+word }` (device ids, '' for the default; the wake detectors that listened, "Hey Jarvis" only if its worker attached). A
+passed step counts only while that still holds (`handsFreeTestFits(result, now)`: the same setup, wake microphone and
+speaker, and no wake detector on now that didn't listen then); otherwise its line says "Run Test hands-free again: …"
+(`data-ok` unknown), on the card and on Always on.
 Notes: the Mac's own voice follows the Mac's sound output; setup 1 needs the lid open; Chrome's microphone setting
 as text (`chrome://settings/content/microphone`) with **Copy**.
 
@@ -4301,10 +4306,12 @@ Before v8.1 only a tap stopped Jarvis: a new listen cancels speech, and he liste
 Standby's microphone released at the wake. Across the room nothing could be said while he talked (critique H6). Now,
 on a Mac in setup 1 or 3, "Hey Jarvis" or two claps while George speaks stop him and he listens (A8; free, on the Mac).
 
-**The gate** (src/lib/hands-free.js `bargeInAllowed({ computer, setup, test })`, app.js Standby's `bargeIn.keep()`): a
-computer, `audioSetup` (src/lib/audio-devices.js `setupOf`) in `HANDS_FREE.bargeInSetups` (`speaker-mac-mic`,
-`switch`; owner question 10: add `speakerphone-both` to allow it there), and the hands-free Test's self-trigger step
-passed (`readHandsFreeTest(localStorage)`, key `jarvis.handsFreeTest.v1`, read through `normalizeHandsFreeTest`).
+**The gate** (src/lib/hands-free.js `bargeInAllowed({ computer, setup, test, now })`, app.js Standby's
+`bargeIn.keep()`): a computer, `audioSetup` (src/lib/audio-devices.js `setupOf`) in `HANDS_FREE.bargeInSetups`
+(`speaker-mac-mic`, `switch`; owner question 10: add `speakerphone-both` to allow it there), and the hands-free Test's
+self-trigger step passed (`readHandsFreeTest(localStorage)`, key `jarvis.handsFreeTest.v1`, read through
+`normalizeHandsFreeTest`) on what barge-in runs on now (MAC-9: `now` = `handsFreeMeasure()` of the plan and settings
+of the moment; `handsFreeTestFits`).
 "Hey Jarvis" needs the wake word on; claps work either way.
 
 **Standby** (`createStandby({ bargeIn: { keep(), detected({ trigger }) } })`): at a wake where `keep()` is true, its
@@ -4358,8 +4365,8 @@ him again). A TV left on can't run up paid questions. On screen the count doesn'
 stays.
 
 **One Jarvis per Mac** (A9, critique M6; src/platform/standby-lock.js `createStandbyLock({ onChange, locks, name })` →
-`{ acquire(), take(), release(), state }`, state `off` | `asking` | `held` | `elsewhere` | `left` | `unsupported`; Standby's
-`createLock` dep): Standby asks for the Web Lock `jarvis-standby` when it opens (`ifAvailable` first; held elsewhere:
+`{ acquire(), take(), release(), state }`, state `off` | `asking` | `held` | `elsewhere` | `left` | `unsupported`;
+Standby's `createLock` dep): Standby asks for the Web Lock `jarvis-standby` when it opens (`ifAvailable` first; held elsewhere:
 `elsewhere`, and it waits in line) and listens only while it holds it; it keeps it through a woken session and lets go
 on `exit()`/`release()` (or when the window closes). While another window has it: `data-listening="elsewhere"`, the
 pill "NOT LISTENING IN THIS WINDOW", the hint "Standby is on in another Jarvis window.", and **Use this window**

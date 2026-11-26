@@ -21,9 +21,10 @@ const DOUBLE_CLAP = Array.from(pad(S.doubleClap({ gapMs: 420, at: 0.2, seconds: 
 const QUESTION = 'What is the capital of France?';
 const ANSWER = /The capital of France is Paris\./;
 const GEORGE = { homeBaseUrl: CORE_URL, homeBaseSpeak: true, homeBaseSpeakBy: 'owner' };
-// Barge-in's gate (A8): setup 1 chosen, the hands-free Test's self-trigger step passed (mac-dev writes both).
+// Barge-in's gate (A8): setup 1 chosen, the hands-free Test's self-trigger step passed (mac-dev writes both), on what
+// it measured (MAC-9: setup 1, the default microphone and speaker here, claps and "Hey Jarvis").
 const BARGE_IN = { audioSetup: 'speaker-mac-mic' };
-const TEST_PASSED = JSON.stringify({ at: 1_800_000_000_000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true });
+const TEST_PASSED = JSON.stringify({ at: 1_800_000_000_000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true, measured: { setup: 'speaker-mac-mic', wakeMic: '', speaker: '', clap: true, word: true } });
 
 // ---- probes (init scripts) ------------------------------------------------------------------------------
 

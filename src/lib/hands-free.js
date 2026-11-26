@@ -4,9 +4,9 @@
 //   HANDS_FREE                        the numbers below (each owner choice in one place)
 //   followUp({ woken, away, continuous, asking, asked }) -> { listen, brake, noSpeechMs, tries }
 //                                     what Voice Mode does after an answer (A6)
-//   bargeInAllowed({ computer, setup, test }) -> boolean
+//   bargeInAllowed({ computer, setup, test, now }) -> boolean
 //                                     "Hey Jarvis" or two claps may stop him while George speaks (A8)
-//   readHandsFreeTest(storage) -> { at, hiddenWords, selfTrigger, heardSpeaker } | null
+//   readHandsFreeTest(storage) -> { at, hiddenWords, selfTrigger, heardSpeaker, measured } | null
 //                                     the hands-free Test's last results (Settings → Voice → Microphone and
 //                                     speaker writes them: src/lib/audio-devices.js normalizeHandsFreeTest)
 //   startsWithWakeWords(text) -> boolean      a heard sentence starts with "Hey Jarvis" (MAC-V-1: the owner calling
@@ -27,7 +27,7 @@
 // hears one: George is the voice speaking (the Mac's own voice is played by macOS, outside Chrome's echo
 // reference), and the self-mask is clear.
 
-import { HANDS_FREE_TEST_KEY, normalizeHandsFreeTest } from './audio-devices.js';
+import { HANDS_FREE_TEST_KEY, normalizeHandsFreeTest, handsFreeTestFits } from './audio-devices.js';
 
 export const HANDS_FREE = Object.freeze({
   followUpMs: 8000, // owner question 3: how long the listen after an answer waits for words
@@ -56,10 +56,12 @@ export function followUp({ woken = false, away = false, continuous = true, askin
 
 /**
  * Barge-in may be on: a computer, one of HANDS_FREE.bargeInSetups chosen (Settings `audioSetup`), and the
- * hands-free Test's self-trigger step passed (`test`: readHandsFreeTest()).
+ * hands-free Test's self-trigger step passed (`test`: readHandsFreeTest()) on what barge-in runs on now (`now`:
+ * audio-devices.js handsFreeMeasure(); MAC-9: the same setup, wake microphone and speaker, and every wake detector
+ * listening now tested; otherwise the card says to run the Test again).
  */
-export function bargeInAllowed({ computer = false, setup = '', test = null } = {}) {
-  return computer === true && HANDS_FREE.bargeInSetups.includes(setup) && !!test && test.selfTrigger === 'passed';
+export function bargeInAllowed({ computer = false, setup = '', test = null, now = null } = {}) {
+  return computer === true && HANDS_FREE.bargeInSetups.includes(setup) && !!test && test.selfTrigger === 'passed' && handsFreeTestFits(test, now);
 }
 
 /** The hands-free Test's last results from `storage` (localStorage), or null when there are none. */

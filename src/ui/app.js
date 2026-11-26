@@ -100,7 +100,7 @@ import { createWakePending } from '../lib/wake/pending.js';
 import { setPausesWhenHidden as naturalPausesWhenHidden } from '../platform/voice/natural/natural-stream.js';
 import { createStandbyLock, holdVoiceLock, voiceOpenSomewhere } from '../platform/standby-lock.js';
 import { bargeInAllowed, readHandsFreeTest } from '../lib/hands-free.js';
-import { setupOf } from '../lib/audio-devices.js';
+import { setupOf, handsFreeMeasure } from '../lib/audio-devices.js';
 // v8.1: one router for what the owner says (SPEC §30), and each track's commands in its own module.
 import { createRouter, registerTodayCommands, emptyState, REOPEN_ACTIONS } from '../lib/command-router.js';
 import { register as registerMacCommands } from './commands/mac.js';
@@ -1891,7 +1891,8 @@ export async function startApp(rootEl) {
     // v8.1 (A8, SPEC §28.4): barge-in. In setup 1 or 3, once the hands-free Test's self-trigger step passed,
     // Standby's microphone and "Hey Jarvis" stay on through a woken session; what they hear goes to Voice Mode.
     bargeIn: {
-      keep: () => !phoneLike && safe(() => bargeInAllowed({ computer: true, setup: setupOf(getSettings()), test: readHandsFreeTest(localStorage) }), false),
+      // MAC-9: only on what the Test's self-trigger step measured (the setup, wake microphone, speaker, wake words).
+      keep: () => !phoneLike && safe(() => bargeInAllowed({ computer: true, setup: setupOf(getSettings()), test: readHandsFreeTest(localStorage), now: handsFreeMeasure({ plan: audioDevices ? audioDevices.plan() : null, settings: getSettings() }) }), false),
       detected: ({ trigger }) => !!voiceApi && safe(() => voiceApi.bargeIn(trigger) === true, false),
     },
     // v8.1 (A11): no click yet (a restart, an update) and George can't speak without one: Standby says

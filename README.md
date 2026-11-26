@@ -355,7 +355,9 @@ other windows, minimized, or with the display asleep.
 - **Interrupt him by voice.** While George is speaking, say "Hey Jarvis" or clap twice: he stops and listens (a
   walkthrough pauses at its step). It's free and stays on your Mac. It works with **Speakerphone speaks, Mac
   listens** and **Switch** (Settings → Voice → Microphone and speaker), once the second step of **Test hands-free**
-  has passed. His own "Jarvis" never interrupts him: for about a second around it, the wake word doesn't count.
+  has passed with that setup and those devices. Change the setup, the microphone or the speaker, or turn on "Hey
+  Jarvis" after a Test on claps alone, and it's off until you run the Test again (the card says so). His own
+  "Jarvis" never interrupts him: for about a second around it, the wake word doesn't count.
   With **Speakerphone for both**, while the Mac's own voice is speaking, or if that step of the test failed, tap the
   core or press Space, as before.
 - **One Jarvis per Mac answers.** If Jarvis is open in two windows (the installed app and a forgotten tab, say),
@@ -842,7 +844,8 @@ Mac; the card isn't there on iPhone).
   - **Test hands-free**, three steps: (1) switch to another app and say "testing" within 10 seconds (did Jarvis
     hear you in the background?); (2) George says a sentence with "Jarvis" in it while the wake microphone
     listens (if that wakes him, interrupting him by voice stays off, and the card says why); (3) "Did you hear
-    that from the speakerphone?" The results are kept on this Mac and shown on the card.
+    that from the speakerphone?" The results are kept on this Mac and shown on the card. The second step counts
+    only for the setup and devices it ran with: after a change, the card says **Run Test hands-free again**.
 - **Notes.** When George isn't speaking, the Mac's own voice uses the Mac's sound output (System Settings →
   Sound). "Speakerphone speaks, Mac listens" needs the lid open. Chrome's own microphone setting is
   `chrome://settings/content/microphone` (a page can't open it: the card has a **Copy** button). Chrome 135 or
