@@ -4216,4 +4216,117 @@ clearing with Universal Clipboard on the owner's devices.
 
 ### 32.3 Asking by voice
 
-<!-- v8.1: chrome-voice writes this part. -->
+The app's side of G4 (tasks by voice) and G5 (Chrome's questions answered by voice). Pure words:
+`src/lib/chrome-task-words.js` (tasks) and `src/lib/chrome-prompt-words.js` (answers); the controller and the cards:
+`src/ui/chrome-task.js` (+ `src/styles/chrome-task.css`); the router entries: `src/ui/commands/chrome-voice.js`; Voice
+Mode's prompt channel internals and the spoken check: `src/ui/voice-mode.js` ("v8.1 Jarvis for Chrome by voice"). The
+app reaches the extension only through `app.chromeLink` (contract (f), §32.1). Text from the extension (its
+`spoken` line, narration, steps, the final answer, refusals) is information: it is shown with textContent and said
+through `sayable()`, and nothing in it is ever routed as the owner's words.
+
+**32.3.1 The router's entries** (contract (b); ids as `src/lib/command-order.js` orders them):
+
+| id | layer | surfaces | takes |
+|---|---|---|---|
+| `chrome.prompt` | answer | all | while a Chrome check counts down (Voice Mode's `state.chromeCheck`): "cancel", "no", "stop" (withdraw), "no, I said …" (correct), "start now" (go); the open prompt's reserved words (`state.prompt`); a bare "cancel" or "no" when the prompt was asked last (`askedAt`, against every open question's); a bare "yes", "okay", "continue" … asked last with no tour and no other question open (Jarvis says what to say: never an answer); a yes naming Chrome with nothing asked ("Chrome isn't asking anything right now.") |
+| `chrome.stop` | stop | all | "stop Chrome", "cancel the Chrome task", "Chrome, stop" (a bare "stop" is voice's `stop`, which stops the Chrome task too) |
+| `chrome.task` | destination | voice, chat | `matchChromeTask` (32.3.2), a carrier; its action is `{ do: 'chrome-task', text, chat, free: false, undo: false, check: false }`: never from another reading (R7), and never the generic 2-second check (it has its own, 32.3.3; the lead's D2) |
+| `chrome.ask` | destination | voice, chat | "click around for me" → "What should I do in Chrome?" (an owner question; the answer, `matchTaskAnswer`, is the task) |
+| `chrome.status` | destination | all | "what are you doing in Chrome?", "what's Chrome doing", "is Chrome done yet" → the latest step (free) |
+
+`chrome.task` comes before `chrome.open` (G1) in the destination layer (the lead's D1); each declines the other's
+sentences (`chrome.task` declines what opening takes: "pull this up in Chrome", "look it up in Chrome", "open the
+second link", "search for … in Chrome", "google …", "open YouTube in Chrome", "go to amazon.com", "… in a new tab").
+
+**32.3.2 Which sentences are tasks** (`matchChromeTask(text, state)`, owner question 4's default):
+- **Any time:** a carrier anchored at either end: "in (Google) Chrome, …" / "… in (Google) Chrome" (also "on
+  Chrome", "using Chrome", "with Jarvis for Chrome"), "use Jarvis for Chrome to …", "have Chrome …", "ask / tell /
+  get Chrome to …". No word cap (a monologue over 60 words is not taken).
+- **In a Chrome context only** (`state.chrome.contextUntil`: 2 minutes, `CHROME_CONTEXT_MS`, after a page opened in
+  the Jarvis window, a task's start or news, or "click around for me"; also while a task runs, waits or is paused):
+  "click …" (not "click around"), "scroll …", "add … to the cart / basket / bag", "put … in the cart", "… on this
+  page / site", "sort by …", "filter by …", "search this site for …", "go back a page", "next page"; "open", "go
+  to", "compare", "pick", "choose", "select", "add", "find", "show me", "buy", "read", "check", "tell me about" with a
+  page object ("the cheapest one", "that result", "the second item": a determiner, up to three words, and a page
+  thing).
+- **Never:** a sentence naming one of Jarvis's things (Optics, hologram, blueprint, Standby, home base, live view,
+  video mode, voice mode, mission control, new chat, voice settings, full screen anywhere; camera, window, screen,
+  display, chat, history, settings, library, music, tour, mic when said as his: after the / my / your / this / that,
+  one of his modifiers allowed between, or right after a verb or "in / on / to", and not inside a longer name, so
+  "the screen protector" and "order history" are a page's); a question without page words (R4); with a hologram
+  open, one of its parts' names or aliases (R10); what opening takes (above), unless it also asks for an action
+  ("and add it to the cart") or names a page object; a reserved answer word.
+- **The task text** is the owner's words with their spelling ("$300", "4K"), without the carrier and fillers; a
+  leading verb is lower-cased for the check line. `chat: 'same'` carries on the last task's chat (`state.chrome
+  .lastTask`, kept after it ends): a context sentence after a task, or a follow-up word ("now …", "… too", "also",
+  "again") with a carrier.
+
+**32.3.3 The task's check** (one check, the lead's D2). In Voice Mode (`api.chrome.check`):
+1. the task card in Voice Mode and in the chat goes to its "starting" state: the owner's words, the line with the
+   price, **Cancel** and **Start now**;
+2. Jarvis says "Chrome, up to a dollar: <task>. Say cancel to stop." (`taskCheckLine`; the budget the extension last
+   gave, a dollar by default);
+3. once it is said in full, it counts 2 s (`TASK_CHECK_MS`), or 5 s while Jarvis is hidden (`TASK_CHECK_HIDDEN_MS`),
+   with one listen open; words being heard pause it, words taken back (or silence) let it go on;
+4. "cancel", "no" or "stop" withdraws it ("Okay, nothing sent to Chrome."); "no, I said …" withdraws it and routes
+   the corrected words from the top; any other words withdraw it and are routed as usual; a barge-in during the
+   line followed by silence withdraws it; closing Voice Mode withdraws it; "start now" (or the card's button) ends
+   it at once;
+5. only then `startTask({ text, chat })`. Refusals are said: not linked ("Chrome isn't linked yet. Link it in
+   Settings."), offline ("I can't reach Chrome. Open the Jarvis window and keep it open."), `off`, `cap`, and `busy`
+   ("Chrome is busy with another task. Stop it first?": yes stops it and starts this one). Started: "Chrome is on
+   it." Nothing goes to the extension before the countdown ends.
+
+Typed (the chat box, Voice Mode closed): the same card, a 2-s countdown, nothing spoken. Jarvis never says "Jarvis
+for Chrome" (his own name would set off his barge-in, critique M8): the lines say "Chrome".
+
+**32.3.4 While a task runs.** The controller keeps the latest task from `app.chromeLink.state()` and its `subscribe`,
+and `onDone`: the card shows the status, the latest step (`narration` or `lastStep`), the cost against the budget
+and the final answer; **Stop** stops it. Jarvis says the final answer (the first 400 characters; the card has all
+2,000) once Voice Mode is free, waiting up to a minute; with Voice Mode closed the chat toasts it, and while Jarvis
+is hidden a notification says it (`notify`, tag `chrome-task`). A Chrome task never holds the session
+(critique H5). A page opened in the Jarvis window (`chromeLink.open` resolving `{ ok: true }`, whoever asked)
+starts a Chrome context: the controller watches `open()` on the link object (same arguments, same answer).
+
+**32.3.5 Chrome's questions** (`onPrompt`, `onPromptClosed`):
+- Each prompt gets a card in the chat's dock (`chrome-prompt-card`) and, with Voice Mode open and awake, a card there
+  and an `api.prompt({ id: 'chrome:<promptId>', say, hint, answers, onAnswer, onClosed })`. With Voice Mode closed or
+  on Standby: `notify({ tag: 'chrome-prompt-<promptId>', title: 'Chrome asks', body })`, whose click brings Jarvis
+  forward; the next wake greeting starts with "Chrome is waiting for you: …" (mac-hf's `wake.pending()`, `waits:
+  true`, the lead's D3), which counts as the prompt said.
+- What is said: "Chrome asks: <spoken>" plus what to say for its kind ("Say approve, or cancel.", "Say allow once, or
+  deny.", "Say spend more in Chrome, or cancel.", "Say more steps in Chrome, or cancel."); a click-only prompt says
+  "<voice.why> It needs a click in the Jarvis window. Option-Shift-J opens its side panel." (`spoken` is the question
+  alone and `voice.why` one short sentence: the lead's D4.)
+- The reserved answers (`RESERVED_ANSWERS`): approve ("approve", "approve it", "yes, approve", "i approve"), once
+  ("allow once"), deny ("deny", "cancel Chrome", "cancel it in Chrome"), stop ("stop Chrome", "stop the Chrome task":
+  stops the task, which closes the prompt), budget ("spend more in Chrome"), steps ("more steps in Chrome"). A yes is
+  offered only when `voice.allowed` and the prompt has that choice (never "Always"); a yes the prompt can't take by
+  voice is consumed with the click line; a yes of another kind with the right hint. `NEVER_ANSWERS` ("yes", "okay",
+  "sure", "go ahead", "continue" …) never answer.
+- Voice Mode's channel says a prompt once it is free (a prompt waiting is said as soon as it is, also when nothing
+  else is spoken first), with one listen after it. Said to the end, it opens the 30-s window (`ANSWER_WINDOW_MS`); cut
+  short (barge-in), it is said again first. A yes (`chooseAnswer`) counts only from the best reading, within the
+  window ('late' and 'unsaid' say it again), and when no other reading is a no, cancel or stop word ('unsure': "I'm
+  not sure I heard that right." and the prompt again). Then the check: shown "Approving: <what> · say cancel", said
+  "Approving. Say cancel to stop." (the budget names the new limit: what was used plus one more budget; allowing a
+  site names the site), 2 s (5 s while hidden), withdrawn by "cancel", "no" or "stop" ("Okay, not approved."). Only
+  then `onAnswer`, and the decision goes out as `answer({ promptId, hash, choice, via: 'voice' })` with the hash of
+  the prompt as it was said (a changed prompt is said again before a yes counts). A no goes out at once. The card's
+  buttons answer `via: 'card'`. A refusal is said: "Chrome didn't take that: <why>." and the prompt stays open.
+- Typed in the chat, a no goes out as the card's would; a yes points to the card's button (typing isn't the check).
+- Answered elsewhere (`prompt-closed`): the cards say "Answered." and go, the channel's prompt closes, the
+  notification closes.
+- The router state (app.js `routerState`): `chrome: { linked, online, task, lastTask, contextUntil }` from the
+  controller (chrome-relay's block then sets `linked`, `online`, `task` from the link); `prompt` off Voice Mode from
+  the controller (`promptState`), in Voice Mode from its channel (`{ id, say, answers, key, chrome, askedAt, saidAt
+  }`); `chromeCheck: { kind }` while Voice Mode's check counts down.
+
+**32.3.6 Tests.** Unit: `chrome-voice.task-words` (the critique probe's 8 commands and 12 sentences in four states,
+the draft's commands, carriers and the task text, G1's words, the context and its expiry, never-a-task, the lines),
+`chrome-voice.prompt-words` (reserved words, the window, other readings, the answer layer, the check lines),
+`chrome-voice.controller` (against a fake `app.chromeLink` of exactly contract (f)'s shape), `chrome-voice.cards`
+(Chromium: the cards, the dock, 320 px); the router's T1-T3 over the chrome-voice sections of
+`test/unit/fixtures/voice-corpus.mjs` and `collisions.mjs`. E2E (`test/e2e/scenarios/chrome-voice.mjs`, against the
+fake relay and the fake Jarvis for Chrome): `chrome-voice-task`, `chrome-voice-context`, `chrome-voice-approve`,
+`chrome-voice-misheard`, `chrome-voice-click-only`, `chrome-voice-stack`.
