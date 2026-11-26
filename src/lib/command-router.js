@@ -326,7 +326,8 @@ function partsCommand(text, parts, selected) {
 
 // Optics' words: what each one does to money and the camera (R6, R7).
 const OPTICS_PAID = new Set(['look', 'ask', 'more', 'part', 'hologram']);
-const OPTICS_CAMERA = new Set(['look', 'flip', 'live']);
+// 'camera': "use the Logitech camera" turns another camera on (PRIVACY-3: never from another reading).
+const OPTICS_CAMERA = new Set(['look', 'flip', 'live', 'camera']);
 
 // "This month", "this weekend": a time, not the thing in front of the camera. A question whose only
 // "this" is such a time is no Look (v8.1: "how much have I spent this month?" with Optics open is the

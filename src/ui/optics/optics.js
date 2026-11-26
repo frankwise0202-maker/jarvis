@@ -96,7 +96,6 @@ import {
 import { OPTICS_LIMITS, WATCH_DEFAULTS, changedFraction, createChangeDetector, estimateLookCost, estimateWatchCost, fitTransform, formatUsd, frameToView, layoutPins } from '../../lib/optics.js';
 import { FRESH_LOOK_QUESTION, asideQuestionRoute, findNamedCamera, hologramRequest, matchOpticsCommand, partQuestion, theName } from '../../lib/optics-commands.js';
 import { LIVE_DEFAULTS, canSpeakLive, createLiveBudget, estimateLiveLookUsd, liveBackoff, liveMeterText, liveResumeShownAt, liveSpentText, nextLiveDelay } from '../../lib/live-view.js';
-import { matchScreenCommand } from '../../lib/screen-commands.js';
 import { listenPhrases } from '../voice-heard.js';
 import { drawSchematic } from './schematic.js';
 
@@ -759,6 +758,9 @@ export function openOptics(deps = {}) {
       // Off means off: hidden, minimized, another app, a call, the camera unplugged (v8.0).
       stopLiveView('Live view stopped: the camera stopped.');
       settleAutoLive({ error: 'The camera stopped before the live view could start.' });
+      // MAC-3: a Look the words asked for ends here (Voice Mode says why and goes on); it is never sent
+      // later, when the camera comes back by itself.
+      settleAutoLook({ error: info && info.reason === 'hidden' ? 'The camera turns off while Jarvis is in the background.' : 'The camera stopped before I could look.' });
       deps.wakeLock && deps.wakeLock.allowSleep && deps.wakeLock.allowSleep();
       if (!frozen) {
         setMode('paused');
@@ -1517,11 +1519,13 @@ export function openOptics(deps = {}) {
    * only the live view's words and "stop watching": v8.0). True when a command took them (its line is
    * announced); false: they are the Look's question (live) or a follow-up (frozen).
    */
-  function routed(text, spoken) {
+  function routed(text, spoken, alternatives = []) {
     if (!text || typeof deps.route !== 'function') return false;
     let r = null;
     try {
-      r = deps.route(text, { spoken });
+      // PRIVACY-3: every reading the recognizer heard, best first: the router weighs them (R7: camera,
+      // paid and microphone commands only ever from the best one).
+      r = deps.route(text, alternatives.length ? { spoken, alternatives } : { spoken });
     } catch (err) {
       console.warn('[jarvis] the router failed:', err);
       r = null;
@@ -2951,14 +2955,13 @@ export function openOptics(deps = {}) {
         askInput.value = t;
       },
       onFinal: (heardText, info) => {
-        // A reading the recognizer was less sure of that is a command (Screens or Optics) wins
-        // over a best reading that isn't one.
-        const t = commandReading(heardText, info);
+        const t = String(heardText || '');
         askInput.value = t;
         // Spoken words: a screen command or an Optics command first ("flip", "hologram of this",
-        // "tell me more"; v8.1: the app's router picks it), else a question that goes straight out:
-        // a Look when live, a follow-up when frozen.
-        if (routed(t.trim(), true)) {
+        // "tell me more"; v8.1: the app's router picks it, from every reading: PRIVACY-3), else the
+        // best reading is a question that goes straight out: a Look when live, a follow-up when frozen.
+        const alts = info && Array.isArray(info.alternatives) ? info.alternatives.filter((a) => typeof a === 'string' && a.trim()).map((a) => a.trim()) : [];
+        if (routed(t.trim(), true, alts)) {
           askInput.value = '';
           return;
         }
@@ -2972,22 +2975,6 @@ export function openOptics(deps = {}) {
         micBtn.classList.remove('is-listening');
       },
     });
-  }
-
-  /** `text`, or the first of the recognizer's other readings that is a screen or Optics command when `text` isn't one. */
-  function commandReading(text, info) {
-    const alts = info && Array.isArray(info.alternatives) ? info.alternatives : [];
-    const showing = !!frozen && (mode === 'frozen' || mode === 'review');
-    const isCommand = (words) => {
-      try {
-        return !!(matchScreenCommand(words) || matchOpticsCommand(words, { frozen: showing }));
-      } catch {
-        return false;
-      }
-    };
-    if (!alts.length || isCommand(text)) return text;
-    const alt = alts.find((a) => typeof a === 'string' && a.trim() && isCommand(a));
-    return alt ? alt.trim() : text;
   }
 
   // ---- Optics log (desktop) ----------------------------------------------------------------------

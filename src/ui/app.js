@@ -1786,6 +1786,7 @@ export async function startApp(rootEl) {
         onClose: (info) => {
           voiceApi = null;
           voiceInfo = null;
+          withdrawCameraNote(); // PRIVACY-2: what was asked for in this session goes with it
           safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts go to notifications
           lastVoiceHologram = null;
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
@@ -2490,14 +2491,44 @@ export async function startApp(rootEl) {
   /**
    * v8.1 (E2): Jarvis hidden on a Mac (he listens there, A1): the camera only runs on screen, so one
    * notification brings him up, and its click opens Optics (`open`: what to do then).
+   * PRIVACY-2: the notification says what its click does (`intent`: 'look' with a Look's price, 'live'
+   * with the live view's cap, else 'open': the camera only). It is good for the same 30 s as a tap on
+   * Look: then, and when Voice Mode closes, it is withdrawn, and a click that still comes later (a
+   * hidden tab's timers run late) only opens Optics: no Look, no live view.
    */
-  function cameraNeedsFront(open) {
+  let cameraNote = null; // { at, timer }: the camera notification showing now
+  function withdrawCameraNote() {
+    const note = cameraNote;
+    cameraNote = null;
+    if (note && note.timer) clearTimeout(note.timer);
+    safe(() => closeNotify('jarvis-optics'));
+  }
+  function cameraNoteBody(intent) {
+    if (intent === 'look') return `Click to bring Jarvis up and look through the camera (about ${centsOf(lookEstimate())}¢).`;
+    if (intent === 'live') return 'Click to bring Jarvis up and start the live view (up to $1 an hour).';
+    return 'Click to bring Jarvis up and turn the camera on.';
+  }
+  function cameraNeedsFront(open, intent = 'open') {
+    withdrawCameraNote();
+    const note = { at: Date.now(), timer: null };
+    cameraNote = note;
+    note.timer = setTimeout(() => {
+      if (cameraNote === note) withdrawCameraNote();
+    }, PENDING_LOOK_MS);
     safe(() =>
       notifyOwner({
         tag: 'jarvis-optics',
         title: 'Jarvis: the camera',
-        body: 'Click to bring Jarvis up and turn the camera on.',
-        onClick: () => safe(() => open()),
+        body: cameraNoteBody(intent),
+        onClick: () => {
+          const fresh = cameraNote === note && Date.now() - note.at <= PENDING_LOOK_MS;
+          withdrawCameraNote();
+          if (fresh) return safe(() => open());
+          // Late: the camera comes on, and nothing more.
+          safe(() => openOpticsScreen({ voice: !!voiceApi }));
+          safe(() => sayLiveLine('Optics is on. Ask me again, or tap Look.'));
+          return undefined;
+        },
       }),
     );
     return 'The camera only runs while I’m on screen. Click the notification to bring me up.';
@@ -2514,7 +2545,7 @@ export async function startApp(rootEl) {
     const hidden = !!document.hidden && !safe(() => isIOS(), false);
     // "Live view", "watch me", "keep watching", "video mode": the camera opens by the same rule, then the live view.
     const live = safe(() => voiceLiveViewRequest(text, { viewerOpen, cameraAllowed, ios: isIOS(), hidden }), null);
-    if (live === 'need-front') return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLive: true })) } };
+    if (live === 'need-front') return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLive: true }), 'live') } };
     if (live === 'need-tap') {
       pendingVoiceLook = { text: '', at: Date.now(), live: true };
       return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and I’ll keep watching.' } };
@@ -2530,7 +2561,7 @@ export async function startApp(rootEl) {
     if (!kind) return null;
     if (kind === 'need-front') {
       const words = String(text).trim().slice(0, 500);
-      return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLook: words })) } };
+      return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLook: words }), 'look') } };
     }
     if (kind === 'need-tap') {
       // The question waits for that tap (30 s): Look then looks at once, with these words.
@@ -2894,7 +2925,7 @@ export async function startApp(rootEl) {
       onCapture: () => presence.cue('capture'),
       // v8.1: words typed or said in Optics go to the router first ("put the camera on my other
       // screen", then Optics' own words: routeFromOptics).
-      route: (text, { spoken = false } = {}) => routeFromOptics(text, { spoken }),
+      route: (text, { spoken = false, alternatives = [] } = {}) => routeFromOptics(text, { spoken, alternatives }),
       onClose: ({ cameraOff } = {}) => {
         if (cameraOff) toast('Camera off.', { level: 'info', id: 'optics-off' });
         if (!chat.isEmpty()) chat.scrollToBottom(false);
@@ -4877,18 +4908,27 @@ export async function startApp(rootEl) {
    * "stop watching"): { handled: true, ack, done? } (Optics announces the ack, and done's line), or
    * null: Optics takes them as the Look's question (live) or a follow-up (frozen).
    */
-  function routeFromOptics(text, { spoken = false } = {}) {
+  function routeFromOptics(text, { spoken = false, alternatives = [] } = {}) {
     const words = String(text || '');
+    // PRIVACY-3: Optics' own microphone gives every reading, best first; the router takes another one
+    // only for what R7 allows (never the camera, a paid action or the microphone), and the command acts
+    // on the reading it chose.
+    const readings = [words];
+    for (const a of Array.isArray(alternatives) ? alternatives : []) {
+      const r = typeof a === 'string' ? a.trim() : '';
+      if (r && !readings.some((x) => x.toLowerCase() === r.toLowerCase())) readings.push(r);
+    }
     const st = routerState('optics', { via: spoken ? 'voice' : 'typed' });
-    for (let hit = commandRouter.route([words], st); hit; hit = commandRouter.route([words], st, { after: hit })) {
+    for (let hit = commandRouter.route(readings, st); hit; hit = commandRouter.route(readings, st, { after: hit })) {
+      const chosen = typeof hit.reading === 'string' && hit.reading ? hit.reading : words;
       if (hit.id === 'standby') {
         // v8.1 (C2): the Standby words in Optics' field too.
         if (standbyFromViewer()) return { handled: true, ack: '' };
       } else if (hit.id === 'screens') {
-        if (screenCommand(words, null, spoken ? 'voice' : 'typed')) return { handled: true, ack: '' };
+        if (screenCommand(chosen, null, spoken ? 'voice' : 'typed')) return { handled: true, ack: '' };
       } else if (hit.id === 'optics') {
         const optics = currentOptics();
-        const res = optics ? safe(() => optics.command(words), null) : null;
+        const res = optics ? safe(() => optics.command(chosen), null) : null;
         if (res && res.handled) return { handled: true, ack: (res.command && res.command.ack) || '' };
       } else {
         let said = null;
