@@ -4973,8 +4973,11 @@ app's, the extension's and the Core's tests all read it.
   message, then answers `messages: []`. At most 8 reads wait on a box, 4 of them from one client; a long poll that
   finds no place, with nothing to read, gets 429 `busy` with `Retry-After: 2` (REDTEAM-LINK-2: an empty answer at
   once made a looping reader spin). A reader that hangs up lets go of its place.
-- `GET /api/relay/status` → `200 { extSeenAt, appSeenAt }`: when each side last read its box (ms, or null; a read
-  waiting right now counts as now). Reading `to-ext` counts as the extension, `to-app` as the app.
+- `GET /api/relay/status` → `200 { extSeenAt, appSeenAt, now }`: when each side last read its box (ms, or null; a
+  read waiting right now counts as now). Reading `to-ext` counts as the extension, `to-app` as the app. `now` is the
+  Core's own clock (REDTEAM-LINK-7): both ends judge how long ago against it (`now − extSeenAt`), never against their
+  own clock, so a clock apart by minutes on the home base can't make a working link look offline; a time ahead of
+  `now` isn't believed.
 
 Each box keeps at most 50 messages, each for 2 minutes, **in memory only**: nothing is logged (the routes have no
 logger, and an error never quotes a body) or written to disk, and a restart forgets everything. 120 requests a
@@ -4984,7 +4987,10 @@ can't starve George's voice, hearing, sync or the brain (REDTEAM-LINK-2). Access
 tailnet or this computer, §23); for these three routes only, `access.mjs checkRelayOrigin` also allows a
 `chrome-extension://<32 letters a-p>` origin (and answers its private-network preflight) and a CORS-mode fetch that
 carries no Origin (`Sec-Fetch-Mode: cors`, `Sec-Fetch-Dest: empty`: an extension's own request; a web page's
-cross-site CORS request always carries its Origin, and a page's no-cors request is still refused). Every other route
+cross-site CORS request always carries its Origin, and a page's no-cors request is still refused). It takes fetch
+requests only: a `Sec-Fetch-Mode` other than `cors` or a `Sec-Fetch-Dest` other than `empty`, when present, is
+refused, so a page's frame or a navigation can neither hold a long poll nor make the extension look seen
+(REDTEAM-LINK-6; clients outside a browser send neither header). Every other route
 keeps `checkOrigin`. The Core checks shapes only: it never decodes, decrypts, logs or saves a message. What the home
 base could still do, if it were turned against the owner: hold back, delay or reorder messages (the app then counts
 the extension offline, §32.1.5); it can never read or forge one.
@@ -5063,8 +5069,12 @@ via })`, `onPrompt(fn)`, `onPromptClosed(fn)`, `onDone(fn)` (each `on…` return
 - **Back-off** while the home base can't be reached: 2, 4, 8, 15, 30, then 60 s (±20 %); a Core before 1.3 (404) is
   asked every 5 minutes; a status check that works ends the wait at once (a Core just updated). Settings shows the
   problem in the home base's own words.
-- **Online:** the status says the extension read its box less than 60 s ago, or a message from it arrived in the
-  last 60 s (a time more than a minute ahead of this clock isn't believed). While it is offline or not linked,
+- **Online:** a message from the extension (one that opened with the key) arrived in the last 60 s; or the status
+  says it read its box less than 60 s ago and a message from it arrived in the last 5 minutes (`PROVEN_MS`; a time
+  more than a minute ahead of this clock isn't believed). The status alone isn't believed, since anything can read
+  the box (REDTEAM-LINK-6): while it is fresh and the last message is getting old (3.5 minutes), the window holding
+  the link sends a `ping` (at most one a minute), whose answer is that message. The last message's time is kept in
+  the stored link (`heardAt`), so a reload doesn't start offline. While it is offline or not linked,
   `open`, `startTask` and `answer` answer at once (`offline` / `unlinked`) and send nothing; `stopTask` is always
   sent while linked (the safe direction), and sent again until confirmed.
 - **What comes back is information, never orders** (rule 5): every field is checked and cut to size here (no control
@@ -5140,7 +5150,10 @@ relay (`http://127.0.0.1:<port>`).
 **32.2.3 The relay loop.** `GET <core>/api/relay/to-ext?after=<id>&wait=20` (`wait=10` while a task from Jarvis
 runs, so 20 s without an answer means the home base is gone), each poll after one extension API call
 (`chrome.runtime.getPlatformInfo`); a poll with no answer 5 s past its wait has failed. A poll answered in under a
-second with nothing in it is followed by a pause of at least 1.5 s (REDTEAM-LINK-2: it must never spin). Failures back off 1, 2, 5,
+second with nothing in it is followed by a pause of at least 1.5 s (REDTEAM-LINK-2: it must never spin). An answer
+is read as text and refused unparsed when it is over 2 MB (a declared Content-Length too); an envelope's `id`, `iv`
+and `ct` lengths are checked on the strings before anything is decoded, as the app does (REDTEAM-LINK-10: a home base
+or a proxy that misbehaves can't make the worker chew megabytes). Failures back off 1, 2, 5,
 10, 20, 30 s (a 429's Retry-After counts, up to 60 s); a 400 drops the cursor. Each message is opened (§32.1.2's
 drops), counted as read and saved before it is acted on, so none is taken twice, also across a worker or browser
 restart. `/api/relay/status` is read at most every 30 s for the panel. Messages to `to-app` leave in the order they
@@ -5158,7 +5171,10 @@ the envelope's 120 s.
   disguised characters) or `addressAction` (`classifyAddress`, an installer, a file) says the address acts: a card
   with the whole address waits in the side panel (or the approval window) and opens only on **Open it** (checked
   again then); otherwise a tab in the last focused normal window of the Jarvis profile (or a new window), with no
-  debugger and no task. A `rect` of whole pixels, at least 100 × 100 (the app's own bounds), moves that window there
+  debugger and no task; for 30 s after, a download that address (a redirect to an installer, an attachment) or a page
+  of its site starts is held on a card ("Save this download?", Save / Don't save) in the side panel or the approval
+  window, and saved only on Save (REDTEAM-LINK-9; unanswered in 5 minutes: not saved). A `rect` of whole pixels, at
+  least 100 × 100 (the app's own bounds), moves that window there
   (`state: 'normal'`) without focusing it; without one the window is focused unless `focus` is false. → `{ url,
   site }` (`site` the registrable domain). The site counts as opened by voice for the next task from Jarvis (10
   minutes).
@@ -5203,7 +5219,10 @@ at most 280 characters. It is built from the extension's own fields (the kind of
 the kind of step, a price found in the step's label or item, the budget's or step limit's numbers). Page text appears
 only as one quote of at most about 40 characters after "The button says" (or "The option says", "The text is"),
 only Latin letters, digits and plain punctuation, and never when its letters contain approve, cancel, say, yes,
-allow, deny, stop or jarvis (checked with spaces, accents and look-alike forms removed: critique M4); a site whose
+allow, deny, stop or jarvis (checked with spaces, accents and look-alike forms removed: critique M4), nor, after a
+fold by sound (digits read as letters, doubled letters, k for c, a soft c, ph for f, a silent h), one of those or the
+stems aprov, ahprov, kancel, kansel, cancle, javis, spendmore and moresteps (REDTEAM-LINK-8: "Aprove", "Approove",
+"Ah-prove", "Kancel", "Appr0ve", "Alow once", "Spend more in Chrome"); a site whose
 name holds such a word is "a site whose name is on the card in the Jarvis window". Claude's words (the card's body,
 request_confirmation's text) are never spoken. `voice.why` is one short sentence on why a yes needs a click ("That’s
 a purchase.", "That sends a message.", "That’s a keyboard shortcut.", "That carries what it read to another site.",

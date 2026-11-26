@@ -250,12 +250,46 @@ export async function promptHash(p) {
 /** Words never spoken inside a quote (checked on the letters alone: "a p p r o v e" counts). */
 export const NEVER_QUOTED = /approve|cancel|say|yes|allow|deny|stop|jarvis/;
 
+/**
+ * The same words, and the reserved answer phrases, by their sound (REDTEAM-LINK-8): matched on the letters after
+ * foldSounds, so "Aprove", "Approove", "Ah-prove", "Kancel", "Cancle", "Appr0ve", "Alow once" and "Javis" are never
+ * quoted either, nor "Spend more in Chrome" or "More steps in Chrome". ("Stahp" is left: its fold, "stap", would take
+ * every "Staples" with it; the extension's own policy decides every answer, never the quote.)
+ */
+export const NEVER_QUOTED_SOUNDS = Object.freeze(['approve', 'aprov', 'ahprov', 'cancel', 'kancel', 'kansel', 'cancle', 'say', 'yes', 'allow', 'deny', 'stop', 'jarvis', 'javis', 'spendmore', 'moresteps']);
+
 const lettersOf = (s) =>
   String(s)
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z]/g, '');
+
+/** Letters as they sound: digits read as letters, then doubled letters, k for c, ph for f, a silent h folded. */
+export function foldSounds(text) {
+  const letters = String(text)
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[0134578@$]/g, (d) => ({ 0: 'o', 1: 'l', 3: 'e', 4: 'a', 5: 's', 7: 't', 8: 'b', '@': 'a', $: 's' })[d])
+    .replace(/[^a-z]/g, '');
+  return letters
+    .replace(/ph/g, 'f')
+    .replace(/ck/g, 'k')
+    .replace(/q/g, 'k')
+    .replace(/k/g, 'c')
+    .replace(/c(?=[eiy])/g, 's')
+    .replace(/([aeiou])h(?![aeiou])/g, '$1')
+    .replace(/(.)\1+/g, '$1');
+}
+
+const FOLDED_NEVER = NEVER_QUOTED_SOUNDS.map(foldSounds);
+/** True when the text holds an answer word, spelled as it is or as it sounds. */
+export function soundsLikeAnswer(text) {
+  if (NEVER_QUOTED.test(lettersOf(text))) return true;
+  const folded = foldSounds(text);
+  return FOLDED_NEVER.some((w) => folded.includes(w));
+}
 
 /** Text that may be spoken: Latin letters, digits and plain punctuation only (else ''). */
 function speakable(text) {
@@ -273,7 +307,7 @@ function speakable(text) {
 /** Page text for a spoken quote: at most about `max` characters, or '' when it may not be said. */
 export function quoteForVoice(text, max = 40) {
   let s = speakable(text);
-  if (!s || NEVER_QUOTED.test(lettersOf(s))) return '';
+  if (!s || soundsLikeAnswer(s)) return '';
   if (s.length > max) {
     s = s.slice(0, max);
     const cut = s.lastIndexOf(' ');
@@ -286,7 +320,7 @@ export function quoteForVoice(text, max = 40) {
 export function spokenSite(site) {
   const s = speakable(site);
   if (!s) return 'a site';
-  return NEVER_QUOTED.test(lettersOf(s)) ? 'a site whose name is on the card in the Jarvis window' : s;
+  return soundsLikeAnswer(s) ? 'a site whose name is on the card in the Jarvis window' : s;
 }
 
 const PRICE = /[$€£¥]\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?|[$€£¥]\s?\d+(?:\.\d{2})?/;

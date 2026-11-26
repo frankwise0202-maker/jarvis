@@ -232,6 +232,30 @@ test('LINK-2: a poll answered at once with nothing doesn’t loop right away: at
   assert.deepEqual(slept2.filter((ms) => ms >= 1500), [], 'no pause after a poll that waited');
 });
 
+test('LINK-10: an answer over 2 MB is refused before it is parsed (a home base or proxy that misbehaves)', async () => {
+  let parsed = 0;
+  const big = JSON.stringify({ messages: [{ id: 'x'.repeat(22), iv: 'y'.repeat(16), ct: 'z'.repeat(3 * 1024 * 1024) }], last: null });
+  const answers = [];
+  const store = createStore(createFakeBrowser().chrome);
+  const r = new Relay({ chrome: { runtime: {} }, link: { core: CORE, key: newLinkKey() }, store, onMessage: (m) => answers.push(m), sleep: fast, fetch: async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    text: async () => big,
+    json: async () => {
+      parsed += 1;
+      return JSON.parse(big);
+    },
+  }) });
+  r.start();
+  const end = Date.now() + 3000;
+  while (r.failures < 2 && Date.now() < end) await new Promise((res) => setTimeout(res, 5));
+  r.stop();
+  assert.ok(r.failures >= 2, 'counted as a failed read');
+  assert.equal(parsed, 0, 'never parsed');
+  assert.deepEqual(answers, []);
+});
+
 test('online (the side panel): only once Jarvis has answered with this link’s key, and while it is heard from or reads its box', async () => {
   let t = 1_800_000_000_000;
   const now = () => t;
@@ -286,6 +310,27 @@ test('online (the side panel): only once Jarvis has answered with this link’s 
 // ---------------------------------------------------------------------------------------------
 // The link
 
+test('LINK-7: when Jarvis last read its box is judged on the home base’s clock (its `now`), not this one', async () => {
+  let t = 1_800_000_000_000;
+  const now = () => t;
+  const relay = createFakeRelay({ waitScaleMs: 1, now });
+  const store = createStore(createFakeBrowser().chrome);
+  const key = newLinkKey();
+  await store.setLink({ core: CORE, key });
+  await store.setRelayState({ after: '', seen: [], heardAt: t - 30 * 60_000 }); // proven with this key before
+  const r = new Relay({ chrome: { runtime: {} }, link: { core: CORE, key }, store, onMessage() {}, now, fetch: async (url, init) => {
+    if (String(url).endsWith('/api/relay/status')) {
+      // The home base's clock runs 90 s behind this Mac's: Jarvis read its box 5 s ago by that clock.
+      const coreNow = t - 90_000;
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ extSeenAt: coreNow, appSeenAt: coreNow - 5000, now: coreNow }), text: async () => JSON.stringify({ extSeenAt: coreNow, appSeenAt: coreNow - 5000, now: coreNow }) };
+    }
+    return relay.fetch(url, init);
+  } });
+  r.heardAt = t - 30 * 60_000; // (proven with this key before, as the loop loads it from storage)
+  await r.readStatus();
+  assert.equal(r.state(t).appOnline, true, 'read 5 s ago on the home base’s clock: online');
+});
+
 test('linked: hello and the status go to Jarvis; the alarm is set; ping answers with the status', async (t) => {
   const s = await setup();
   t.after(s.done);
@@ -302,6 +347,38 @@ test('linked: hello and the status go to Jarvis; the alarm is set; ping answers 
   assert.equal((await s.app.request('hello', { app: 'jarvis', version: '8.1' })).ok, true);
   await s.app.waitFor(() => s.app.of('hello').length > n);
   assert.equal((await s.app.request('nonsense')).reason, 'bad', 'an unknown request is refused, still with one reply');
+});
+
+test('LINK-9: for 30 s after an open from Jarvis, a download that address (or its page) starts is held on a card: saved only on Save', async (t) => {
+  const s = await setup({ panel: false });
+  t.after(s.done);
+  const cancelled = [];
+  s.fb.chrome.downloads = { cancel: async (id) => cancelled.push(id) };
+  const opened = await s.app.request('open', { url: 'https://shop.example/r', rect: null, focus: true });
+  assert.equal(opened.ok, true);
+  // The clean address answers 302 to an installer: Chrome starts a download with no task running.
+  const suggested = [];
+  const item = { id: 41, url: 'https://shop.example/r', finalUrl: 'https://shop.example/files/setup.dmg', filename: 'setup.dmg', referrer: '' };
+  assert.equal(s.controller.holdDownload(item, () => suggested.push(41)), false, 'no task: the controller leaves it');
+  assert.equal(s.link.holdDownload(item, () => suggested.push(41)), true, 'held');
+  assert.deepEqual(suggested, [], 'nothing saved yet');
+  const card = s.link.cards.find((c) => c.kind === 'download');
+  assert.ok(card && card.name === 'setup.dmg' && card.site === 'shop.example', JSON.stringify(card));
+  await s.waitFor(() => s.calls.windows.some((c) => c.op === 'create'), 2000, 'the approval window (no panel open)');
+  await s.link.onPanelMessage({ type: 'open-card', cardId: card.id, choice: 'dismiss' });
+  assert.deepEqual(cancelled, [41], 'Don’t save: cancelled');
+  assert.deepEqual(suggested, [41], 'and Chrome stops waiting');
+  // Another one, saved.
+  const item2 = { id: 42, url: 'https://shop.example/files/manual.pdf', referrer: 'https://shop.example/r', filename: 'manual.pdf' };
+  assert.equal(s.link.holdDownload(item2, () => suggested.push(42)), true);
+  const card2 = s.link.cards.find((c) => c.kind === 'download');
+  await s.link.onPanelMessage({ type: 'open-card', cardId: card2.id, choice: 'save' });
+  assert.deepEqual(suggested, [41, 42]);
+  assert.deepEqual(cancelled, [41], 'Save: not cancelled');
+  // Another site's download, or one 30 s later, is left alone (as Chrome does).
+  assert.equal(s.link.holdDownload({ id: 43, url: 'https://elsewhere.example/a.zip', referrer: '' }, () => {}), false);
+  s.clock.offset += 31_000;
+  assert.equal(s.link.holdDownload({ id: 44, url: 'https://shop.example/r', referrer: '' }, () => {}), false);
 });
 
 test('open: a tab in the Jarvis window, no debugger; with a place, the window goes there unfocused', async (t) => {

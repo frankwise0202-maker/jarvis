@@ -357,6 +357,7 @@ export default [
               const r = JSON.parse(localStorage.getItem('jarvis.chromeLink.v1') || 'null');
               if (r) {
                 r.extSeenAt = Date.now() - 2 * 60_000;
+                if (r.heardAt) r.heardAt = Date.now() - 2 * 60_000; // (the last message from it, kept since REDTEAM-LINK-6)
                 localStorage.setItem('jarvis.chromeLink.v1', JSON.stringify(r));
               }
             } catch {

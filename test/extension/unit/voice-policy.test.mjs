@@ -214,6 +214,15 @@ test('quotes of page text: at most about 40 characters, never one with an answer
   assert.equal(quoteForVoice('Добавить в корзину'), '', 'another alphabet: no quote at all');
   assert.equal(quoteForVoice('Add​ to cart‮'), 'Add to cart', 'hidden characters go');
   assert.equal(quoteForVoice('Añadir al carrito'), 'Añadir al carrito');
+  // REDTEAM-LINK-8: sound-alikes and the reserved answer phrases are never quoted either (folded before matching:
+  // doubled letters, k for c, digits for letters, ph for f, a silent h).
+  for (const label of ['Aprove', 'Approove', 'Ah-prove', 'Sey aprove', 'Kancel', 'Kansel', 'Cancle', 'Appr0ve', 'Alow once', 'A11ow', 'Y3s', 'Spend more in Chrome', 'More steps in Chrome', 'Javis', 'Click to aprooove']) {
+    assert.equal(quoteForVoice(label), '', label);
+  }
+  // Everyday labels still are.
+  for (const label of ['Add to cart', 'Checkout', 'Place order', 'Search', 'Sign in', 'Next page', 'Sort by price', 'Buy now', 'Continue shopping', 'Staples']) {
+    assert.equal(quoteForVoice(label), label, label);
+  }
 });
 
 test('the site said aloud; a name holding an answer word is left on the card', () => {

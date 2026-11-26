@@ -30,6 +30,12 @@ const ID_BYTES = 16;
 const KIND = /^[a-z][a-z-]{0,23}$/;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
+// The fields' lengths as base64url without padding: checked on the strings before anything is decoded
+// (REDTEAM-LINK-10: a huge field must cost nothing), as the app's isEnvelopeShape does.
+const ID_CHARS = 22;
+const IV_CHARS = 16;
+const CT_MIN_CHARS = 24; // a tag and a little
+export const CT_MAX_CHARS = 21867; // a plaintext of MAX_PLAINTEXT bytes and its tag
 
 const subtle = () => globalThis.crypto.subtle;
 const utf8 = new TextEncoder();
@@ -122,6 +128,10 @@ export async function unseal(key, { box, msg, now = Date.now(), seen = null }) {
   const drop = (reason) => ({ ok: false, reason });
   // Exactly { id, iv, ct }: nothing else rides along.
   if (!isPlainObject(msg) || Object.keys(msg).length !== 3 || typeof msg.id !== 'string' || typeof msg.iv !== 'string' || typeof msg.ct !== 'string') return drop('shape');
+  // Lengths first, on the strings: nothing too long is ever decoded (REDTEAM-LINK-10).
+  if (msg.id.length !== ID_CHARS || msg.iv.length !== IV_CHARS) return drop('shape');
+  if (msg.ct.length > CT_MAX_CHARS) return drop('size');
+  if (msg.ct.length < CT_MIN_CHARS || msg.ct.length % 4 === 1) return drop('shape');
   const id = fromB64u(msg.id);
   const iv = fromB64u(msg.iv);
   const ct = fromB64u(msg.ct);

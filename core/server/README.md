@@ -111,7 +111,9 @@ preflights (a public page calling the 100.x Tailscale address) get
 `Access-Control-Allow-Private-Network: true` for those origins only. The relay's three routes alone also take
 `chrome-extension://<id>` origins (and their preflights), and an extension's own fetch that carries no Origin
 (`Sec-Fetch-Mode: cors`, `Sec-Fetch-Dest: empty`: a web page's cross-site CORS request always carries its
-Origin); every other route refuses them. A refused API request (403) still carries
+Origin); every other route refuses them. The relay takes fetch requests only: a `Sec-Fetch-Mode` other than `cors`
+or a `Sec-Fetch-Dest` other than `empty`, when present, is refused (a page's frame or a navigation, REDTEAM-LINK-6;
+clients outside a browser send neither). A refused API request (403) still carries
 CORS headers for those origins, so the Jarvis app can tell "refused" from a Core that isn't running behind
 `tailscale serve` (Tailscale then answers 502 without them); Funnel traffic never gets them. **Limits:** 4 KB bodies and 300-character questions,
 8 questions at once then 30 a minute per client, 16 live streams. (The brain's and the senses' own body
@@ -391,7 +393,7 @@ their shape on the strings' lengths and alphabet, never decodes or decrypts them
 |---|---|
 | `POST /api/relay/to-ext`, `POST /api/relay/to-app` | body `{id, iv, ct}` (JSON, at most 24 KB): `id` 22 and `iv` 16 base64url characters, `ct` 24-21,867 → `{ok: true}`; the same `id` again is kept once (a retry). 400 `bad_json` / `bad_envelope`, 413 `too_large`, 415 `unsupported_type`, 429 `rate_limited` |
 | `GET /api/relay/to-ext?after=<id>&wait=<s>`, `GET /api/relay/to-app?…` | `{messages: [{id, iv, ct}], last}`: the messages after `after` (all held ones when it is missing or no longer held), oldest first; `last` is the newest id held (or `after` when none is). With nothing to send it waits up to `wait` seconds (0-25, default 0) for one, then answers `messages: []`. At most 8 reads wait on a box, 4 of them from one client: a long poll that finds no place (and nothing to read) gets 429 `busy` with `Retry-After: 2`, never an empty answer at once. 400 `bad_after`, `bad_wait` |
-| `GET /api/relay/status` | `{extSeenAt, appSeenAt}`: when each side last read its box (ms since 1970, or `null`); a read waiting right now counts as now. Reading `to-ext` counts as the extension, `to-app` as the app |
+| `GET /api/relay/status` | `{extSeenAt, appSeenAt, now}`: when each side last read its box (ms since 1970, or `null`); a read waiting right now counts as now. Reading `to-ext` counts as the extension, `to-app` as the app. `now` is the Core's clock: the app and the extension judge those ages against it, not their own (REDTEAM-LINK-7) |
 
 Each box keeps at most 50 messages, each for 2 minutes (in memory; a sweep every 10 s, and a restart forgets
 them). 120 requests a minute per box (both methods), and 120 a minute for the status, for each client (its

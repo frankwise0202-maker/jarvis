@@ -251,7 +251,9 @@ or sent anywhere. Linking works only with your home base's Tailscale address, as
   `?add-to-cart=42` or `/orders/7/cancel`, an installer or another file, or one with hidden or
   disguised characters) waits for your click: its card shows the whole address in the side
   panel, and it opens only when you press **Open it**. Chrome's own pages, files, the Chrome Web
-  Store and addresses with a user name or password are never opened.
+  Store and addresses with a user name or password are never opened. For 30 seconds after Jarvis
+  opens a page, a download it starts (a link that turns out to be an installer, say) waits on a
+  card too, and is saved only when you press **Save**.
 - **Start a task**, from your own spoken words (never from a web page or from Claude): only
   while **Tasks from Jarvis** is on, at most 30 a day, and one at a time, as here. It runs with
   this extension's model, budget and step limit, and its card says **From Jarvis (voice)**.
@@ -269,8 +271,10 @@ its card (*"Chrome asks: Click a button on bestbuy.com? The button says “Add t
 approve, or cancel."*). Jarvis for Chrome writes the question, from its own facts: the kind of
 step, the site, what it looks like (a purchase…), a price. Of the page's own words it quotes at most
 about 40 characters, after "the button says", and never words that sound like an answer
-("approve", "cancel", "yes", "say", "allow", "deny", "stop", "Jarvis"), so a page can't put words
-in Jarvis's mouth. When a question needs a click, Jarvis says why in a few words (*"That's a
+("approve", "cancel", "yes", "say", "allow", "deny", "stop", "Jarvis", "spend more in Chrome",
+"more steps in Chrome"), also spaced out, accented, in look-alike letters or spelled by sound
+("Aprove", "Kancel", "Appr0ve"), so a page can't put words in Jarvis's mouth. (Jarvis for Chrome
+decides every answer itself; the quote only describes the step.) When a question needs a click, Jarvis says why in a few words (*"That's a
 purchase."*) and that it needs a click in the Jarvis window.
 
 | Jarvis for Chrome asks | Answered from Jarvis (by voice, or on its card) | A click here |

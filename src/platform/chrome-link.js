@@ -70,6 +70,10 @@ export const CHROME_LINK_LOCK = 'jarvis-chrome-link';
 export const CHROME_LINK_CHANNEL = 'jarvis-chrome-link';
 export const REPLY_TIMEOUT_MS = 10_000;
 export const ONLINE_MS = 60_000;
+// The relay's "it read its box" counts only while Jarvis for Chrome has also said something (a message that opened
+// with the key) in the last PROVEN_MS: anything can read the box (a page's frame before Core refused them, a reader
+// with another key), REDTEAM-LINK-6. The window holding the link pings it to keep that proof fresh while it is quiet.
+export const PROVEN_MS = 5 * 60_000;
 export const POLL_WAIT_S = 20;
 export const STATUS_EVERY_MS = 30_000;
 export const PENDING_MS = 30 * 60_000; // an unused link code is forgotten after half an hour
@@ -271,6 +275,7 @@ export function readLinkRecord(read = readItem) {
     key: raw.key,
     linkedAt: posInt(raw.linkedAt),
     extSeenAt: posInt(raw.extSeenAt),
+    heardAt: posInt(raw.heardAt),
     madeAt: posInt(raw.madeAt),
     prev,
     rekeyAt: prev ? posInt(raw.rekeyAt) : null,
@@ -457,6 +462,7 @@ export function createChromeLink({
   const winId = Math.floor(random() * 2 ** 48).toString(36) + Math.floor(Math.random() * 2 ** 30).toString(36); // this window
   const candidates = new Map(); // voice task id → when first seen while one of this window's starts waited (MISSED-LINK-A)
   let lateNoted = 0; // late ok replies to an open or an answer (only noted)
+  let proofPingAt = 0; // the last ping sent to prove the extension reads its box (REDTEAM-LINK-6)
   let stopper = null; // the pending stop (LINK-1): { taskId, ids: Set of envelope ids, rec, started, sends, timer, over, promise, resolve }
   const listeners = new Set();
   const controlListeners = new Set();
@@ -515,7 +521,7 @@ export function createChromeLink({
 
   function save(rec) {
     const rotating = rec.prev ? { prev: rec.prev, rekeyAt: rec.rekeyAt, prevSeenAt: rec.prevSeenAt } : {};
-    storage.write(CHROME_LINK_KEY, JSON.stringify({ v: 1, core: rec.core, key: rec.key, linkedAt: rec.linkedAt, extSeenAt: rec.extSeenAt, madeAt: rec.madeAt, ...rotating }));
+    storage.write(CHROME_LINK_KEY, JSON.stringify({ v: 1, core: rec.core, key: rec.key, linkedAt: rec.linkedAt, extSeenAt: rec.extSeenAt, ...(rec.heardAt ? { heardAt: rec.heardAt } : {}), madeAt: rec.madeAt, ...rotating }));
   }
 
   function loadInbox() {
@@ -631,7 +637,26 @@ export function createChromeLink({
   }
 
   const isLinked = () => computer && !destroyed && phase() === 'linked';
-  const isOnlineNow = () => isLinked() && now() - seenAt() < ONLINE_MS;
+
+  /** When a message from Jarvis for Chrome last opened with the key (this window, the holder's, or saved). */
+  function provenAt() {
+    const t = now();
+    const v = Math.max(heard || 0, record ? record.heardAt || 0 : 0);
+    return v && v - t < ONLINE_MS ? v : 0;
+  }
+
+  /**
+   * Online: a message from it in the last minute; or the relay says it read its box in the last minute and it said
+   * something in the last PROVEN_MS (REDTEAM-LINK-6: the status alone could be anyone reading).
+   */
+  function isOnlineNow() {
+    if (!isLinked()) return false;
+    const t = now();
+    const proven = provenAt();
+    if (!proven) return false;
+    if (t - proven < ONLINE_MS) return true;
+    return t - proven < PROVEN_MS && t - seenAt() < ONLINE_MS;
+  }
 
   function state() {
     const linked = isLinked();
@@ -670,7 +695,12 @@ export function createChromeLink({
   function changed() {
     cancelLater(onlineTimer);
     onlineTimer = null;
-    if (isOnlineNow()) onlineTimer = later(changed, Math.max(50, seenAt() + ONLINE_MS - now() + 50));
+    if (isOnlineNow()) {
+      const t = now();
+      const proven = provenAt();
+      const ends = [seenAt() + ONLINE_MS, proven + ONLINE_MS, proven + PROVEN_MS].filter((v) => v > t);
+      onlineTimer = later(changed, Math.max(50, Math.min(...ends) - t + 50));
+    }
     const s = state();
     const sig = JSON.stringify(s);
     if (sig !== lastSig) {
@@ -686,7 +716,7 @@ export function createChromeLink({
       // The first message sealed with this key: Jarvis for Chrome has the code. Linked. A new key replaces the
       // code's at once, so the code works once (REDTEAM-LINK-4): sent sealed with the code's key, and again until
       // a message under the new one confirms it.
-      record = { ...record, key: newLinkKey(), prev: record.key, rekeyAt: heard, prevSeenAt: heard, linkedAt: heard, extSeenAt: heard };
+      record = { ...record, key: newLinkKey(), prev: record.key, rekeyAt: heard, prevSeenAt: heard, linkedAt: heard, extSeenAt: heard, heardAt: heard };
       savedSeen = heard;
       rekeySends = 0;
       save(record);
@@ -706,7 +736,7 @@ export function createChromeLink({
       }
     }
     if (record && heard - savedSeen >= SEEN_SAVE_MS) {
-      record = { ...record, extSeenAt: heard };
+      record = { ...record, extSeenAt: heard, heardAt: heard };
       savedSeen = heard;
       save(record);
     }
@@ -1240,13 +1270,26 @@ export function createChromeLink({
     } catch {
       r = { ok: false, kind: 'unreachable' };
     }
-    if (record !== rec || destroyed) return;
+    if (!record || !sameLink(record, rec) || destroyed) return;
     if (!r.ok) {
       if (r.kind !== 'aborted') setProblem(problemOf(r));
       return;
     }
+    // Judged on the home base's own clock when it gives it (REDTEAM-LINK-7): two machines' clocks may differ by
+    // minutes; how long ago it read its box doesn't.
     const ext = posInt(r.data.extSeenAt);
-    if (ext && ext > statusSeen) statusSeen = ext;
+    const coreNow = posInt(r.data.now);
+    // (A time ahead of the home base's own clock can't be: not believed.)
+    const seen = ext && coreNow ? (ext - coreNow > 1000 ? 0 : now() - Math.max(0, coreNow - ext)) : ext;
+    if (seen && seen > statusSeen) statusSeen = seen;
+    // The status says it reads its box, but it hasn't said anything for a while: a ping proves it is Jarvis for
+    // Chrome reading, with this key (REDTEAM-LINK-6). At most one a minute.
+    const t = now();
+    const proven = provenAt();
+    if (record.linkedAt && t - seenAt() < ONLINE_MS && (!proven || t - proven > PROVEN_MS - 90_000) && t - proofPingAt > 60_000) {
+      proofPingAt = t;
+      request('ping', {}, { needOnline: false }).catch(() => {});
+    }
     if (problem === 'old-core' || problem === 'unreachable' || problem === 'down') problem = null;
     if (pollWake) pollWake(); // the relay answers again (a Core just updated to 1.3, say): read now, not in 5 minutes
     if (record.linkedAt && statusSeen - savedSeen >= SEEN_SAVE_MS && statusSeen - now() < ONLINE_MS) {
