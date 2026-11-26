@@ -1207,6 +1207,8 @@ export function openOptics(deps = {}) {
             }
             if (typeof target.onEnd === 'function') target.onEnd(t);
             if (t.status !== 'done' && !target.text) target.text = (t.error && t.error.message) || target.error || 'Jarvis couldn’t finish this answer.';
+            // v8.1 (E0): an answer the live view's gate refused at its dollar is said out loud.
+            if (t.status === 'error' && t.error && t.error.kind === 'live_cap') sayRefusal(t.error.message);
             if (target === frozen && frozen.logEntry) updateLogEntry(frozen);
             if (target.status === 'done') announce(frozen && frozen.pins.length ? `Answer ready. ${frozen.pins.length} labels pinned.` : 'Answer ready.');
             setMode(mode);
@@ -1249,6 +1251,25 @@ export function openOptics(deps = {}) {
     }
     follow(res.run, entry);
     return entry;
+  }
+
+  /**
+   * v8.1 (E0): "That would take the live view past its dollar this hour…" said out loud where Jarvis
+   * may speak (replies read aloud), and announced; over Voice Mode, Voice Mode says the turn's error
+   * itself.
+   */
+  function sayRefusal(text) {
+    const line = String(text || '').trim();
+    if (!line || closed) return;
+    announce(line);
+    if (deps.voice) return;
+    const sp = deps.liveSpeech;
+    try {
+      const st = sp && typeof sp.state === 'function' ? sp.state() : null;
+      if (st && st.allowed && typeof sp.say === 'function') sp.say(line);
+    } catch {
+      /* speech is optional */
+    }
   }
 
   /** Labels added by a follow-up: a new object gets its pin; one already pinned (same name, nearby) stays put. */

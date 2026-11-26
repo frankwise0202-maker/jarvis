@@ -535,7 +535,8 @@
 .optics-aside-pic .optics-frozen-media { object-fit: contain; }
 .optics-aside-pic .optics-pins { position: absolute; inset: 0; }
 .optics[data-aside='true'] .optics-answer { max-height: none; flex: 1 1 auto; min-height: 0; }
-.optics[data-aside='true'] .optics-log { flex: 0 1 28%; min-height: 96px; }
+/* The log keeps only the room its rows need (at most a quarter of the column): the card gets the rest. */
+.optics[data-aside='true'] .optics-log { flex: 0 1 auto; max-height: 26%; min-height: 0; }
 .optics-aside-actions .btn { min-height: 40px; }
 /* Which answer this is: a new picture, or a follow-up about the picture in the card. */
 .optics-answer-states { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
