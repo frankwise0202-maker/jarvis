@@ -590,6 +590,68 @@ export default [
       });
     },
   },
+  // ---- SHOULD: A11 and A12 ------------------------------------------------------------------------------------
+  {
+    name: 'mac-standby-at-launch',
+    title: 'Mac with "Hey Jarvis" on: after a restart (no click yet) Jarvis opens Standby by himself and says CLICK ONCE SO JARVIS CAN SPEAK; that click unlocks speech and Standby stays; an iPhone doesn’t open it',
+    device: 'mac',
+    settings: { wakeWord: true },
+    timeout: 120000,
+    async run(t) {
+      await setup(t, { wordStub: true });
+      await t.step('Standby opens by itself at launch', async () => {
+        await t.visible('standby', { message: 'Standby at launch' });
+        await t.waitFor(async () => /CLICK ONCE SO JARVIS CAN SPEAK/.test(await t.text(t.locator('standby-state'))), { message: 'the click-once line' });
+        await t.screenshot('1-standby-at-launch');
+      });
+      await t.step('the click unlocks speech; Standby stays and listens', async () => {
+        await t.locator('standby').click({ position: { x: 40, y: 40 } });
+        await t.page.waitForTimeout(500);
+        t.assert(await t.locator('standby').isVisible(), 'still on Standby');
+        t.assert(!/CLICK ONCE/.test(await t.text(t.locator('standby-state'))), 'the line is gone');
+        await waitListening(t);
+      });
+      await t.step('an iPhone with the same settings doesn’t open it', async () => {
+        const page = await t.newPage({ device: 'iphone13', settings: { wakeWord: true } });
+        await setup(t, { page });
+        await page.waitForTimeout(1500);
+        t.assert(!(await page.locator(tid('standby')).count()), 'no Standby at launch on an iPhone');
+      });
+    },
+  },
+  {
+    name: 'standby-word-restart',
+    title: '"Hey Jarvis" whose download failed starts again by itself with back-off (the hint says so); once the download works, Standby listens for it',
+    device: 'mac',
+    settings: { wakeClap: false, wakeWord: true },
+    allowConsole: [/status of 503/],
+    timeout: 180000,
+    async run(t) {
+      await setup(t);
+      let failing = true;
+      let asked = 0;
+      await t.page.context().route('**/models/openwakeword/**', (route) => {
+        asked += 1;
+        return failing ? route.fulfill({ status: 503, body: 'down' }) : route.continue();
+      });
+      await (await t.visible('quick-key-standby')).click();
+      await t.visible('standby');
+      await t.step('the download fails: the hint says he tries again', async () => {
+        await t.waitFor(async () => (await standbyState(t.page))?.word === 'error', { timeout: 30000, message: async () => `the wake word to fail (${JSON.stringify(await standbyState(t.page))})` });
+        const st = await standbyState(t.page);
+        t.assert(/couldn’t load/.test(st.hint) && /Jarvis tries again by himself\./.test(st.hint), `the hint (${st.hint})`);
+        t.assert((await t.page.evaluate(() => window.__fakeMic.gets)) === 0, 'the microphone stays off meanwhile (claps are off)');
+      });
+      await t.step('the network is back: the next try downloads it and Standby listens for it', async () => {
+        const before = asked;
+        failing = false;
+        await t.waitFor(async () => (await standbyState(t.page))?.word === 'ready', { timeout: 120000, message: async () => `the wake word to be ready (${JSON.stringify(await standbyState(t.page))})` });
+        t.assert(asked > before, 'asked again by itself');
+        await waitListening(t);
+        t.assert((await standbyState(t.page)).pill === 'LISTENING ON THIS DEVICE · “HEY JARVIS”', (await standbyState(t.page)).pill);
+      });
+    },
+  },
   // ---- A9: one Jarvis per Mac answers --------------------------------------------------------------------------
   {
     name: 'standby-one-window',
