@@ -112,11 +112,30 @@ const SEARCH_RE = [
 ];
 // "google USB-C chargers"
 const GOOGLE_RE = /^google (.+)$/;
-// ROUTING-3: Google's own products (and its stock) right after "Google" are the subject, not the first words of
-// a search: "Google Home isn't responding" is a statement for Jarvis; "google stock price" searches with "google".
-const GOOGLE_PRODUCT = /^(?:home|nest|docs?|drive|maps|photos|meet|calendar|pixel|fi|sheets|slides|play(?: store)?|assistant|gmail|chromecast|chrome|tv|stock|stocks|shares|earnings|news|translate|lens|keep|wallet|pay|classroom|workspace|cloud|fit|voice|account|one|flights|finance|fiber|ads)\b/;
-// A finite verb after the product ("… won't open", "… keeps freezing", "… has no sound"): a statement about it.
-const STATEMENT_VERB = /\b(?:isnt|arent|wasnt|werent|wont|doesnt|dont|didnt|cant|cannot|couldnt|wouldnt|keeps|kept|stopped|stops|has|had|sent|sends|deleted|deletes|drains|drained|crashed|crashes|froze|freezes|broke|breaks|died|dies|lost|loses|failed|fails|says|said|shows|showed|needs|wants|got|gets|went|goes|changed|moved|logged|logs|asks|asked|won|beat|beats)\b/;
+// ROUTING-3, ROUTING-R2-6, MISSED-R2V-2: what follows "google" (googleQuery). Google itself as the subject (its stock,
+// earnings, news) keeps "google" in the query: "google stock price". One of its products ("Google Docs") followed,
+// at most one word on, by a finite verb is a statement for Jarvis: "Google Docs won't open", "Google Pixel battery
+// drains fast". A product word with at most a short attribute is about the product: "google drive storage". Any
+// other search starting with such a word is an everyday one, its words as said: "google TV shows like …", "google
+// home remedies for a cold".
+const GOOGLE_ITSELF = /^(?:stock|stocks|shares|share price|earnings|finance|news)\b/;
+const GOOGLE_PRODUCT = /^(?:home|nest|docs?|drive|maps|photos|meet|calendar|pixel|fi|sheets|slides|play store|play|assistant|gmail|chromecast|chrome|tv|translate|lens|keep|wallet|pay|classroom|workspace|cloud|fit|voice|account|one|flights|fiber|ads)\b/;
+const PRODUCT_STATEMENT = new RegExp(
+  `^${GOOGLE_PRODUCT.source.slice(1, -2)}\\b(?: [a-z0-9-]+)? (?:isnt|arent|wasnt|werent|wont|doesnt|dont|didnt|cant|cannot|couldnt|wouldnt|keeps|keep|kept|stopped|stops|has no|had no|has stopped|sent|deleted|drains|drained|crashed|crashes|froze|freezes|broke|died|dies|lost|failed|fails)\\b`,
+);
+
+/** What to search for "google <q>" (q: the words after it), or null: a statement for Jarvis (see above). */
+function googleQuery(q) {
+  const asks = /^(?:what|how|why|who|when|where|which)\b/.test(q);
+  // A query has no "is/are/was" unless it is itself a question ("google what is a heat pipe").
+  if (NOT_QUERY.test(q) || (/\b(?:is|are|was|were|has been|have been)\b/.test(q) && !asks)) return null;
+  if (GOOGLE_ITSELF.test(q)) return `google ${q}`;
+  const product = GOOGLE_PRODUCT.exec(q);
+  if (!product) return q;
+  if (!asks && PRODUCT_STATEMENT.test(q)) return null;
+  const rest = q.slice(product[0].length).trim();
+  return !rest || rest.split(' ').length <= 1 ? `google ${q}` : q;
+}
 const SITE_RE = new RegExp(`^(?:open|go to|pull up|bring up|load|take me to|show me)(?: up)? ([a-z0-9. -]+?)(?: ${IN_BROWSER})?$`);
 // Things with names of their own in Jarvis: never a web search when "opened in Chrome".
 const NOT_A_SITE = /^(?:it|this|that|them|the camera|camera|optics|settings|history|the library|library|voice mode|standby|mission control|the hologram|the blueprint|the report|the answer)$/;
@@ -138,6 +157,13 @@ function searchAction(query, said) {
   if (!q || /^(?:it|this|that|them)$/.test(q)) return chromeAction({ kind: 'this-search' }, whereOf(said));
   if (q.split(' ').length > 16 || TASKISH.test(q) || PAGE_OBJECT.test(q)) return null;
   return chromeAction({ kind: 'search', query: q }, whereOf(said), { check: true });
+}
+
+/** A search for googleQuery's words: as searchAction, but "google" kept when the query starts with it. */
+function googleSearch(query, said) {
+  if (!/^google /.test(query)) return searchAction(query, said);
+  if (query.split(' ').length > 16 || TASKISH.test(query) || PAGE_OBJECT.test(query)) return null;
+  return chromeAction({ kind: 'search', query }, whereOf(said), { check: true });
 }
 
 /** How many links the newest reply has (the router's state.reply.links: a list, or a count). */
@@ -175,23 +201,20 @@ export function matchChromeCommand(text, state = {}) {
   }
   for (const re of SEARCH_RE) {
     m = re.exec(s);
-    if (m) return searchAction(m[1], m[2]);
+    if (!m) continue;
+    // "google … in Chrome", "google … on Google": the same as "google …" (ROUTING-R2-6).
+    if (/^google /.test(s) && re === SEARCH_RE[0]) {
+      const query = googleQuery(m[1].trim());
+      return query === null ? null : googleSearch(query, m[2]);
+    }
+    return searchAction(m[1], m[2]);
   }
   m = GOOGLE_RE.exec(s);
   if (m) {
     const q = m[1].trim();
-    const asks = /^(?:what|how|why|who|when|where|which)\b/.test(q);
-    // A query has no "is/are/was" unless it is itself a question ("google what is a heat pipe").
-    const statement = NOT_QUERY.test(q) || (/\b(?:is|are|was|were|has been|have been)\b/.test(q) && !asks);
-    // "Google Docs won't open": a statement about a Google product (ROUTING-3).
-    const product = q !== 'maps' && GOOGLE_PRODUCT.test(q);
-    if (!statement && !(product && !asks && STATEMENT_VERB.test(q))) {
-      if (q === 'maps') return chromeAction({ kind: 'site', url: CHROME_SITES['google maps'][0], name: CHROME_SITES['google maps'][1] }, 'auto');
-      if (!product) return searchAction(q, '');
-      // "google stock price": the search keeps "google" (searchAction would take it off).
-      if (q.split(' ').length >= 16 || TASKISH.test(q) || PAGE_OBJECT.test(q)) return null;
-      return chromeAction({ kind: 'search', query: `google ${q}` }, 'auto', { check: true });
-    }
+    if (q === 'maps') return chromeAction({ kind: 'site', url: CHROME_SITES['google maps'][0], name: CHROME_SITES['google maps'][1] }, 'auto');
+    const query = googleQuery(q);
+    if (query !== null) return googleSearch(query, '');
   }
   m = SITE_RE.exec(s);
   if (m) {

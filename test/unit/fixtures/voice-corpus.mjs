@@ -522,6 +522,11 @@ export const WINDOWS = {
       ['expand the picture', state, 'optics'],
       ['show me the camera', state, 'optics'],
     ]),
+    // MISSED-R2V-2: everyday searches that start with a Google product's word stay searches (of exactly those words:
+    // test/unit/screens.chrome.test.mjs), never a paid question.
+    ['google TV shows like Breaking Bad', 'V0', 'chrome-open:chrome-open'],
+    ['google home remedies for a cold', 'V0', 'chrome-open:chrome-open'],
+    ['google TV shows like Breaking Bad in Chrome', 'C0', 'chrome-open:chrome-open'],
   ],
   not: [
     'put them side by side in the photo',
