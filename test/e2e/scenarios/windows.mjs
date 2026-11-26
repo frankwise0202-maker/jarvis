@@ -200,7 +200,10 @@ async function speak(t, words, expect, { timeout = 20000 } = {}) {
     if (line) return line;
     if (taps < 2 && (await vm.getAttribute('data-state')) === 'idle') {
       taps += 1;
-      await (await t.visible('voice-core')).click();
+      // With a hologram over Voice Mode its mic is Voice Mode's talk button (the core is under the viewer).
+      const holoMic = t.page.locator(tid('hologram-mic'));
+      if ((await t.count('hologram-viewer')) && (await holoMic.isVisible().catch(() => false))) await holoMic.click();
+      else await (await t.visible('voice-core')).click();
     }
     return null;
   }, { timeout, message: async () => `Jarvis to say ${expect} after "${words}" (said: ${(await t.page.evaluate(() => window.__voice.said)).slice(-4).join(' | ')})` });
