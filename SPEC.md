@@ -4090,8 +4090,9 @@ seen }` (where reading `to-ext` left off, and the last 500 ids read).
 `chrome.permissions.request({ origins: [core + '/*'] })`; on Allow the link is saved (the old cursor first) and
 Tasks from Jarvis turns on. The worker sees the change, starts the relay, creates the alarm `jarvis-relay` (every
 0.5 min) and sends `hello` and `status`. The section shows "Linked · online" (the home base answers and the app read
-its box or spoke in the last 60 s), "Linked · Jarvis isn't open", "Linked · can't reach your home base" or "Linked ·
-connecting…", with Unlink. Unlink (from the panel, or `unlinked` from the app) sends `unlinked {}` first when the
+its box or spoke in the last 60 s), "Linked · waiting for Jarvis" (with what to do: keep Jarvis open; if Jarvis doesn't
+show Linked, copy a new link code there, Unlink here and paste it), "Linked · can't reach your home base" (check
+Tailscale and the home base) or "Linked · connecting…", with Unlink. Unlink (from the panel, or `unlinked` from the app) sends `unlinked {}` first when the
 panel unlinks, then forgets the key, the cursor and the alarm, and gives back the host permission. Development
 builds also take a local relay (`http://127.0.0.1:<port>`).
 
