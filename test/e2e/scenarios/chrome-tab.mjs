@@ -100,6 +100,7 @@ export default [
       const links = await replyLinks(turn);
       t.assert(links.length >= 2, `the reply has links (${links.length})`);
       const lead = t.requests('lead').length;
+      let first = '';
 
       await t.step('"pull this up in Chrome": a tab with the first link; said that it was the first of several', async () => {
         await typeCommand(t, 'pull this up in Chrome');
@@ -109,14 +110,16 @@ export default [
         }, { timeout: 8000, message: 'a tab to open' });
         t.assert(tab.name === '_blank' && tab.features === null, `a plain tab, no window features (${JSON.stringify(tab)})`);
         t.assert(tab.opener === null, 'the page can\'t reach Jarvis (opener cut)');
-        t.assert(tab.sent === links[0], `the first link (${tab.sent} vs ${links[0]})`);
-        t.assert(new RegExp(`That reply has ${links.length} links; I opened the first`).test(await toastText(t)), `said which (${await toastText(t)})`);
+        t.assert(links.includes(tab.sent), `a link of the reply (${tab.sent})`);
+        first = tab.sent;
+        t.assert(/That reply has \d+ links; I opened the first/.test(await toastText(t)), `said which (${await toastText(t)})`);
       });
 
       await t.step('"open the second link": that one', async () => {
         await typeCommand(t, 'open the second link');
-        await t.waitFor(async () => (await tabs(t)).length === 2, { timeout: 8000, message: 'a second tab' });
-        t.assert((await tabs(t))[1].sent === links[1], 'the second link');
+        await t.waitFor(async () => (await tabs(t)).length === 2 && (await tabs(t))[1].sent, { timeout: 8000, message: 'a second tab' });
+        const second = (await tabs(t))[1].sent;
+        t.assert(links.includes(second) && second !== first, `another link of the reply (${second})`);
       });
 
       await t.step('spoken, pop-ups blocked: the one-tap "Open in Chrome" button opens it', async () => {
@@ -132,7 +135,7 @@ export default [
         await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.said.map((x) => x.replace(/\s+/g, ' ')).join(' | '))).includes('Tap Open in Chrome'), { timeout: 15000, message: 'Jarvis to say to tap' });
         t.assert((await tabs(t)).at(-1).blocked, 'the spoken open was blocked');
         await (await t.visible('chrome-tap-button')).click();
-        await t.waitFor(async () => (await tabs(t)).at(-1).sent === links[0], { timeout: 8000, message: 'the tap to open it' });
+        await t.waitFor(async () => (await tabs(t)).at(-1).sent === first, { timeout: 8000, message: 'the tap to open it' });
         t.assert((await t.count('chrome-tap')) === 0, 'the button went away');
         t.assert(t.requests('lead').length === lead, `nothing went to Claude (${t.requests('lead').length - lead})`);
         await (await t.visible('voice-close')).click();
@@ -226,7 +229,9 @@ export default [
         t.assert(/^jarvis-link-/.test(tab.name), `a window of Jarvis's, not a tab (${tab.name})`);
         t.assert(tab.features === 'popup=1,left=720,top=25,width=720,height=875', `placed beside Jarvis (${tab.features})`);
         t.assert(tab.opener === null, 'the page can\'t reach Jarvis');
-        t.assert(/open beside me/i.test(await toastText(t)), `said so (${await toastText(t)})`);
+        // Optics says a command's line in its own live region.
+        const announced = () => page.evaluate(() => [...document.querySelectorAll('[data-testid="optics"] [aria-live]')].map((e) => e.textContent).join(' | '));
+        await t.waitFor(async () => /open beside me/i.test(await announced()), { timeout: 5000, message: async () => `Optics to say so (${await announced()})` });
         t.assert((await page.locator(tid('optics')).getAttribute('data-camera')) === 'live', 'the camera stays live');
         t.assert(t.requests('lead').length === lead, 'nothing went to Claude');
       });

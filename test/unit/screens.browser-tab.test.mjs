@@ -96,7 +96,7 @@ async function page(opts = {}) {
       toast: (m) => window.__toasts.push(m),
     });
     window.pull = async (target, ctx = {}, where = 'auto') => {
-      const out = await window.tabs.pullUp({ do: 'chrome-open', target, where }, ctx);
+      const out = await window.tabs.pullUp({ do: 'chrome-open', target, where }, { source: 'voice', ...ctx });
       return { status: out.status, via: out.via || null, line: out.line, url: out.url || null };
     };
     window.opened = () => window.__opens.map((x) => ({ url: x.url, name: x.name, features: x.features, blocked: !!x.blocked, sent: x.win ? x.win.location.href : null, opener: x.win ? x.win.opener : undefined }));

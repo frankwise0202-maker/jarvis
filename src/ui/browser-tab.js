@@ -162,9 +162,9 @@ export function createBrowserTabs(deps = {}) {
       });
       return { ...base, status: 'needs_tap', via: 'tab' };
     }
-    // From a Jarvis tab, the new tab covers him: when he can't listen covered, say once how to keep him in view.
+    // Said from a Jarvis tab, the new tab covers him: when he can't listen covered, say once how to keep him in view.
     let note = base.note;
-    if (!gesture && !call('standalone', false) && !call('listensHidden', false) && !prefs.windowTipSaid) {
+    if (source === 'voice' && !gesture && !call('standalone', false) && !call('listensHidden', false) && !prefs.windowTipSaid) {
       prefs.windowTipSaid = true;
       savePrefs({ windowTipSaid: true });
       note = `${note ? `${note} ` : ''}Say “open it in a window” to keep me in view.`;
