@@ -581,7 +581,7 @@ export default [
         if (Math.abs(shown - due) > 300) late.push(`${step}: shown ${Math.round(shown - due)} ms from ${fallback ? 'the fallback' : 'its words'}`);
       }
       t.note(gaps.join(', '));
-      t.assert(!late.length, `each step shown within 300 ms of its words (${late.join('; ')})`);
+      t.assert(!late.length, `each step shown within 300 ms of its words (${late.join('; ')}; every step: ${gaps.join(', ')})`);
     },
   },
   {
@@ -597,17 +597,20 @@ export default [
         const order = stepsOf(log);
         t.assert(new Set(order).size === order.length, `${label}: each step once (${order.join(' → ')})`);
         const gaps = [];
+        const bad = [];
         for (const step of ['apart', 'g-case', 'g-power', 'g-input', 'end']) {
           const words = { apart: 'Taken apart, it has 16 main parts.', 'g-case': 'Case: the bottom cover.', 'g-power': 'Power: the battery.', 'g-input': 'Keyboard and touchpad: the keyboard.', end: "That's the tour." }[step];
           const u = v.log.find((e) => norm(e.text).startsWith(words));
           const shown = shownAt(log, step);
           t.assert(u && shown > 0, `${label}: ${step} said and shown`);
           if (!u || shown < 0) continue;
-          gaps.push(`${step} ${Math.round(shown - u.at)}`);
-          t.assert(shown - u.at >= early, `${label}: ${step} not shown before its words (${Math.round(shown - u.at)} ms)`);
-          t.assert(shown - u.at <= late, `${label}: ${step} shown ${Math.round(shown - u.at)} ms after its words began (at most ${late})`);
+          const gap = Math.round(shown - u.at);
+          gaps.push(`${step} ${gap}`);
+          if (gap < early) bad.push(`${step} shown ${-gap} ms before its words`);
+          if (gap > late) bad.push(`${step} shown ${gap} ms after its words began (at most ${late})`);
         }
         t.note(`${label}: ${gaps.join(', ')} ms`);
+        t.assert(!bad.length, `${label}: ${bad.join('; ')} (every step: ${gaps.join(', ')} ms)`);
       };
       await t.step('with start events', async () => {
         await voiceLaptop(t, { queue: ['Walk me through it.'], speech: { cps: 40 } });

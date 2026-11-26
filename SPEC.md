@@ -3971,7 +3971,8 @@ defaultId, stepId, status, paused, waits, justSaid, index, total, view, parts }`
 means the tour only then. A bare "stop" belongs to the stop layer: it stops Jarvis's voice, and a narration cut short
 pauses the tour. Lines (R9): pause "Paused. Say continue when you're ready." (at a decision: "I'll wait."), end
 "Okay, that's the end of the tour.", next at the end "That was the last step. …"; a word that moves the tour on says
-none of its own (its step is the line).
+none of its own (its step is the line). A line the tour says while a word runs (a jump's "Say continue to go back to the
+tour.") is that word's line, the router's answer: Voice Mode says it (its own `say()` only speaks when it is free).
 
 **Test hooks.** On the viewer: `data-tour`, `data-tour-status`, `data-tour-step` (the step being said, or about to
 be), `data-tour-shown` (the step whose look shows: it changes when its words begin), `data-tour-index`,

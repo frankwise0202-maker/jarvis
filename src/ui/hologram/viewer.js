@@ -1554,8 +1554,15 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     hold: () => { const v = liveVoice(); if (v && typeof v.hold === 'function') v.hold('tour'); },
     release: () => { const v = liveVoice(); if (v && typeof v.release === 'function') v.release('tour'); },
   };
+  // While a tour word runs (tourCommand), the lines the tour says are that word's own line: the router's
+  // answer, which Voice Mode says (it is busy with the words it heard, so its say() would only show it).
+  let commandLines = null;
   /** A short line: said by Voice Mode when it is open, else shown. */
   const tourSay = (line) => {
+    if (commandLines) {
+      commandLines.push(String(line));
+      return;
+    }
     const v = liveVoice();
     if (!(v && typeof v.say === 'function' && safe(() => v.say(line), false))) say(line);
   };
@@ -1658,10 +1665,26 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     };
   }
 
-  /** A tour word (src/ui/commands/tours.js): what it did, truthy; { say } for a view without a step. */
+  /**
+   * A tour word (src/ui/commands/tours.js): what it did, truthy; { say } when it has a line of its own
+   * (a view without a step; "skip to the fan" with no step for it: how to go back to the tour).
+   */
   function tourCommand(action) {
     const p = tour && tour.player;
     if (!p || !action) return false;
+    commandLines = [];
+    let out;
+    let lines;
+    try {
+      out = tourWord(p, action);
+    } finally {
+      lines = commandLines;
+      commandLines = null;
+    }
+    return lines.length && out && !(typeof out === 'object' && out.say) ? { say: lines.join(' ') } : out;
+  }
+
+  function tourWord(p, action) {
     switch (action.do) {
       case 'tour-next':
         p.next();
