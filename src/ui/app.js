@@ -4362,9 +4362,9 @@ export async function startApp(rootEl) {
       }),
     null,
   );
-  /** app.chromeLink (contract (f)): chrome-relay's installChromeLink makes it; null until it is there. */
+  /** app.chromeLink (contract (f)): chrome-relay's installChromeLink made it (`chromeLink`), or null (demo, a phone). */
   function chromeLinkForVoice() {
-    return null;
+    return chromeLink || null;
   }
   // ---- chrome-voice ◂
 

@@ -58,6 +58,19 @@ export function register(router, deps = {}) {
     return { say: surface === 'voice' ? out.ack || '' : out.show || '' };
   };
 
+  // The wake greeting's first words while Chrome waits for an answer (the lead's D3: mac-hf's one hook;
+  // `waits`: said before any other line).
+  const pending = deps && deps.wakePending;
+  if (pending && typeof pending.add === 'function') {
+    pending.add(
+      () => {
+        const c = controller();
+        return c && typeof c.pending === 'function' ? c.pending() : null;
+      },
+      { waits: true },
+    );
+  }
+
   router.register({ id: 'chrome.prompt', layer: 'answer', match: (text, state) => matchChromeAnswer(text, state), run });
   router.register({
     id: 'chrome.stop',

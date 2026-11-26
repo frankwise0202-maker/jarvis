@@ -181,7 +181,7 @@ test('not linked, offline, off, busy, at the cap: said plainly, nothing runs any
   assert.deepEqual(late.v.said, ['I can’t reach Chrome. Open the Jarvis window and keep it open.']);
   // No link at all (before chrome-relay's link exists): "not linked".
   const none = createChromeVoice({ link: null, voice: () => null, toast: () => {} });
-  assert.deepEqual(none.state(), { linked: false, online: false, task: null, contextUntil: 0 });
+  assert.deepEqual(none.state(), { linked: false, online: false, task: null, lastTask: null, contextUntil: 0 });
   assert.equal(none.promptState(), null);
   assert.deepEqual(none.run({ do: 'chrome-ask' }), { ack: 'Chrome isn’t linked yet. Link it in Settings.', show: 'Jarvis for Chrome isn’t linked yet. Link it in Settings → Jarvis for Chrome.' });
 });

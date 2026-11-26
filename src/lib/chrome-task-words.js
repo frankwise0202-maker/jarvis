@@ -331,7 +331,8 @@ export function matchChromeTask(text, state = {}) {
   const words = taskWords(p.words);
   if (words.split(' ').length < 2 && !/^scroll\b/.test(s)) return null;
   const chrome = st.chrome && typeof st.chrome === 'object' ? st.chrome : {};
-  const prior = !!(chrome.task && typeof chrome.task === 'object' && chrome.task.id) && inChromeContext(st);
+  const last = [chrome.lastTask, chrome.task].find((t) => t && typeof t === 'object' && t.id);
+  const prior = !!last && inChromeContext(st);
   const chat = prior && (via === 'context' || p.follow) ? 'same' : 'new';
   return { do: 'chrome-task', text: words, chat, via, free: false, undo: false, check: true };
 }

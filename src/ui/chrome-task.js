@@ -1037,7 +1037,9 @@ export function createChromeVoice(deps = {}) {
     const st = linkState();
     const pend = S.pendingTask && !S.pendingTask.done && !S.pendingTask.cancelled && !S.pendingTask.refused ? S.pendingTask : null;
     const t = pend ? { id: S.task ? S.task.id : '', status: 'starting', text: pend.text } : S.task ? { id: S.task.id, status: S.task.status, text: S.task.text } : null;
-    return { linked: !!st.linked, online: !!st.online, task: t, contextUntil: S.contextUntil };
+    // lastTask: the latest task, finished too ("now add the second one too" carries on its chat).
+    const last = S.task && S.task.id ? { id: S.task.id, status: S.task.status, text: S.task.text } : null;
+    return { linked: !!st.linked, online: !!st.online, task: t, lastTask: last, contextUntil: S.contextUntil };
   }
 
   /**
@@ -1087,7 +1089,8 @@ export function createChromeVoice(deps = {}) {
   function pending() {
     const open = [...S.prompts.values()].pop();
     if (!open) return null;
-    const line = waitingLine(open.prompt).say;
+    // One line of at most 240 characters, as the wake routine says it (src/lib/wake/pending.js).
+    const line = waitingLine(open.prompt).say.replace(/\s+/g, ' ').trim().slice(0, 240);
     const adapter = v();
     if (adapter && typeof adapter.greeted === 'function') quiet(() => adapter.greeted(`chrome:${open.prompt.promptId}`, line));
     return line;

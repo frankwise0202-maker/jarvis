@@ -349,3 +349,9 @@ test('the final answer, the status line and anything else said from the extensio
   assert.equal(sayable('a‮b​c\nd'), 'a b c d', 'hidden characters and line breaks');
   assert.ok(sayable('x '.repeat(400), 100).length <= 100);
 });
+
+test('the last task (finished too) is chrome.lastTask: the link\'s state may show none once it is done', () => {
+  const st = { now: NOW, chrome: { linked: true, online: true, task: null, lastTask: { id: 't1', status: 'done' }, contextUntil: NOW + 60000 } };
+  assert.equal(matchChromeTask('now add the second one too', st).chat, 'same');
+  assert.equal(matchChromeTask('now add the second one too', { ...st, chrome: { ...st.chrome, lastTask: null } }).chat, 'new');
+});
