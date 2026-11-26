@@ -366,6 +366,11 @@ export const OPTICS = {
     { words: 'put the picture to the side', state: 'OPA', winner: 'optics-card', why: 'A Look is on screen: back into its card, not a Screens float.' },
     { words: 'close the picture', state: 'OPA', winner: 'optics-card', why: 'The card goes; the camera stays on.' },
     { words: 'put the picture to the side', state: 'OPT', winner: 'optics-card', why: 'Typed with a Look on screen: back into its card.' },
+    // ROUTING-R2-10: Optics' microphone with the research offer's card up (OVQ) is OV for everything but the offer's words.
+    { words: "what's on my screen", state: 'OVQ', winner: 'screen-look', why: "The owner's screen, not a Look of the camera (C5), as in OV." },
+    { words: 'do this in this window', state: 'OVQ', winner: 'windows', why: 'The owner picks the window to work in, as in OV.' },
+    { words: 'show me the hologram window', state: 'OVQ', winner: 'windows', why: 'Bring the hologram window to the front, as in OV.' },
+    { words: 'put the picture to the side', state: 'OVQ', winner: 'screens', why: 'No Look on screen: a Screens float, as in OV.' },
   ],
 };
 

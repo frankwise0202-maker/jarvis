@@ -148,6 +148,31 @@ export function register(router, deps) {
     run: (action) => call('answerResearch', action.choice),
   });
 
+  // ROUTING-R2-10: the research offer answered in Optics' field while its card is up (app.js routerState
+  // `researchOffer`): typed, any way, as the card's buttons; said to Optics' microphone, the cheap ways act and a dear
+  // one asks for the card's tap (no 2-second check there). Never a one-word paid question about the Look.
+  router.register({
+    id: 'optics-research-field',
+    layer: 'answer',
+    surfaces: ['optics'],
+    match(text, s) {
+      const offer = s.researchOffer;
+      if (!offer || !Array.isArray(offer.choices)) return null;
+      const id = matchOfferChoice(text, offer.choices);
+      if (!id) return null;
+      const choice = offer.choices.find((c) => c && c.id === id) || {};
+      if (choice.dear && s.via === 'voice') return { do: 'research-tap', choice: id, label: String(choice.label || ''), undo: false };
+      return { do: 'research-answer', choice: id, free: id === 'cancel', undo: false };
+    },
+    run: (action) => {
+      if (action.do === 'research-tap') {
+        const name = action.label.split('·')[0].trim() || 'it';
+        return { say: `Tap ${name} on the card to start it.` };
+      }
+      return call('answerResearch', action.choice);
+    },
+  });
+
   // E2: "open optics" with Optics closed (Voice Mode, or typed in the chat: Enter is a gesture); with
   // Optics open already (said, or typed in its field), Jarvis just says so: never a paid question.
   router.register({

@@ -4862,6 +4862,8 @@ export async function startApp(rootEl) {
     s.running = state.runs.size > 0;
     s.runningElsewhere = [...remoteRuns.values()].some((entry) => !entry.ending);
     if (s.optics) s.optics.watch = !!opticsLive.watch;
+    // ROUTING-R2-10: the research offer's card in Optics: its ways, for its answers typed or said in Optics' field.
+    s.researchOffer = researchAsk && researchAsk.card && researchAsk.offer ? { choices: safe(() => researchAsk.offer.choices.map((c) => ({ id: c.id, label: c.label, words: c.words, dear: !!c.dear })), []) } : null;
     // ---- fix-routing ◂
     // ---- chrome-relay ▸ (s.chrome)
     if (chromeLink) {

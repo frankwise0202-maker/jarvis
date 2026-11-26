@@ -644,6 +644,20 @@ export const OPTICS = {
     ['look here', 'VL', 'optics'],
     ['look at this', 'VL', 'optics'],
     ['take a look at this', 'VF', 'optics'],
+    // ROUTING-R2-10: the research offer's answers in Optics' field while its card is up: typed, any of its ways (as the
+    // card's buttons); said to Optics' microphone, the cheap ones act and a dear one asks for the card's tap (it has no
+    // 2-second check there). Other words stay the Look's question.
+    ['mission', 'OTQ', 'optics-research-field:research-answer'],
+    ['quick', 'OTQ', 'optics-research-field:research-answer'],
+    ['home base', 'OTQ', 'optics-research-field:research-answer'],
+    ['cancel', 'OTQ', 'optics-research-field:research-answer'],
+    ["let's do the mission", 'OTQ', 'optics-research-field:research-answer'],
+    ['quick', 'OVQ', 'optics-research-field:research-answer'],
+    ['cancel', 'OVQ', 'optics-research-field:research-answer'],
+    ['mission', 'OVQ', 'optics-research-field:research-tap'],
+    ['the home base', 'OVQ', 'optics-research-field:research-tap'],
+    ['what is this mug made of', 'OTQ', null],
+    ['mission', 'OPT', null],
   ],
   not: [
     // E4: the 16 steals of the voice study's probe (8 sentences, with the camera live and a Look on screen).
@@ -679,6 +693,9 @@ export const OPTICS = {
       voiceOpen: true,
       questions: [{ id: 'research-offer', say: 'Research this USB-C charger? …', choices: RESEARCH_CHOICES, match: (text) => (/^(?:quick|quick answer|the quick one|cancel|no|never mind)$/i.test(String(text).trim()) ? (/^(?:cancel|no|never mind)$/i.test(String(text).trim()) ? 'cancel' : 'quick') : null), check: false }],
     },
+    // ROUTING-R2-10: Optics' field, typed (OTQ) or by its microphone (OVQ), with the research offer's card up.
+    OTQ: { surface: 'optics', via: 'typed', optics: { open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null }, researchOffer: { choices: RESEARCH_CHOICES } },
+    OVQ: { surface: 'optics', via: 'voice', optics: { open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null }, researchOffer: { choices: RESEARCH_CHOICES } },
   },
 };
 

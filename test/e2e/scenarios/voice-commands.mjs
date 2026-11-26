@@ -7,7 +7,9 @@ import { tid } from '../harness.mjs';
 import { installFakeSpeech } from './features.mjs';
 import { typeCommand, toastText } from './screens.mjs';
 import { installCameraRig } from '../camera-rig.mjs';
-import { cameraArgs, instrument, waitLive } from './optics.mjs';
+import { cameraArgs, instrument, waitLive, waitAnswer } from './optics.mjs';
+import { configureLive } from '../../mock/optics.mjs';
+import { CORE_URL } from '../core-fakes.mjs';
 
 const said = (t) => t.page.evaluate(() => window.__voice.said.map((s) => String(s)));
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -304,6 +306,56 @@ export default [
         await t.waitFor(async () => (await t.page.locator(tid('turn-jarvis')).last().getAttribute('data-status')) === 'stopped', { timeout: 10000, message: async () => `the mission to show "stopped" (is "${await t.page.locator(tid('turn-jarvis')).last().getAttribute('data-status')}")` });
         await t.screenshot('1-stopped-in-history');
       });
+    },
+  },
+  {
+    // ROUTING-R2-10 (the reviewer's zzv-optics-offer-typed, kept): the research offer answered by typing its way in
+    // Optics' field, as its buttons answer it. Before, "mission" and "quick" went to Claude as one-word questions.
+    name: 'voice-commands-optics-offer',
+    title: 'Mac, Optics: "research this" typed in Optics\' field shows the offer; "mission" typed there starts the research mission (agents, the research words), "quick" the quick research; never a one-word question',
+    device: 'mac',
+    timeout: 180000,
+    seed: { settings: { homeBaseUrl: CORE_URL, speakReplies: 'summary' } },
+    fakeCore: { brain: { key: true } },
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await page.addInitScript(installFakeSpeech);
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      configureLive(t.mock, { costUsd: 0.0001 });
+      await t.goto('/?optics=1');
+      await waitLive(t);
+      await page.locator(tid('optics-look')).click();
+      await waitAnswer(t, page);
+      await page.waitForTimeout(500);
+      const ask = page.locator(tid('optics-ask'));
+      const lastUserText = (r) => {
+        const m = r.body.messages.findLast((x) => x.role === 'user');
+        return m && Array.isArray(m.content) ? m.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n') : String((m && m.content) || '');
+      };
+      for (const [word, want] of [
+        ['quick', /^Research this with a web search and give me a quick answer:/],
+        ['mission', /^Research .+: what it is, its specifications, prices and reviews/],
+      ]) {
+        await t.step(`"research this", then "${word}" typed in Optics' field`, async () => {
+          await ask.fill('research this');
+          await ask.press('Enter');
+          await t.waitFor(async () => (await page.locator(tid('optics-card')).getAttribute('data-kind')) === 'research', { timeout: 8000, message: 'the offer card' });
+          const l0 = t.requests('lead').length;
+          const w0 = t.requests('worker').length;
+          await ask.fill(word);
+          await ask.press('Enter');
+          await t.waitFor(() => t.requests('lead').length > l0, { timeout: 15000, message: `the research after "${word}"` });
+          const texts = t.requests('lead').slice(l0).map((r) => lastUserText(r).split('\n').filter(Boolean).at(-1) || '');
+          t.assert(texts.some((x) => want.test(x)), `"${word}" picked that way (requests: ${JSON.stringify(texts)})`);
+          t.assert(!texts.some((x) => x.trim().toLowerCase() === word), `never a one-word question "${word}" (requests: ${JSON.stringify(texts)})`);
+          if (word === 'mission') await t.waitFor(() => t.requests('worker').length > w0, { timeout: 20000, message: 'the mission\'s agents' });
+          await waitAnswer(t, page).catch(() => null);
+          await page.waitForTimeout(800);
+        });
+      }
+      await t.screenshot('1-after');
     },
   },
   {

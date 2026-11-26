@@ -2303,6 +2303,10 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
     answers, at once; "mission" and "home base" are the router's `optics-research-answer` (answer layer,
     `check: true`), so they go through the 2-second check. In Optics it is a card (`data-kind="research"`,
     `optics-research-offer`, buttons `optics-research-quick|mission|homebase|cancel`), said aloud where Jarvis speaks.
+    While the card is up, its ways typed in Optics' field answer it as its buttons do (the router's
+    `optics-research-field`, from routerState's `researchOffer`); said to Optics' own microphone, "quick" and "cancel"
+    answer it and "mission" or "home base" get "Tap Mission on the card to start it." (no 2-second check there):
+    never a one-word question about the Look (ROUTING-R2-10).
     Offline: "I can't research while offline." Nothing is sent before a choice; Cancel: "Okay, no research."
     Voice Mode drops an open question when other words are routed, but not for an answer-layer entry's words: the
     offer stays open while "mission" waits in its check, so a correction there ("no, I said quick") still answers

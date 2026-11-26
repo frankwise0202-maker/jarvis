@@ -51,6 +51,8 @@ export const SURFACES = Object.freeze(['voice', 'chat', 'hologram', 'optics']);
  *   running        a turn runs in this window, in the open chat or another: an answer, a mission, a Look's
  *                  answer ("stop" stops them all)
  *   runningElsewhere  another Jarvis window runs a turn ("stop" says where: it can't be stopped here)
+ *   researchOffer  the research offer's card in Optics: { choices: [{ id, label, words, dear }] } | null (its answers
+ *                  in Optics' field: src/ui/commands/optics.js optics-research-field)
  *   tour           { active, atChoice, choices, stepId } | null                       (Track 2)
  *   hologram       the viewer on screen: { open, inWindow, parts: [{ id, name, aka }], selected } | null
  *   blueprintOpen  a blueprint sheet is on screen
@@ -78,6 +80,7 @@ export function emptyState(surface = 'voice') {
     replying: false,
     running: false,
     runningElsewhere: false,
+    researchOffer: null,
     tour: null,
     hologram: null,
     blueprintOpen: false,

@@ -302,7 +302,7 @@ Mode or Optics first.
 | | "what am I looking at?", "look at this", "take a picture", "look again", "new look" | A Look, about 3¢ |
 | | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs). With Optics closed, "video mode off", "stop live view" and "stop watching" just say "The live view is off.", free |
 | | "expand the picture", "show the picture big", "back to live", "show the live video", "close the picture", "put the picture aside" | The picture and the live video, on a Mac (with no picture on screen: "There's no picture on screen.", free) |
-| | "research this", "look this up", "dig into this", "research this in the background", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose (in Voice Mode and Optics' field; typed in the chat it is a question) |
+| | "research this", "look this up", "dig into this", "research this in the background", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose (in Voice Mode and Optics' field, where you can also type the way or tap it on the card; said to Optics' own microphone, "mission" and "home base" need that tap; typed in the chat it is a question) |
 | | "look at my screen" | A button to tap (your screen's share picker needs a tap), with a Look's price on it |
 | Holograms | "expand it", "show the battery", "front view", "labels off", "photos of the fan" | As before, free |
 | Walkthroughs | "walk me through it", "walk me through the battery" | A walkthrough of the hologram on screen, free |

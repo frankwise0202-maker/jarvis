@@ -3,6 +3,7 @@
 //   ROUTING-R2-1  D3 with Optics open here: the hologram's commands act in its window, Optics keeps its own words
 //   ROUTING-R2-4  the emphatic no's answer the research offer (never a paid question)
 //   ROUTING-R2-7  the laptop shown last and closed opens again only for a command about it
+//   ROUTING-R2-10 the research offer answered in Optics' field (the router and the module's run)
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -128,4 +129,31 @@ test('ROUTING-R2-7: with a laptop shown last and closed, E2\'s camera words open
   for (const words of ['Open the camera.', 'Camera on.', 'Show me the camera.', 'Turn the camera on.']) assert.equal(pick(words), 'optics-open:optics-open', words);
   for (const words of ['Is the camera on?', 'Is my camera on?', 'What does the battery do?', 'Show my screen.']) assert.equal(pick(words), 'claude', words);
   for (const words of ['Expand it.', 'Show the battery.', 'Rotate it.']) assert.equal(pick(words), 'hologram:hologram', words);
+});
+
+// ---- ROUTING-R2-10: the research offer answered in Optics' field ---------------------------------------------------
+
+test('ROUTING-R2-10: in Optics\' field the research offer is answered (typed: any way; said: the cheap ones, a dear one asks for the tap)', async () => {
+  const picked = [];
+  const router = createRouter();
+  registerTodayCommands(router);
+  registerOptics(router, { answerResearch: (choice) => (picked.push(choice), { say: choice === 'cancel' ? 'Okay, no research.' : '' }) });
+  const offer = { choices: RESEARCH_CHOICES };
+  const field = (via, extra = {}) => ({ ...emptyState('optics'), via, optics: OPTICS, researchOffer: offer, ...extra });
+  const said = async (words, st) => {
+    const hit = router.route([words], st);
+    if (!hit) return { id: null };
+    const out = await router.run(hit, { surface: 'optics' });
+    return { id: hit.id, do: hit.action.do, say: out && out.say };
+  };
+  assert.deepEqual(await said('mission', field('typed')), { id: 'optics-research-field', do: 'research-answer', say: '' });
+  assert.deepEqual(await said('Quick.', field('typed')), { id: 'optics-research-field', do: 'research-answer', say: '' });
+  assert.deepEqual(await said('cancel', field('voice')), { id: 'optics-research-field', do: 'research-answer', say: 'Okay, no research.' });
+  assert.deepEqual(picked, ['mission', 'quick', 'cancel']);
+  // A dear way said to Optics' microphone (no 2-second check there): the card's tap, nothing started.
+  assert.deepEqual(await said('Mission.', field('voice')), { id: 'optics-research-field', do: 'research-tap', say: 'Tap Mission on the card to start it.' });
+  assert.deepEqual(await said('home base', field('voice')), { id: 'optics-research-field', do: 'research-tap', say: 'Tap Home base on the card to start it.' });
+  assert.deepEqual(picked, ['mission', 'quick', 'cancel']);
+  // No card up: the words are the Look's question, as before.
+  assert.equal((await said('mission', field('typed', { researchOffer: null }))).id, null);
 });
