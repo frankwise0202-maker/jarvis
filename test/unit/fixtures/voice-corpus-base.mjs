@@ -23,6 +23,7 @@
 //   CHROME_CONTEXT_NOT never a Jarvis for Chrome task, even in a Chrome context (critique H3)
 //   PARITY_EXCEPTIONS  T4: matchers that listen on some surfaces only, on purpose: { id, surfaces, why }
 //   WAITING_FIXES      T1: sentences a matcher takes until another builder's fix lands ({ words, states, by })
+//   KEPT_TAKES         T1: today's takes that stay, in any state where the hologram or Optics is open
 //   LAPTOP_PARTS       the generic laptop hologram's parts (a camera and a display among them, for R10)
 
 import { emptyState } from '../../../src/lib/command-router.js';
@@ -305,7 +306,21 @@ export const WAITING_FIXES = Object.freeze(
   ].map((words) => Object.freeze({ words, states: LOOK_STATES, by: 'optics', why: 'E4: Optics\' "look …" no longer steals' })),
 );
 
-// T4: matchers that listen on some surfaces only, on purpose (R1's declared exceptions).
+// T1: today's takes that stay on purpose, in any state where the thing is open (a builder's own states too).
+export const KEPT_TAKES = Object.freeze(
+  [
+    ['is the camera on', 'hologram', "R10: the laptop's camera part is selected (free, undoable)"],
+    ['open the hologram of the battery', 'hologram', 'selects the battery part (free, undoable)'],
+    ['stop that', 'hologram', 'holds the model still (free, undoable)'],
+    ['show me a hologram of a jet engine', 'optics', 'Optics\' "hologram of": Claude still builds what was named'],
+    ['what about now', 'optics', 'a Look of the scene now (by design)'],
+    ['this one', 'optics', 'a Look of the scene now (by design)'],
+    ['is this ripe', 'optics', 'a question about "this" with the camera on is a Look (by design)'],
+  ].map(([words, by, why]) => Object.freeze({ words, by, when: by, why })),
+);
+
+// T4: matchers that listen on some surfaces only, on purpose (R1's declared exceptions). A section of
+// voice-corpus.mjs may add its own: `parity: [{ id, surfaces, why }]`.
 export const PARITY_EXCEPTIONS = Object.freeze(
   [
     { id: 'voice-controls', surfaces: ['voice'], why: "Voice Mode's own controls (stop talking, read the full answer, exit Voice Mode)" },
@@ -320,5 +335,6 @@ export const PARITY_EXCEPTIONS = Object.freeze(
     { id: 'hologram', surfaces: ['voice', 'hologram'], why: "the hologram's own words, where it is" },
     { id: 'blueprint', surfaces: ['voice'], why: "a blueprint sheet over Voice Mode (the viewer's field closes its own)" },
     { id: 'music', surfaces: ['voice', 'chat'], why: "typed in a hologram's field over Voice Mode it is Voice Mode's (its card shows there); Optics' field is the Look's question" },
+    { id: 'chrome-link', surfaces: ['voice', 'chat'], why: "Jarvis for Chrome's link status and setup (chrome-relay): said in Voice Mode or written in the chat" },
   ].map((r) => Object.freeze(r)),
 );

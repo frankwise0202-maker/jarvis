@@ -193,7 +193,12 @@ test("the final order, as the app has it: today's matchers and every module's, l
   // The declared ids each layer asks first (src/lib/command-order.js).
   assert.deepEqual([...ORDER.destination], ['chrome-task', 'chrome-open', 'windows', 'screens', 'screen-look'], 'D1: a Chrome task before opening a page');
   // The chat, a hologram's field and Optics' field: the same order, each with its own matchers.
-  assert.deepEqual(router.order('chat').flat().filter((id) => !['music'].includes(id)).slice(0, 3), ['standby', 'stop', 'screens']);
+  for (const surface of ['chat', 'hologram', 'optics']) {
+    const ids = router.order(surface).flat();
+    const at = (id) => ids.indexOf(id);
+    assert.equal(ids[0], 'standby', `${surface}: Standby first`);
+    assert.ok(at('stop') > 0 && at('stop') < at('screens') && at('screens') < at('app'), `${surface}: stop, then Screens, then the app (${ids.join(', ')})`);
+  }
 });
 
 // =============================================================================== the harness (T1-T5)
@@ -355,6 +360,11 @@ function checkMustBase(router, byModule, { rows, states, waiting }) {
   return problems;
 }
 
+/** Today's takes that stay on purpose, in any state where their thing is open (base KEPT_TAKES). */
+function keptTake(words, st, got) {
+  return BASE.KEPT_TAKES.some((k) => sameWords(k.words, words) && k.by === got && ((k.when === 'hologram' && st.hologram && st.hologram.open) || (k.when === 'optics' && st.optics && st.optics.open)));
+}
+
 /**
  * T1: every ordinary sentence reaches Claude in every state, unless the table declares a winner.
  * `waitingFor(words, state)`: a fix another builder makes is not merged yet (the take waits).
@@ -368,6 +378,7 @@ export function checkNot(router, { not, states, table, waitingFor = () => false,
       if (got === null) continue;
       const row = declared(table, words, stateName);
       if (row && winnersOf(row).includes(got)) continue;
+      if (keptTake(words, st, got)) continue;
       if (waitingFor(words, stateName)) {
         if (waiting) waiting.push(`"${words}" in ${stateName} (a fix to come)`);
         continue;
@@ -469,7 +480,8 @@ test('T4 surface parity, T5 alternatives, and no Chrome task from an ordinary se
   const { router, byModule } = appRouter();
   const { states, must, not, table } = corpora();
   const sentences = [...new Set([...must.map((row) => row[0]), ...BASE.MUST_BASE.map((row) => row.words), ...not, ...table.map((row) => row.words)])];
-  assert.deepEqual(checkParity(router, { sentences, states, exceptions: BASE.PARITY_EXCEPTIONS }), [], 'T4 surface parity');
+  const exceptions = [...BASE.PARITY_EXCEPTIONS, ...Object.values(CORPUS_SECTIONS).flatMap((section) => section.parity || [])];
+  assert.deepEqual(checkParity(router, { sentences, states, exceptions }), [], 'T4 surface parity');
   const waiting = [];
   const builderPending = (row) => !!row.by && !(byModule[OWNER_MODULE[row.by]] || []).length;
   assert.deepEqual(checkAlternatives(router, { rows: BASE.ALTERNATIVES, states, waiting, waitingFor: builderPending }), [], 'T5 alternatives');
