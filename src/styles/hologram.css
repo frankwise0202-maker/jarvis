@@ -541,6 +541,135 @@
   color: var(--accent-ink);
 }
 
+/* Walkthrough bar (src/ui/hologram/tour-player.js): while a tour runs it takes the place of the
+   assembly row and the tools (the tour moves the model; the command field stays). Its height never
+   changes during the tour: any inset change refits the camera. Desktop: two lines of the step's
+   words over the controls. Phones: the controls only (the words show in the caption). */
+.hv[data-tour='on'] .hv__row,
+.hv[data-tour='on'] .hv__tools {
+  display: none;
+}
+.hv__tour {
+  display: grid;
+  gap: 6px;
+}
+.hv__tour-words {
+  display: -webkit-box;
+  height: 2.9em; /* two lines, whatever the step says */
+  margin: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.hv__tour[data-decision='true'] .hv__tour-words {
+  color: var(--accent-2);
+}
+.hv__tour[data-status='starting'] .hv__tour-words {
+  color: var(--text-3);
+}
+.hv__tour-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  min-width: 0;
+}
+.hv__tour-count {
+  flex: none;
+  min-width: 56px;
+  padding-left: 4px;
+  color: var(--text-3);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.hv__tour-steps {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+.hv__tour-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.hv__tour-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.hv__tour[data-status='playing'] [data-testid='tour-toggle'] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--line-3);
+  color: var(--accent-2);
+}
+.hv__tour-choices {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.hv__tour-choices::-webkit-scrollbar {
+  display: none;
+}
+.hv__tour-choice {
+  flex: none;
+  height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--line-3);
+  color: var(--accent-2);
+  font: 600 var(--fs-xs) / 1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hv__tour-choice.is-default {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 14px var(--accent-soft);
+}
+.hv__tour-end {
+  flex: none;
+  height: 40px;
+  margin-left: auto;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--text-2);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+/* At a decision the choices take Pause's and Next's place (Back stays; Next would take the default). */
+.hv__tour[data-decision='true'] [data-testid='tour-toggle'],
+.hv__tour[data-decision='true'] [data-testid='tour-next'] {
+  display: none;
+}
+.hv__tour-btn:focus-visible,
+.hv__tour-choice:focus-visible,
+.hv__tour-end:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 /* Part card */
 .hv__card {
   position: absolute;
@@ -1009,6 +1138,21 @@
   }
   .hv__panel {
     max-height: 44%;
+  }
+  /* The tour bar keeps the count and the buttons; the step's words are in the caption. At a
+     decision the choices need the whole row: the count and Back make room. */
+  .hv__tour-words {
+    display: none;
+  }
+  .hv__tour[data-decision='true'] .hv__tour-count,
+  .hv__tour[data-decision='true'] .hv__tour-steps {
+    display: none;
+  }
+  .hv__tour-choice {
+    padding: 0 11px;
+  }
+  .hv__tour-end {
+    padding: 0 12px;
   }
 }
 
