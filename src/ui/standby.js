@@ -5,7 +5,8 @@
 //
 //   const standby = createStandby({ getSettings, onSettingsChange, createCore, wakeLock,
 //                                   createCapture, createWakeWord, statusLine, stateWord, chronometer,
-//                                   onWake, onExit, unlock, pauseWhenHidden, isIOS, audio, createLock, bargeIn });
+//                                   onWake, onExit, unlock, pauseWhenHidden, isIOS, audio, createLock, bargeIn,
+//                                   needsClick, voiceElsewhere });
 //   audio (v8.1, a computer; src/platform/audio-devices.js through app.js): { pill(captureDevice) -> { name,
 //                         gone } | null, wakeKey(fellBack) -> string, subscribe(fn) -> off, check(),
 //                         onWoke(fn) -> off, firstTimeLine() -> Promise<string> }: the pill names the
@@ -43,6 +44,9 @@
 //                         microphone and "Hey Jarvis" stay on through the session instead of being released;
 //                         two claps or "Hey Jarvis" then go to detected() (Voice Mode decides: George
 //                         speaking, not his own "Jarvis"), and Standby takes the same microphone back after.
+//   voiceElsewhere() -> Promise<boolean>  (MAC-6) Voice Mode is open in another Jarvis window: a wake heard now is
+//                         the owner talking to it there, so this Standby stays asleep (still listening). Without it
+//                         (an iPhone) a wake is at once, as before.
 //   needsClick() -> boolean  (A11) the page has had no click yet and George can't speak (Chrome lets the built-in
 //                         voice speak only after one, e.g. after a restart): Standby says "CLICK ONCE SO JARVIS CAN
 //                         SPEAK", and a click (or Enter, Space) then unlocks speech instead of leaving Standby.
@@ -86,6 +90,7 @@ export function createStandby(deps = {}) {
     createLock = null,
     bargeIn = null,
     needsClick = () => false,
+    voiceElsewhere = null,
   } = deps;
 
   let phase = 'closed'; // 'closed' | 'open' | 'awaiting' (woken: Voice Mode is up)
@@ -106,6 +111,7 @@ export function createStandby(deps = {}) {
   let lastTrigger = 0;
   let prevFocus = null;
   let kept = false; // v8.1: the microphone stayed on through the woken session (barge-in)
+  let checking = false; // MAC-6: a wake waits for voiceElsewhere()'s answer
   const els = {};
   // v8.1: the capture's retries (2 s, 5 s, 15 s, 60 s, then every 5 minutes), the microphone it started on,
   // and the watchers of the chosen devices and of the Mac's sleep while Standby is open.
@@ -353,10 +359,27 @@ export function createStandby(deps = {}) {
   /** Two claps or "Hey Jarvis": release the microphone, then wake (Voice Mode, the routine). */
   function trigger(kind) {
     if (phase === 'awaiting') return kept ? interrupt(kind) : false;
-    if (phase !== 'open') return false;
+    if (phase !== 'open' || checking) return false;
     const now = Date.now();
     if (now - lastTrigger < 1500) return false;
     lastTrigger = now;
+    if (typeof voiceElsewhere === 'function') {
+      // MAC-6: Voice Mode is open in another Jarvis window (the owner talks to it there, maybe "Hey Jarvis, …"):
+      // this one stays asleep, still listening. Asked of the browser (a Web Lock), so it takes a moment.
+      checking = true;
+      Promise.resolve()
+        .then(() => voiceElsewhere())
+        .catch(() => false)
+        .then((busy) => {
+          checking = false;
+          if (busy !== true && phase === 'open') wake(kind);
+        });
+      return true;
+    }
+    return wake(kind);
+  }
+
+  function wake(kind) {
     phase = 'awaiting';
     // v8.1 barge-in (a Mac in setup 1 or 3): the microphone and "Hey Jarvis" stay on through the session.
     kept = listen === 'live' && !!capture && capture.live === true && keepForBargeIn();

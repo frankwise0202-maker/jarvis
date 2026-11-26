@@ -15,8 +15,16 @@
 //   onChange(state) on every change of state
 // Without Web Locks: 'unsupported' at once; Standby listens as before (each window decides alone).
 // The lock covers the windows of one browser profile on one device (Web Locks are per origin and storage).
+//
+// MAC-6: Voice Mode open in any window counts as "Jarvis is busy here". It holds VOICE_LOCK (shared: one per
+// window) for its life, and Standby asks before it wakes, so a forgotten tab on Standby doesn't answer the owner
+// talking to Voice Mode in another window (two voices, two paid requests):
+//   const close = holdVoiceLock({ locks });   Voice Mode opened; close() when it closes (a closed window lets go too)
+//   voiceOpenSomewhere({ locks })             Promise<boolean>: Voice Mode is open in some window (false without
+//                                             Web Locks: as before)
 
 export const STANDBY_LOCK = 'jarvis-standby';
+export const VOICE_LOCK = 'jarvis-voice';
 
 function defaultLocks() {
   try {
@@ -154,4 +162,43 @@ export function createStandbyLock({ onChange = () => {}, locks = defaultLocks(),
       return state;
     },
   };
+}
+
+/** MAC-6: Voice Mode is open in this window: hold VOICE_LOCK (shared) until the returned function is called. */
+export function holdVoiceLock({ locks = defaultLocks(), name = VOICE_LOCK } = {}) {
+  let letGo = null;
+  let closed = false;
+  if (locks) {
+    try {
+      const p = locks.request(name, { mode: 'shared' }, () =>
+        closed
+          ? undefined
+          : new Promise((resolve) => {
+              letGo = resolve;
+            }),
+      );
+      Promise.resolve(p).catch(() => {});
+    } catch {
+      /* no Web Locks here: nothing is held (as before) */
+    }
+  }
+  return () => {
+    closed = true;
+    const r = letGo;
+    letGo = null;
+    if (r) r();
+  };
+}
+
+/** MAC-6: whether Voice Mode is open in some Jarvis window (VOICE_LOCK held), without taking it from anyone. */
+export function voiceOpenSomewhere({ locks = defaultLocks(), name = VOICE_LOCK } = {}) {
+  if (!locks) return Promise.resolve(false);
+  try {
+    return Promise.resolve(locks.request(name, { mode: 'exclusive', ifAvailable: true }, (lock) => !lock)).then(
+      (busy) => busy === true,
+      () => false,
+    );
+  } catch {
+    return Promise.resolve(false);
+  }
 }

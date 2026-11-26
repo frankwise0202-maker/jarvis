@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeLocks } from './standby.fakes.mjs';
-import { createStandbyLock } from '../../src/platform/standby-lock.js';
+import { createStandbyLock, holdVoiceLock, voiceOpenSomewhere } from '../../src/platform/standby-lock.js';
 
 // ---- a tiny DOM (enough for standby.js and dom.js) -------------------------------------------------------
 
@@ -190,7 +190,7 @@ async function setup(t) {
   const locks = createFakeLocks();
   const log = [];
   log.caps = {};
-  const make = (who, { bargeIn = null, lock = true, settings = { wakeClap: true, wakeWord: false }, createWakeWord = null, needsClick, unlock } = {}) => {
+  const make = (who, { bargeIn = null, lock = true, settings = { wakeClap: true, wakeWord: false }, createWakeWord = null, needsClick, unlock, ...more } = {}) => {
     const woken = [];
     const sb = createStandby({
       getSettings: () => settings,
@@ -201,6 +201,7 @@ async function setup(t) {
       onWake: (w) => woken.push(w.trigger),
       createLock: lock ? (onChange) => createStandbyLock({ locks: locks.as(who), onChange }) : null,
       bargeIn,
+      ...more, // voiceElsewhere, pauseWhenHidden, …
     });
     made.push(sb);
     return { sb, woken, cap: () => log.caps[who] };
@@ -369,6 +370,40 @@ test('MAC-2: the woken session left for a sheet ("open settings"): Standby rests
   assert.equal(a.sb.listening, 'live', 'back on Standby, listening');
   assert.equal(a.cap().live, true);
   assert.equal(a.cap().starts, 2, 'a fresh start');
+});
+
+// MAC-6: the lock keeps two Standbys apart, but an open Voice Mode doesn't take it. A forgotten tab on Standby then
+// answered "Hey Jarvis, …" said to Voice Mode in the other window too: two voices, two paid requests.
+test('MAC-6: Voice Mode open in another Jarvis window: two claps or "Hey Jarvis" heard here don’t wake this Standby (it stays on, listening); once that Voice Mode closes, they do', async (t) => {
+  const { make, locks } = await setup(t);
+  const a = make('A', { voiceElsewhere: () => voiceOpenSomewhere({ locks: locks.as('A') }) });
+  a.sb.enter();
+  await settle();
+  assert.equal(a.sb.listening, 'live');
+  const closeB = holdVoiceLock({ locks: locks.as('B') }); // Voice Mode opened by a tap in window B
+  await settle();
+  a.cap().clap();
+  await settle();
+  assert.deepEqual(a.woken, [], 'A stays asleep: the owner is talking to Voice Mode in B');
+  assert.equal(a.sb.isOpen(), true, 'still on Standby');
+  assert.equal(a.sb.listening, 'live', 'and listening');
+  assert.equal(a.cap().live, true);
+  closeB();
+  await settle();
+  await new Promise((r) => setTimeout(r, 1600)); // past the 1.5 s between two wakes
+  a.cap().clap();
+  await settle();
+  assert.deepEqual(a.woken, ['clap'], 'Voice Mode closed there: claps wake A again');
+});
+
+test('MAC-6: without the check (an iPhone, no Web Locks) Standby wakes at once, as before', async (t) => {
+  const { make } = await setup(t);
+  const a = make('A', { lock: false });
+  a.sb.enter();
+  await settle();
+  a.cap().clap();
+  assert.deepEqual(a.woken, ['clap'], 'synchronously, the microphone released first (iOS)');
+  assert.equal(a.cap().live, false);
 });
 
 test('Standby taken by another window during a kept session: the barge-in microphone goes too', async (t) => {

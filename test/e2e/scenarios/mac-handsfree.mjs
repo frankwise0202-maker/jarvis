@@ -792,4 +792,44 @@ export default [
       });
     },
   },
+  {
+    name: 'standby-voice-elsewhere',
+    title: 'MAC-6: two Jarvis windows, a forgotten one on Standby in the background while the owner talks to Voice Mode in the other: "Hey Jarvis, …" said to Voice Mode doesn’t wake the Standby too (one answer, one request); once Voice Mode is closed, it wakes again',
+    device: 'mac',
+    fakeMusic: true,
+    settings: { wakeWord: true },
+    timeout: 150000,
+    async run(t) {
+      const a = await setup(t, { wordStub: true });
+      const b = await t.page.context().newPage();
+      t.attachPageGuards(b);
+      await setup(t, { page: b });
+      await (await t.visible('quick-key-standby', { page: a })).click();
+      await t.waitFor(async () => (await standbyState(a))?.word === 'ready', { timeout: 15000, message: 'A on Standby with the "Hey Jarvis" stand-in ready' });
+      await setHidden(a, true);
+      await queue(a, 'what is the capital of France'); // what A would hear if it woke: the rest of the sentence
+      await queue(b, { parts: [{ at: 1500, text: 'Hey Jarvis, what is the capital of France?' }] });
+      await (await t.visible('voice-open', { page: b })).click();
+      await waitVoice(t, 'listening', { page: b });
+      await t.step('"Hey Jarvis" heard by A too while B’s Voice Mode listens: A stays asleep', async () => {
+        t.assert(await a.evaluate(() => window.__jarvisWake.say()), 'A’s stand-in heard it');
+        await t.waitFor(() => leadCount(t) >= 1, { timeout: 20000, message: 'B to send the question' });
+        await a.waitForTimeout(4000);
+        t.assert(!(await a.locator(tid('voice-mode')).count()), 'A did not wake');
+        t.assert(leadCount(t) === 1, `one request (${leadCount(t)})`);
+        t.assert((await standbyState(a))?.listening === 'live', `A is still on Standby, listening (${JSON.stringify(await standbyState(a))})`);
+      });
+      await t.step('B’s Voice Mode closed: "Hey Jarvis" wakes A again', async () => {
+        await b.keyboard.press('Escape');
+        await b.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+        await a.evaluate(() => {
+          window.__voice.queue.length = 0;
+        });
+        await queue(a, '');
+        await a.waitForTimeout(1600);
+        await a.evaluate(() => window.__jarvisWake.say());
+        await a.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
+      });
+    },
+  },
 ];

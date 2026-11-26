@@ -98,7 +98,7 @@ import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';
 import { createWakePending } from '../lib/wake/pending.js';
 import { setPausesWhenHidden as naturalPausesWhenHidden } from '../platform/voice/natural/natural-stream.js';
-import { createStandbyLock } from '../platform/standby-lock.js';
+import { createStandbyLock, holdVoiceLock, voiceOpenSomewhere } from '../platform/standby-lock.js';
 import { bargeInAllowed, readHandsFreeTest } from '../lib/hands-free.js';
 import { setupOf } from '../lib/audio-devices.js';
 // v8.1: one router for what the owner says (SPEC §30), and each track's commands in its own module.
@@ -1540,6 +1540,7 @@ export async function startApp(rootEl) {
   // so Voice Mode gets errors it can say out loud instead.
   let voiceApi = null; // the open Voice Mode: viewers opened from it route words and 2D requests through it
   let voiceOwnerStarted = false; // v8.1 (A1): the owner opened it (a tap, a key, a wake): it may go on hidden
+  let voiceLockClose = null; // MAC-6: Voice Mode open here holds the voice lock (Standby elsewhere stays asleep)
   let voiceInfo = null; // its listening state, mirrored on the mic button of a hologram viewer over it
   // The hologram last shown over this Voice Mode ({ segment, conversationId, turnId }): once its
   // viewer is closed, a command for it ("expand it", "show the separator") opens it again, free.
@@ -1785,6 +1786,8 @@ export async function startApp(rootEl) {
         onClose: (info) => {
           voiceApi = null;
           voiceInfo = null;
+          if (voiceLockClose) safe(voiceLockClose);
+          voiceLockClose = null;
           safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts go to notifications
           lastVoiceHologram = null;
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
@@ -1810,6 +1813,8 @@ export async function startApp(rootEl) {
         },
       });
       safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts and cards come to Voice Mode
+      // MAC-6: while it is open, a Standby in another Jarvis window (a forgotten tab) doesn't wake on the same words.
+      if (!voiceLockClose && !safe(() => phoneLike, true) && !state.demo && safe(() => isVoiceModeOpen(), false)) voiceLockClose = safe(() => holdVoiceLock(), null);
     } catch (err) {
       console.error('[jarvis] voice mode failed:', err);
       toast('Voice mode couldn’t start in this browser.', { level: 'warn' });
@@ -1891,6 +1896,9 @@ export async function startApp(rootEl) {
     // v8.1 (A11): no click yet (a restart, an update) and George can't speak without one: Standby says
     // "CLICK ONCE SO JARVIS CAN SPEAK", and that click unlocks speech instead of leaving Standby.
     needsClick: () => !phoneLike && !safe(() => navigator.userActivation.hasBeenActive === true, true) && !georgeWithoutClick(),
+    // MAC-6: Voice Mode open in another Jarvis window (the owner talks to it there): this Standby stays asleep.
+    // Not on a phone (Standby there listens only on screen, as before).
+    voiceElsewhere: phoneLike ? null : () => voiceOpenSomewhere(),
   });
 
   /**
