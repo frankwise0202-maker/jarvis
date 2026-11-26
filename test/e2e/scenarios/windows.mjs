@@ -11,6 +11,8 @@
 //                           strip of Jarvis kept) and with two (on the other monitor, Jarvis in full view)
 //   windows-swap-resize     D5: "swap them", "make the report window smaller", "… fill the screen" (Jarvis's
 //                           strip kept); a floating panel says to drag its corner
+//   windows-float-jarvis    D6: "float yourself": Jarvis in the real floating panel, in place of a floating
+//                           hologram (said); it follows Voice Mode; "close the float"
 //   windows-follow-content  the hologram in a window: "explode it", "show the hybrid battery" said in Voice
 //                           Mode act there (no viewer opens here, nothing goes to Claude); its window
 //                           closed by hand, "expand it" opens it here again, as before
@@ -324,6 +326,53 @@ export default [
         await typeCommand(t, 'make the report window bigger');
         await t.waitFor(async () => /Drag its corner/.test(await toastText(t)), { timeout: 5000, message: async () => `said why (${await toastText(t)})` });
         await typeCommand(t, 'close the float');
+      });
+    },
+  },
+
+  {
+    name: 'windows-float-jarvis',
+    title: '"Float yourself": Jarvis in the real floating panel (his core, the state word), in place of a floating hologram (said); it follows Voice Mode (LISTENING); typed, no extra tap; closing it',
+    device: 'desktop',
+    timeout: 240000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installScreenStubs, { monitors: 1 });
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await sendDone(t, '[[hologram:camry]] Show me a 2024 Toyota Camry Hybrid');
+      let pip;
+
+      await t.step('a floating hologram, then "float yourself": Jarvis takes its place, and says so', async () => {
+        pip = await opensPage(t, () => typeCommand(t, 'float the hologram'));
+        await pip.waitForSelector(tid('screen-hologram'), { timeout: 10000 });
+        const pages = t.page.context().pages().length;
+        await typeCommand(t, 'float yourself');
+        await pip.waitForSelector(tid('float-jarvis'), { timeout: 10000 });
+        t.assert(t.page.context().pages().length === pages, 'the same floating panel');
+        t.assert(/Jarvis is floating, in place of the hologram/.test(await toastText(t)), `said so (${await toastText(t)})`);
+        t.assert((await screenAttr(pip, 'kind')) === 'jarvis', 'the panel shows Jarvis');
+        await t.waitFor(async () => (await pip.locator(tid('float-jarvis-word')).textContent()) === 'ONLINE', { timeout: 5000, message: 'the state word' });
+        await pip.setViewportSize({ width: 300, height: 260 });
+        await pip.waitForTimeout(400);
+        await t.screenshot('float-jarvis', pip);
+      });
+
+      await t.step('it follows Jarvis: Voice Mode listening shows LISTENING there', async () => {
+        await (await t.visible('voice-open')).click();
+        await t.visible('voice-mode');
+        await t.waitFor(async () => (await pip.locator(tid('float-jarvis')).getAttribute('data-state')) === 'listening', { timeout: 10000, message: async () => `the panel to say LISTENING (${await pip.locator(tid('float-jarvis')).getAttribute('data-state')})` });
+        t.assert((await pip.locator(tid('float-jarvis-word')).textContent()) === 'LISTENING', 'the state word');
+        await (await t.visible('voice-close')).click();
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+      });
+
+      await t.step('"close the float": the panel closes', async () => {
+        await typeCommand(t, 'close the float');
+        await t.waitFor(() => pip.isClosed(), { timeout: 8000, message: 'the floating panel to close' });
       });
     },
   },
