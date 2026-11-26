@@ -428,3 +428,21 @@ test('PRIVACY-1: Chrome\'s question while Jarvis is hidden (Voice Mode open): sa
   assert.equal(shown.v.prompts.length, 1);
   assert.equal(shown.notices.length, 0);
 });
+
+test('REDTEAM-VOICE-7: a task\'s end heard twice (from the link and from another window) is said once', async () => {
+  let listener = null;
+  const channel = () => ({ postMessage() {}, addEventListener: (_t, fn) => (listener = fn), close() {} });
+  const t = setup({ channel });
+  try {
+    t.cv.run(TASK);
+    t.v.checks[0].spec.onGo();
+    await flush();
+    const id = t.fake.link.state().task.id;
+    t.fake.done({ status: 'done', answer: 'Added it.' });
+    assert.equal(t.v.said.filter((x) => x === 'Chrome is done. Added it.').length, 1);
+    listener({ data: { t: 'done', from: 'w-other', done: { id, status: 'done', answer: 'Added it.', costUsd: 0.1 } } });
+    assert.equal(t.v.said.filter((x) => x.startsWith('Chrome is done.')).length, 1, 'not said again');
+  } finally {
+    t.cv.destroy();
+  }
+});

@@ -369,6 +369,7 @@ export function createChromeVoice(deps = {}) {
     // until it has: the check then says "up to your Chrome budget" (MONEY-3, REDTEAM-VOICE-9).
     baseUsd: null,
     linkTaskId: '', // the task the link last reported: its prompts close when it ends or another begins
+    lastDoneId: '', // the task whose end was handled last (heard twice, it is said once)
     sayQueue: [], // lines waiting for Voice Mode to be free: { line, until }
     sayTimer: 0,
     voiceOn: false, // the adapter was there last time we looked
@@ -877,6 +878,9 @@ export function createChromeVoice(deps = {}) {
   /** A task ended (the link's `done`, or another window's: `relayed`). */
   function onDone(d, { relayed = false } = {}) {
     const done = d && typeof d === 'object' ? d : {};
+    // Once per task: the same end heard twice (from the link and from another window) is said once.
+    if (done.id && S.lastDoneId === String(done.id)) return;
+    if (done.id) S.lastDoneId = String(done.id);
     if (!relayed) share({ t: 'done', done });
     let t = S.task;
     if (!t || (done.id && t.id && String(done.id) !== t.id)) {
@@ -1385,6 +1389,7 @@ export function createChromeVoice(deps = {}) {
     beatTimer = setInterval(() => {
       if (S.voiceOn) share({ t: 'voice', on: true });
     }, PEER_BEAT_MS);
+    if (beatTimer && typeof beatTimer.unref === 'function') beatTimer.unref(); // (Node: never holds a test open)
   } else chan = null;
 
   return {
