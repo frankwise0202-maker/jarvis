@@ -576,7 +576,8 @@ policy table cell by cell, the envelope on the shared vectors, the relay loop's 
 the relay loop against the home base's own relay server in `core/`) and end to end
 (`relay-open`, `relay-task-voice`, `relay-approve-voice`, `relay-approve-refused`, `relay-replay`,
 `relay-approve-window`), against a fake home base relay (`test/extension/helpers/fake-relay.mjs`)
-with Jarvis's end played from Node. `chrome-relay-roundtrip` runs the extension, the real Jarvis
-page and the fake relay in one Chromium:
-`flock /tmp/jarvis-scratch/live/browser.lock node test/extension/e2e/run.mjs --only chrome-relay-roundtrip`
-(it builds the app too; see the scenario file for what it checks).
+with Jarvis's end played from Node. `chrome-relay-roundtrip` puts both ends in one Chromium,
+linked with a test key: the extension, Jarvis's own link (`src/platform/chrome-link.js`, loaded in
+a page) and the home base's own relay store (through `test/e2e/core-fakes.mjs`): open, a task, a
+voice approval, done. It runs only when named:
+`node test/extension/e2e/run.mjs --only chrome-relay-roundtrip`.

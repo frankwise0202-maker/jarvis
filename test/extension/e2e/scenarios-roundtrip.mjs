@@ -14,7 +14,7 @@
 // development build turns them on here (jarvis.dev.voiceApprovals), as relay-approve-voice does.
 //
 // Not in the default run (it needs Jarvis's chrome-link from chrome-relay); the integrator runs it:
-//   flock /tmp/jarvis-scratch/live/browser.lock node test/extension/e2e/run.mjs --only chrome-relay-roundtrip
+//   node test/extension/e2e/run.mjs --only chrome-relay-roundtrip
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
