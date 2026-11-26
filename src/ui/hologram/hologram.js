@@ -11,9 +11,14 @@
 //   holo.snapshot({ width, height })  // small PNG data URL for the saved library
 //   await holo.settled(ms)            // every hull and panel shows its final mesh (before a snapshot)
 //   holo.listParts() / getPart(id) / getState() / dispose()
+//   Walkthroughs (SPEC §29.2): holo.setEmphasis({ glow, ghost, hide, others }) / labelsFor(ids) /
+//   await holo.flyTo({ ids, frame, view | dir }) / holdAutoRotate(on), and holo.tourTarget(): the
+//   one object a tour player drives (contract (e), see tourTarget below)
 //
 // Look: translucent additive fills with a fresnel rim, crisp edge lines, depth fade, a scan band
 // and fine scan rows, a projector floor, tone colors; the selected part glows and the rest dims.
+// In a walkthrough step the parts it is about glow and pulse, the case is a see-through ghost
+// (edges kept, fill gone) and everything else steps back. Without an emphasis the look is as before.
 // Labels are HTML (textContent only) with SVG leaders, decluttered by label-layout.js.
 //
 // Realistic shapes (format v2): lofts, soft boxes and smooth lathes are built at once (smooth.js);
@@ -75,6 +80,22 @@ const LABEL_AREA = 34000; // px² of view per label while assembled
 const LABEL_AREA_EXPLODED = 15000; // ...and when fully exploded (a 1440×900 view fits ~50, a phone ~13)
 const MIN_LABELS = 8;
 const MAX_LABEL_COST = 300; // a label that would need a longer, model-covering leader is hidden instead
+// Walkthroughs (setEmphasis): a ghost keeps its edges and loses most of its fill (fill = edges ×
+// GHOST_FILL / GHOST_EDGES), parts the step is not about step back, and a glow stops pulsing
+// after a while (frames are on demand again; the glow stays).
+const GHOST_EDGES = 0.5;
+const GHOST_FILL = 0.1;
+const OTHERS_LEVEL = 0.15;
+const PULSE_MAX_MS = 120000;
+// flyTo 'access': the way the part comes out, turned up to this many degrees towards the model's
+// own starting view: a low three-quarter view, never flat along an axis (a battery that comes out
+// downwards is seen from about 25° below, in front).
+const ACCESS_TURN = 65;
+const POLE = 0.6; // degrees: the camera stops this far from straight up or down (as the top and bottom views)
+// A case part by name (only for a hologram that marks no part tone "secondary"): one of these
+// words, not followed by another word it describes ("Bottom cover", "Fan housing", "Palm rest (C
+// cover)"; not "Case fan", "Lid switch" or "CAN bus").
+const SHELL_NAME = /\b(?:cover|case|casing|housing|shell|lid|cowl|cowling|can|sleeve)s?\b(?!\s+[a-z])/i;
 
 // Tone -> [r, g, b] (sRGB 0..1; shaders work directly in display space), fill and line strength.
 const TONES = {
@@ -100,6 +121,15 @@ export const VIEW_ANGLES = {
 
 const NOOP = () => {};
 
+// Per-part values eased frame by frame towards their goals: [current, goal].
+const EASED = [
+  ['vis', 'visGoal'],
+  ['fillK', 'fillKGoal'],
+  ['sel', 'selGoal'],
+  ['hov', 'hovGoal'],
+  ['pulse', 'pulseGoal'],
+];
+
 function easeInOut(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
@@ -117,6 +147,71 @@ function niceStep(x) {
   const p = Math.pow(10, Math.floor(Math.log10(x)));
   const m = x / p;
   return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p;
+}
+
+/** The direction from the model towards a camera at azimuth theta and polar angle phi (radians). */
+function dirOfAngles(theta, phi) {
+  const sp = Math.sin(phi);
+  return [sp * Math.sin(theta), Math.cos(phi), sp * Math.cos(theta)];
+}
+
+/**
+ * Camera angles [theta, phi] (radians) for looking from direction `d` ([x, y, z] from the model
+ * towards the camera, in the spec's axes: +x front, +y up, +z right), or null when `d` is no
+ * direction. Never quite straight up or down; a direction straight up or down keeps azimuth `theta`.
+ */
+export function anglesOfDir(d, theta = 0) {
+  if (!Array.isArray(d) || d.length !== 3 || !d.every((v) => Number.isFinite(v))) return null;
+  const len = Math.hypot(d[0], d[1], d[2]);
+  if (!(len > 1e-9)) return null;
+  const phi = Math.min(180 - POLE, Math.max(POLE, Math.acos(Math.max(-1, Math.min(1, d[1] / len))) / DEG)) * DEG;
+  return [Math.hypot(d[0], d[2]) > len * 1e-9 ? Math.atan2(d[0], d[2]) : theta, phi];
+}
+
+/**
+ * Where to look from to see a part come out (flyTo 'access'): `out` is the way it moves when the
+ * model explodes; the camera turns from there up to ACCESS_TURN° towards the model's own starting
+ * view `view` (all the way when that view is closer), so a battery that comes out downwards is seen
+ * from below and in front, and a keyboard that lifts off from the usual view. Null when `out` is no
+ * direction.
+ */
+export function accessAngles(out, view = DEFAULT_VIEW) {
+  const a = VIEW_ANGLES[view] || VIEW_ANGLES[DEFAULT_VIEW];
+  let v = dirOfAngles(a[0] * DEG, a[1] * DEG);
+  const len = Array.isArray(out) ? Math.hypot(out[0], out[1], out[2]) : 0;
+  if (!(len > 1e-9)) return null;
+  const n = [out[0] / len, out[1] / len, out[2] / len];
+  let cos = n[0] * v[0] + n[1] * v[1] + n[2] * v[2];
+  if (cos < -0.999999) {
+    // straight away from the view: turn through the top instead
+    v = [v[0], v[1] + 0.25, v[2]];
+    const l = Math.hypot(v[0], v[1], v[2]);
+    v = v.map((x) => x / l);
+    cos = n[0] * v[0] + n[1] * v[1] + n[2] * v[2];
+  }
+  const w = Math.acos(Math.max(-1, Math.min(1, cos)));
+  if (w < 1e-6) return anglesOfDir(n, a[0] * DEG);
+  const turn = Math.min(w, ACCESS_TURN * DEG);
+  const kn = Math.sin(w - turn) / Math.sin(w);
+  const kv = Math.sin(turn) / Math.sin(w);
+  return anglesOfDir([0, 1, 2].map((k) => n[k] * kn + v[k] * kv), a[0] * DEG);
+}
+
+/**
+ * The case parts of a hologram (setEmphasis ghost 'shells'), as a Set of part ids: the parts toned
+ * "secondary" (what show_hologram asks for housings, shells and body panels), or by name in a
+ * hologram that marks none (SHELL_NAME, on the name or another name). The tone wins when there is
+ * one: by name alone a truck's transfer case (a gearbox) would count.
+ */
+export function shellIdsOf(parts) {
+  const list = Array.isArray(parts) ? parts.filter(Boolean) : [];
+  const toned = list.some((p) => p.tone === 'secondary');
+  const ids = new Set();
+  for (const p of list) {
+    const names = [p.name, ...(Array.isArray(p.aka) ? p.aka : [])];
+    if (toned ? p.tone === 'secondary' : names.some((n) => SHELL_NAME.test(String(n || '')))) ids.add(p.id);
+  }
+  return ids;
 }
 
 function watchMedia(query, fn, win = window) {
@@ -327,6 +422,7 @@ export function createHologram(container, options = {}) {
 
   const reducedMq = watchMedia('(prefers-reduced-motion: reduce)', () => {
     if (reducedMq.matches && !rotateRequested) autoRotateOn = false;
+    updateVisGoals(); // a walkthrough's glow pulses only without reduced motion
     requestRender();
     emit();
   }, win);
@@ -339,9 +435,11 @@ export function createHologram(container, options = {}) {
   // Orbit camera: target + spherical (radius, theta azimuth from +z towards +x, phi polar from +y).
   const orbit = { target: new Vector3(), radius: 10, theta: 135 * DEG, phi: 66 * DEG };
   let viewName = DEFAULT_VIEW;
-  let camTween = null; // { from, to, start, dur }
-  let fitMode = 'auto'; // 'auto': follows the model's bounds; 'user': the owner moved the camera; 'part': focused on a part
-  let focusKey = null;
+  // { from, to, start, dur, track?, done? }: a flight (flyTo) or a move made while an explode is
+  // under way has track() (its framing, frame by frame: the parts still move); a flight has done(how).
+  let camTween = null;
+  let fitMode = 'auto'; // 'auto': follows the model's bounds; 'user': the owner moved the camera; 'part': focused on parts
+  let focusKeys = null; // fit mode 'part': the parts framed (a Set of keys)
   const inertia = { theta: 0, phi: 0 };
   // rotateAfterMs: idle auto-rotation starts that long after opening (the spec's own view first)
   let lastInteraction = o.rotateAfterMs > 0 ? performance.now() - AUTO_ROTATE_RESUME_MS + o.rotateAfterMs : -Infinity; // ms
@@ -350,7 +448,7 @@ export function createHologram(container, options = {}) {
 
   let explodeT = 0;
   let explodeGoal = 0;
-  let explodeAnim = null; // { from, to, start, dur }
+  let explodeAnim = null; // { from, to, start, dur, done: [resolve] }
 
   let cameraTouched = false; // the owner rotated, zoomed, panned or picked a view
   let appliedSpecView = null;
@@ -359,6 +457,14 @@ export function createHologram(container, options = {}) {
   let isolatedKey = null;
   let labelsHidden = 0;
   const prevSlots = new Map();
+  // Walkthroughs: the step's emphasis (setEmphasis: Sets of part ids or keys; ghost 'shells' =
+  // every case part), the parts whose labels may show (labelsFor), auto-rotation held off, and
+  // whether a glowing part pulses (frames keep coming at the idle rate while it does).
+  let emphasis = null; // { glow, ghost, shells, hide, others, since, pulse }
+  let shellCache = null; // { spec, ids }: the case parts of the spec shown
+  let labelOnly = null;
+  let rotateHeld = false;
+  let pulseLive = false;
 
   const t0 = performance.now();
   const clock = () => (performance.now() - t0) / 1000;
@@ -379,6 +485,7 @@ export function createHologram(container, options = {}) {
       uVis: { value: 1 },
       uSel: { value: 0 },
       uHover: { value: 0 },
+      uPulse: { value: 0 },
       uTime: shared.uTime,
       uReveal: shared.uReveal,
       uFade: shared.uFade,
@@ -410,12 +517,16 @@ export function createHologram(container, options = {}) {
       center: new Vector3(),
       size: 0,
       autoOffset: new Vector3(),
-      vis: 1,
+      vis: 1, // edges (and the whole part)
       visGoal: 1,
+      fillK: 1, // the fill's share of vis (a walkthrough's ghost keeps its edges, not its fill)
+      fillKGoal: 1,
       sel: 0,
       selGoal: 0,
       hov: 0,
       hovGoal: 0,
+      pulse: 0,
+      pulseGoal: 0,
       label: null,
     };
     model.add(group);
@@ -804,15 +915,24 @@ export function createHologram(container, options = {}) {
     return boundsAt(0, false);
   }
 
-  /** { min, max } of visible parts at explode t (onlyKey: one part). */
-  function boundsAt(t, visibleOnly = true, onlyKey = null) {
+  /**
+   * Whether a part counts when the camera frames the model: one of `only` (a key, or a Set of
+   * keys) when given, else a part that shows (not isolated away, not hidden by a walkthrough step).
+   */
+  function framed(rec, only) {
+    if (only) return typeof only === 'string' ? rec.key === only : only.has(rec.key);
+    if (isolatedKey && rec.key !== isolatedKey) return false;
+    return !emphasis || rec.visGoal > 0;
+  }
+
+  /** { min, max } of the shown parts at explode t (only: just these parts, a key or a Set of keys). */
+  function boundsAt(t, visibleOnly = true, only = null) {
     const min = [Infinity, Infinity, Infinity];
     const max = [-Infinity, -Infinity, -Infinity];
     const off = new Vector3();
     for (const rec of records.values()) {
       if (!rec.box) continue;
-      if (onlyKey && rec.key !== onlyKey) continue;
-      if (visibleOnly && !onlyKey && isolatedKey && rec.key !== isolatedKey) continue;
+      if ((only || visibleOnly) && !framed(rec, only)) continue;
       offsetOf(rec, t, off);
       for (let k = 0; k < 3; k++) {
         const o2 = k === 0 ? off.x : k === 1 ? off.y : off.z;
@@ -854,11 +974,12 @@ export function createHologram(container, options = {}) {
   }
 
   /**
-   * Exact fit for one camera direction (theta, phi): the corners of every visible part's box are
-   * projected, the target is centered on their extent and the distance is the smallest one that
-   * keeps every corner inside the visible region (perspective included).
+   * Exact fit for one camera direction (theta, phi): the corners of every visible part's box (or
+   * of `only`'s: a key or a Set of keys) are projected, the target is centered on their extent and
+   * the distance is the smallest one that keeps every corner inside the visible region (perspective
+   * included).
    */
-  function fitView(theta, phi, t = explodeT, onlyKey = null, H = height, region = visibleRegion()) {
+  function fitView(theta, phi, t = explodeT, only = null, H = height, region = visibleRegion()) {
     const sp = Math.sin(phi);
     const back = new Vector3(sp * Math.sin(theta), Math.cos(phi), sp * Math.cos(theta)); // towards the camera
     const right = new Vector3().crossVectors(new Vector3(0, 1, 0), back);
@@ -868,8 +989,7 @@ export function createHologram(container, options = {}) {
     const pts = [];
     const off = new Vector3();
     for (const rec of records.values()) {
-      if (!rec.box) continue;
-      if (onlyKey ? rec.key !== onlyKey : isolatedKey && rec.key !== isolatedKey) continue;
+      if (!rec.box || !framed(rec, only)) continue;
       offsetOf(rec, t, off);
       const sup = rec.support;
       if (sup) for (let i = 0; i < sup.length; i += 3) pts.push(new Vector3(sup[i] + off.x, sup[i + 1] + off.y, sup[i + 2] + off.z));
@@ -917,19 +1037,30 @@ export function createHologram(container, options = {}) {
     return f;
   }
 
+  /** The focused parts that exist (fit mode 'part'): a Set of keys, or null. */
+  function focusedKeys() {
+    if (fitMode !== 'part' || !focusKeys) return null;
+    let all = true;
+    for (const key of focusKeys) if (!records.has(key)) all = false;
+    if (all) return focusKeys;
+    const keys = new Set(Array.from(focusKeys).filter((key) => records.has(key)));
+    return keys.size ? keys : null;
+  }
+
   /** Where the camera should be: exact fit for the current view, or rotation-safe while auto-rotating. */
   function currentFitGoal(kind = autoRotating() ? 'orbit' : 'view', theta = orbit.theta, phi = orbit.phi) {
-    const onlyKey = fitMode === 'part' && focusKey && records.has(focusKey) ? focusKey : null;
+    const only = focusedKeys();
     let f;
     if (kind === 'orbit') {
-      const b = onlyKey ? boundsAt(explodeT, true, onlyKey) : boundsAt(explodeT, true);
+      const b = boundsAt(explodeT, true, only);
       f = b ? fitOrbit(b, phi) : null;
-    } else f = fitView(theta, phi, explodeT, onlyKey);
-    if (f && onlyKey) partFit(f);
+    } else f = fitView(theta, phi, explodeT, only);
+    if (f && only) partFit(f);
     return f;
   }
 
   function snapFit() {
+    if (tracking()) return; // the move under way frames the model itself, frame by frame
     const f = currentFitGoal();
     if (!f) return;
     orbit.target.copy(f.target);
@@ -939,6 +1070,7 @@ export function createHologram(container, options = {}) {
   }
 
   function refit(animate) {
+    if (tracking()) return; // the move under way frames the model itself, frame by frame
     // a view change still under way keeps turning to its angles, framed for where it ends
     const to = camTween && camTween.to ? camTween.to : null;
     const theta = to && to.theta !== undefined ? to.theta : orbit.theta;
@@ -951,8 +1083,14 @@ export function createHologram(container, options = {}) {
     tweenCamera(goal, animate);
   }
 
-  /** Animate the camera to `to` ({ target?, radius?, theta?, phi? }); fields left out are not touched. */
-  function tweenCamera(to, animate = true) {
+  /**
+   * Animate the camera to `to` ({ target?, radius?, theta?, phi? }); fields left out are not touched.
+   * A flight ({ track, done }, flyTo) follows the parts while they move (track() gives its framing,
+   * frame by frame) and calls done(how) once: 'arrived', or why it stopped. It replaces the move
+   * under way.
+   */
+  function tweenCamera(to, animate = true, flight = null, dur = CAMERA_MS) {
+    stopFlight('replaced');
     if (!animate || reducedMq.matches) {
       if (to.target) orbit.target.copy(to.target);
       if (to.radius !== undefined) orbit.radius = to.radius;
@@ -960,6 +1098,7 @@ export function createHologram(container, options = {}) {
       if (to.phi !== undefined) orbit.phi = to.phi;
       camTween = null;
       requestRender();
+      if (flight) flight.done('arrived');
       return;
     }
     const from = { target: orbit.target.clone(), radius: orbit.radius, theta: orbit.theta, phi: orbit.phi };
@@ -972,9 +1111,36 @@ export function createHologram(container, options = {}) {
         phi: to.phi,
       },
       start: performance.now(),
-      dur: CAMERA_MS,
+      dur,
+      track: flight ? flight.track : null,
+      done: flight ? flight.done : null,
     };
     requestRender();
+  }
+
+  /** Whether the camera move under way frames the parts itself, frame by frame (a flight, or a move during an explode). */
+  function tracking() {
+    return !!(camTween && camTween.track);
+  }
+
+  /** The flight under way, if any, stops: how = 'touch' (the owner took the camera) or 'replaced'. */
+  function stopFlight(how) {
+    const done = camTween && camTween.done;
+    if (!done) return;
+    camTween.done = null;
+    camTween.track = null;
+    done(how);
+    emit();
+  }
+
+  /**
+   * An explode moves the parts: a camera move under way aims at where they are, frame by frame
+   * (it would aim at where they were, and the explode's framing would chase after it).
+   */
+  function trackParts() {
+    if (!camTween || camTween.track || !(fitMode === 'auto' || fitMode === 'part')) return;
+    const { theta, phi } = camTween.to;
+    camTween.track = () => currentFitGoal('view', theta === undefined ? orbit.theta : theta, phi === undefined ? orbit.phi : phi);
   }
 
   function setViewAngles(name) {
@@ -1111,7 +1277,7 @@ export function createHologram(container, options = {}) {
     for (const rec of records.values()) {
       const L = rec.label;
       const revealed = rec.born.length && now >= rec.born[0] + REVEAL_S * 0.4;
-      const visible = labelsOn && L.name && rec.box && revealed && rec.vis > 0.3 && (!isolatedKey || rec.key === isolatedKey);
+      const visible = labelsOn && L.name && rec.box && revealed && rec.vis > 0.3 && (!isolatedKey || rec.key === isolatedKey) && labelAllowed(rec);
       if (!visible) continue;
       anchorOf(rec, v).project(cam);
       if (v.z > 1 || v.z < -1) continue;
@@ -1119,7 +1285,7 @@ export function createHologram(container, options = {}) {
       const y = (-v.y * 0.5 + 0.5) * height;
       // on-screen size as priority
       const pxPerUnit = height / (2 * Math.max(1e-6, cam.position.distanceTo(anchorOf(rec, new Vector3()))) * Math.tan((BASE_FOV * DEG) / 2));
-      live.push({ id: rec.key, x, y, w: L.w, h: L.h, priority: rec.size * pxPerUnit + (rec.key === hoverKey ? 1e6 : 0), pinned: rec.key === selectedKey });
+      live.push({ id: rec.key, x, y, w: L.w, h: L.h, priority: rec.size * pxPerUnit + (rec.key === hoverKey ? 1e6 : 0), pinned: rec.key === selectedKey || roleOf(rec) === 'glow' });
     }
     const center = Number.isFinite(mx0) ? { x: (mx0 + mx1) / 2, y: (my0 + my1) / 2 } : { x: width / 2, y: height / 2 };
     const candidates = live.length;
@@ -1133,10 +1299,11 @@ export function createHologram(container, options = {}) {
     live.length = kept;
     // Label budget: assembled, a compact model only gets labels for its biggest parts (about one
     // per LABEL_AREA px² of view); exploded, every part may be labeled if there is room. The
-    // selected and hovered parts are always included.
+    // selected and hovered parts are always included (and a walkthrough step's glowing parts);
+    // labelsFor's few parts all are.
     const area = (bounds.right - bounds.left) * (bounds.bottom - bounds.top);
     const perLabel = LABEL_AREA + (LABEL_AREA_EXPLODED - LABEL_AREA) * explodeT;
-    const budget = isolatedKey ? Infinity : Math.round(Math.max(MIN_LABELS, area / perLabel));
+    const budget = isolatedKey || labelOnly ? Infinity : Math.round(Math.max(MIN_LABELS, area / perLabel));
     if (live.length > budget) {
       live.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.priority - a.priority);
       live.length = budget;
@@ -1168,7 +1335,7 @@ export function createHologram(container, options = {}) {
         L.line.style.display = '';
         L.dot.style.display = '';
       }
-      const state = rec.key === selectedKey ? 'sel' : rec.key === hoverKey ? 'hov' : '';
+      const state = rec.key === selectedKey || roleOf(rec) === 'glow' ? 'sel' : rec.key === hoverKey ? 'hov' : '';
       if (state !== L.state) {
         L.state = state;
         L.el.classList.toggle('is-selected', state === 'sel');
@@ -1217,23 +1384,94 @@ export function createHologram(container, options = {}) {
     floorMat.uniforms.uR.value = R;
     floorMat.uniforms.uCell.value = niceStep(R / 5);
     floorMat.uniforms.uCenterW.value.set(cx, y, cz);
-    floor.visible = floorEnabled;
+    // a walkthrough's view from below: the floor would hang between the camera and the model
+    const under = emphasis ? Math.min(1, Math.max(0, (y - cam.position.y) / (rxz0 * 0.3 + 1e-6))) : 0;
+    floorMat.uniforms.uVis.value = 1 - under;
+    floor.visible = floorEnabled && under < 1;
   }
 
   // ---------------------------------------------------------------------------------------------
   // Selection, isolation, visibility goals
 
   function updateVisGoals() {
+    const pulse = !!emphasis && emphasis.pulse && !reducedMq.matches;
     for (const rec of records.values()) {
+      const role = roleOf(rec);
       let vis = 1;
+      let fillK = 1;
       if (isolatedKey && rec.key !== isolatedKey) vis = 0;
+      else if (role === 'hide') vis = 0;
+      else if (role === 'glow' || (role && rec.key === selectedKey)) vis = 1;
+      else if (role === 'ghost') {
+        vis = GHOST_EDGES;
+        fillK = GHOST_FILL / GHOST_EDGES;
+      } else if (role) vis = emphasis.others;
       else if (selectedKey && rec.key !== selectedKey && !isolatedKey) vis = 0.38;
       rec.visGoal = vis;
-      rec.selGoal = rec.key === selectedKey ? 1 : 0;
+      rec.fillKGoal = fillK;
+      rec.selGoal = rec.key === selectedKey || role === 'glow' ? 1 : 0;
+      rec.pulseGoal = pulse && role === 'glow' ? 1 : 0;
       rec.hovGoal = rec.key === hoverKey && rec.key !== selectedKey ? 1 : 0;
     }
-    floorMat.uniforms.uVis.value = 1;
     requestRender();
+  }
+
+  /** A part's role in the walkthrough step: null without one, else 'hide', 'glow', 'ghost' or 'other' (in that order). */
+  function roleOf(rec) {
+    if (!emphasis) return null;
+    const named = (set) => set.has(rec.part.id) || set.has(rec.key);
+    if (named(emphasis.hide)) return 'hide';
+    if (named(emphasis.glow)) return 'glow';
+    if (named(emphasis.ghost) || (emphasis.shells && shellIds().has(rec.part.id))) return 'ghost';
+    return 'other';
+  }
+
+  /** The hologram's case parts (shellIdsOf), worked out once per spec. */
+  function shellIds() {
+    if (!shellCache || shellCache.spec !== spec) shellCache = { spec, ids: shellIdsOf(spec ? spec.parts : []) };
+    return shellCache.ids;
+  }
+
+  /** labelsFor: whether this part's label may show (the selected part's always may). */
+  function labelAllowed(rec) {
+    return !labelOnly || labelOnly.has(rec.part.id) || labelOnly.has(rec.key) || rec.key === selectedKey;
+  }
+
+  /** Part ids (or keys) as a Set of strings: one id, a list, or nothing. */
+  function idSet(v) {
+    return new Set((v === undefined || v === null ? [] : [].concat(v)).map((x) => String(x)));
+  }
+
+  /**
+   * A walkthrough step's look, part by part; null (or nothing named) is the usual look again. Part
+   * ids or keys; unknown ones are ignored, and parts that arrive later (a live build) take theirs.
+   *   glow    the parts the step is about: full strength, brighter, pulsing (a steady glow with
+   *           reduced motion, and after 2 minutes); several at once
+   *   ghost   see-through: edges at about half, fill at about a tenth; 'shells' = the case parts
+   *           (shellIdsOf), alone or in a list with ids (['shells', 'keyboard'])
+   *   hide    not shown, not framed, not tappable
+   *   others  every other part's level: 0.15 by default; 0 shows only the parts named
+   * A part named twice: hide, then glow, then ghost. A selected part glows too; isolate() still wins.
+   */
+  function setEmphasis(next) {
+    let e = null;
+    if (next && typeof next === 'object') {
+      const ghost = idSet(next.ghost);
+      const level = next.others === undefined || next.others === null ? NaN : Number(next.others);
+      e = {
+        glow: idSet(next.glow),
+        ghost,
+        shells: ghost.has('shells'),
+        hide: idSet(next.hide),
+        others: Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : OTHERS_LEVEL,
+        since: performance.now(),
+        pulse: true,
+      };
+      if (!e.glow.size && !e.ghost.size && !e.hide.size && !Number.isFinite(level)) e = null;
+    }
+    emphasis = e;
+    updateVisGoals();
+    emit();
   }
 
   function keyOfId(id) {
@@ -1335,6 +1573,7 @@ export function createHologram(container, options = {}) {
     }
     inertia.theta = 0;
     inertia.phi = 0;
+    stopFlight('touch');
     camTween = null;
     markInteraction();
     if (pointers.size === 1) {
@@ -1460,6 +1699,7 @@ export function createHologram(container, options = {}) {
     const minR = Math.max(modelRadius * 0.06, 1e-3);
     orbit.radius = Math.min(maxR, Math.max(minR, orbit.radius * f));
     fitMode = 'user';
+    stopFlight('touch');
     camTween = null;
   }
 
@@ -1471,6 +1711,7 @@ export function createHologram(container, options = {}) {
     const up = new Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
     orbit.target.addScaledVector(right, -dx * unitsPerPx).addScaledVector(up, dy * unitsPerPx);
     fitMode = 'user';
+    stopFlight('touch');
     camTween = null;
   }
 
@@ -1540,7 +1781,7 @@ export function createHologram(container, options = {}) {
   }
 
   function autoRotating() {
-    if (!autoRotateOn || (reducedMq.matches && !rotateRequested) || gesture || selectedKey || camTween || !records.size) return false;
+    if (!autoRotateOn || rotateHeld || (reducedMq.matches && !rotateRequested) || gesture || selectedKey || camTween || !records.size) return false;
     const now = performance.now();
     const idle = now - Math.max(lastInteraction, rotateSince);
     return now - lastInteraction > AUTO_ROTATE_RESUME_MS && idle < AUTO_ROTATE_MAX_MS;
@@ -1552,7 +1793,7 @@ export function createHologram(container, options = {}) {
   function scheduleRotateWake() {
     win.clearTimeout(rotateWake);
     rotateWake = 0;
-    if (disposed || !autoRotateOn || (reducedMq.matches && !rotateRequested)) return;
+    if (disposed || !autoRotateOn || rotateHeld || (reducedMq.matches && !rotateRequested)) return;
     const due = lastInteraction + AUTO_ROTATE_RESUME_MS - performance.now();
     if (!(due > 0) || !Number.isFinite(due)) return; // due now: whatever blocks it requests a render when it ends
     rotateWake = win.setTimeout(() => {
@@ -1566,17 +1807,29 @@ export function createHologram(container, options = {}) {
     const now = clock();
     shared.uTime.value = now;
 
-    // camera tween
+    // camera tween (a flight, or a move made while an explode is under way, aims at where the parts are now)
     if (camTween) {
       const t = Math.min(1, (nowMs - camTween.start) / camTween.dur);
       const e = easeInOut(t);
       const f = camTween.from;
       const g = camTween.to;
+      const fit = camTween.track ? camTween.track() : null;
+      if (fit) {
+        g.target = fit.target;
+        g.radius = fit.radius;
+      }
       if (g.target) orbit.target.lerpVectors(f.target, g.target, e);
       if (g.radius !== undefined) orbit.radius = f.radius + (g.radius - f.radius) * e;
       if (g.theta !== undefined) orbit.theta = f.theta + (g.theta - f.theta) * e;
       if (g.phi !== undefined) orbit.phi = f.phi + (g.phi - f.phi) * e;
-      if (t >= 1) camTween = null;
+      if (t >= 1) {
+        const done = camTween.done;
+        camTween = null;
+        if (done) {
+          done('arrived');
+          emit();
+        }
+      }
       busy = true;
     }
     // inertia
@@ -1592,15 +1845,19 @@ export function createHologram(container, options = {}) {
     if (explodeAnim) {
       const t = Math.min(1, (nowMs - explodeAnim.start) / explodeAnim.dur);
       explodeT = explodeAnim.from + (explodeAnim.to - explodeAnim.from) * easeInOut(t);
-      if (fitMode === 'auto' || fitMode === 'part') {
+      if (!camTween && (fitMode === 'auto' || fitMode === 'part')) {
         const f = currentFitGoal();
-        if (f && !camTween) {
+        if (f) {
           const k = t >= 1 ? 1 : Math.min(1, dt * 8);
           orbit.target.lerp(f.target, k);
           orbit.radius += (f.radius - orbit.radius) * k;
         }
       }
-      if (t >= 1) explodeAnim = null;
+      if (t >= 1) {
+        const done = explodeAnim.done;
+        explodeAnim = null;
+        for (const fn of done) fn('arrived');
+      }
       busy = true;
     } else if ((fitMode === 'auto' || fitMode === 'part') && !camTween && !gesture && autoRotating()) {
       // while idling in auto-rotation, ease out to the rotation-safe framing (no part leaves the view)
@@ -1616,31 +1873,37 @@ export function createHologram(container, options = {}) {
       orbit.theta += AUTO_ROTATE_DEG_S * DEG * dt;
       busy = true;
     }
-    // per-part easing (visibility, selection, hover)
+    // a walkthrough's glow pulses for a while, then stays steady (and frames are on demand again)
+    if (emphasis && emphasis.pulse && performance.now() - emphasis.since > PULSE_MAX_MS) {
+      emphasis.pulse = false;
+      updateVisGoals();
+    }
+    // per-part easing (visibility, a ghost's fill, selection, hover, pulse)
     const k = reducedMq.matches ? 1 : Math.min(1, dt * 9);
     const off = new Vector3();
+    let pulses = false;
     for (const rec of records.values()) {
       offsetOf(rec, explodeT, off);
       if (!rec.group.position.equals(off)) rec.group.position.copy(off);
-      for (const [cur, goal] of [
-        ['vis', 'visGoal'],
-        ['sel', 'selGoal'],
-        ['hov', 'hovGoal'],
-      ]) {
+      for (const [cur, goal] of EASED) {
         const d = rec[goal] - rec[cur];
         if (Math.abs(d) > 0.003) {
           rec[cur] += d * k;
           busy = true;
         } else rec[cur] = rec[goal];
       }
-      rec.mats.fill.uniforms.uVis.value = rec.vis;
+      rec.mats.fill.uniforms.uVis.value = rec.vis * rec.fillK;
       rec.mats.line.uniforms.uVis.value = rec.vis;
       rec.mats.fill.uniforms.uSel.value = rec.sel;
       rec.mats.line.uniforms.uSel.value = rec.sel;
       rec.mats.fill.uniforms.uHover.value = rec.hov;
       rec.mats.line.uniforms.uHover.value = rec.hov;
+      rec.mats.fill.uniforms.uPulse.value = rec.pulse;
+      rec.mats.line.uniforms.uPulse.value = rec.pulse;
       rec.group.visible = rec.vis > 0.01;
+      if (rec.pulse > 0 && rec.group.visible) pulses = true;
     }
+    pulseLive = pulses;
     // materialize sweep still running?
     if (now < lastBorn + REVEAL_S + 0.05) busy = true;
     // ambient: scan band and a faint flicker (only while frames are being drawn anyway)
@@ -1680,7 +1943,7 @@ export function createHologram(container, options = {}) {
     // Another window's frame timestamps count from that window's time origin: use this one's clock.
     const nowMs = foreign ? performance.now() : ts;
     if (!awake || disposed || contextLost) return;
-    const continuous = autoRotating();
+    const continuous = autoRotating() || pulseLive; // idle animation: at most IDLE_FPS
     const busyBefore = camTween || explodeAnim || gesture || needsRender;
     if (!busyBefore && continuous && lastFrame && nowMs - lastFrame < 1000 / IDLE_FPS - 2) {
       rafId = win.requestAnimationFrame(frame);
@@ -1704,7 +1967,7 @@ export function createHologram(container, options = {}) {
     const busy = stepAnimations(dt, nowMs);
     applyHover();
     renderNow();
-    if (busy || needsRender || autoRotating()) rafId = win.requestAnimationFrame(frame);
+    if (busy || needsRender || autoRotating() || pulseLive) rafId = win.requestAnimationFrame(frame);
     else {
       lastFrame = 0;
       scheduleRotateWake();
@@ -1866,6 +2129,12 @@ export function createHologram(container, options = {}) {
       // hull bodies and panels still being meshed (and where: 'worker' or 'main' thread)
       meshing: asyncPending(),
       mesher: hullWorkerActive() ? 'worker' : 'main',
+      // walkthroughs: the step's emphasis (ids as given), the labels allowed, a flight under way,
+      // idle rotation held off
+      emphasis: emphasis ? { glow: Array.from(emphasis.glow), ghost: Array.from(emphasis.ghost), hide: Array.from(emphasis.hide), others: emphasis.others } : null,
+      labelsFor: labelOnly ? Array.from(labelOnly) : null,
+      flying: !!(camTween && camTween.done),
+      rotateHeld,
     };
   }
 
@@ -1873,22 +2142,82 @@ export function createHologram(container, options = {}) {
   // Public API
 
   function focusKeyFn(key) {
+    stopFlight('replaced');
     if (!key) {
-      focusKey = null;
+      focusKeys = null;
       fitMode = 'auto';
       refit(true);
       return;
     }
     selectKey(key);
-    focusKey = key;
+    focusKeys = new Set([key]);
     fitMode = 'part';
+    if (explodeAnim) {
+      // exploding: no tween of its own (it would aim at where the part was); the explode frames
+      // the part as it moves, and a move under way aims at it frame by frame
+      trackParts();
+      requestRender();
+      emit();
+      return;
+    }
     const f = currentFitGoal('view');
     if (f) tweenCamera({ target: f.target, radius: f.radius });
     emit();
   }
 
+  /**
+   * flyTo: the camera's target, distance and direction in one move, framing `ids` (frame 'parts')
+   * or every shown part (frame 'all'), from a view, a direction or the side the first part comes
+   * out of ('access'). Resolves 'arrived', 'touch' (the owner took the camera) or 'replaced'.
+   */
+  function flyTo({ ids = null, frame, view = null, dir = null, ms = CAMERA_MS } = {}) {
+    if (disposed) return Promise.resolve('replaced');
+    if (gesture) return Promise.resolve('touch'); // the owner is moving the camera
+    const keys = [];
+    for (const id of idSet(ids)) {
+      const key = keyOfId(id);
+      if (key && !keys.includes(key)) keys.push(key);
+    }
+    const parts = frame !== 'all' && keys.length > 0;
+    let angles = null;
+    if (view === 'access' || dir === 'access') {
+      const rec = keys.length ? records.get(keys[0]) : null;
+      const out = rec ? offsetOf(rec, 1, new Vector3()) : null;
+      angles = out ? accessAngles([out.x, out.y, out.z], (spec && spec.view) || DEFAULT_VIEW) : null;
+      if (angles) viewName = '';
+    } else if (typeof view === 'string' && VIEW_ANGLES[view]) {
+      angles = [VIEW_ANGLES[view][0] * DEG, VIEW_ANGLES[view][1] * DEG];
+      viewName = view;
+    } else if (dir) {
+      angles = anglesOfDir(dir, orbit.theta);
+      if (angles) viewName = '';
+    }
+    if (angles) cameraTouched = true; // the spec's own view no longer applies by itself
+    focusKeys = parts ? new Set(keys) : null;
+    fitMode = parts ? 'part' : 'auto';
+    inertia.theta = 0;
+    inertia.phi = 0;
+    pauseAutoRotate();
+    const theta = angles ? angles[0] : orbit.theta;
+    const phi = angles ? angles[1] : orbit.phi;
+    const track = () => currentFitGoal('view', theta, phi);
+    const f = track();
+    if (!f) {
+      emit();
+      return Promise.resolve('arrived'); // nothing to frame yet
+    }
+    // with an explode under way the flight lasts until it ends, so it arrives where the parts stop
+    const exploding = explodeAnim ? explodeAnim.start + explodeAnim.dur - performance.now() : 0;
+    const dur = Math.max(Number(ms) || 0, exploding);
+    return new Promise((resolve) => {
+      const goal = angles ? { target: f.target, radius: f.radius, theta, phi } : { target: f.target, radius: f.radius };
+      tweenCamera(goal, dur > 0 && awake, { track, done: resolve }, dur);
+      emit();
+    });
+  }
+
   function resetView() {
-    focusKey = null;
+    focusKeys = null;
     fitMode = 'auto';
     inertia.theta = 0;
     inertia.phi = 0;
@@ -1928,10 +2257,17 @@ export function createHologram(container, options = {}) {
       finalSeen = true;
       return res;
     },
+    /**
+     * Exploded view (t 0 assembled … 1 apart; animate false: at once). Resolves 'arrived' when the
+     * parts stop moving, or 'replaced' when another explode takes over (a move-finished signal).
+     */
     explode(t = 1, animate = true) {
+      if (disposed) return Promise.resolve('replaced');
       const goal = Math.min(1, Math.max(0, Number(t) || 0));
       explodeGoal = goal;
       if (fitMode === 'user') fitMode = 'auto';
+      if (explodeAnim) for (const fn of explodeAnim.done) fn('replaced');
+      let arrived;
       if (!animate || reducedMq.matches) {
         explodeAnim = null;
         explodeT = goal;
@@ -1942,11 +2278,16 @@ export function createHologram(container, options = {}) {
             orbit.radius = f.radius;
           }
         }
+        arrived = Promise.resolve('arrived');
       } else {
-        explodeAnim = { from: explodeT, to: goal, start: performance.now(), dur: EXPLODE_MS * Math.max(0.35, Math.abs(goal - explodeT)) };
+        const done = [];
+        explodeAnim = { from: explodeT, to: goal, start: performance.now(), dur: EXPLODE_MS * Math.max(0.35, Math.abs(goal - explodeT)), done };
+        arrived = new Promise((resolve) => done.push(resolve));
+        trackParts(); // a camera move under way aims at where the parts go
       }
       requestRender();
       emit();
+      return arrived;
     },
     setLabels(on) {
       labelsOn = !!on;
@@ -1969,13 +2310,14 @@ export function createHologram(container, options = {}) {
     isolate(id) {
       const key = keyOfId(id);
       if (key === undefined) return false;
+      stopFlight('replaced');
       isolatedKey = key;
       if (key) {
         selectKey(key);
-        focusKey = key;
+        focusKeys = new Set([key]);
         fitMode = 'part';
       } else {
-        focusKey = null;
+        focusKeys = null;
         fitMode = 'auto';
       }
       updateVisGoals();
@@ -1990,12 +2332,53 @@ export function createHologram(container, options = {}) {
       autoRotateOn = !!on;
       rotateRequested = autoRotateOn;
       if (autoRotateOn) {
+        rotateHeld = false; // the owner asked for it ("spin it"): it spins, a walkthrough or not
         lastInteraction = -Infinity;
         rotateSince = performance.now();
       }
       requestRender();
       emit();
     },
+    /**
+     * A walkthrough holds the idle auto-rotation off (on), and gives it back (off): it starts again
+     * after the usual quiet time, if it was on. The setting itself (getState().autoRotate) is kept.
+     */
+    holdAutoRotate(on) {
+      rotateHeld = !!on;
+      if (!rotateHeld) {
+        lastInteraction = performance.now();
+        scheduleRotateWake();
+      }
+      requestRender();
+      emit();
+    },
+    setEmphasis,
+    /**
+     * Only these parts' labels may show (ids or keys; the selected part's always may); null: any.
+     * setLabels(on) still switches labels on and off.
+     */
+    labelsFor(ids) {
+      labelOnly = ids === undefined || ids === null ? null : idSet(ids);
+      requestRender();
+      emit();
+    },
+    /**
+     * Move the camera's target, distance and direction in one tween, and resolve when it is there.
+     *   ids    part ids (or keys) to frame; the first is the main part ('access'); unknown ids are ignored
+     *   frame  'parts' (default with ids): just those parts, framed close; 'all': every shown part
+     *          (parts a step hides are left out)
+     *   view   a view name ('front', 'front-left', … as setView) or 'access': from the side the main
+     *          part comes out of (its explode direction, leaned towards the model's own view: a
+     *          battery that comes out downwards is seen from below and in front)
+     *   dir    [x, y, z]: from that side (from the model towards the camera, the spec's axes:
+     *          +x front, +y up, +z right); 'access' as view. Neither: the direction stays.
+     *   ms     the move's length (750 by default); with an explode under way it lasts until the
+     *          explode ends. Reduced motion, or a hidden view: a cut.
+     * The framing follows parts that still move. Resolves 'arrived'; 'touch' when the owner takes
+     * the camera first (a press, drag, pinch or wheel on the model, or a zoom); 'replaced' when
+     * another camera move (a newer flyTo, focus, isolate, a view, reset) takes over, or on dispose.
+     */
+    flyTo,
     resetView,
     zoom(factor) {
       zoomBy(factor);
@@ -2102,6 +2485,8 @@ export function createHologram(container, options = {}) {
       return key ? publicPart(records.get(key)) : null;
     },
     getState,
+    /** The walkthrough's renderer target (contract (e)): see `target` below. The same object every time. */
+    tourTarget: () => target,
     resize: measure,
     /** Debug/benchmark: renders n frames synchronously (forcing GPU completion), returns ms per frame. */
     debugBench(n = 30) {
@@ -2134,6 +2519,38 @@ export function createHologram(container, options = {}) {
       bg.visible = background;
       requestRender();
     },
+    /** Debug/tests: the camera (degrees), a move under way, rotation, and each part's look (now and goal). */
+    debugState() {
+      const deg = (r) => Math.round((wrapAngle(r) / DEG) * 100) / 100;
+      const idOf = (key) => (records.has(key) ? records.get(key).part.id : key);
+      const fit = currentFitGoal('view');
+      return {
+        camera: { theta: deg(orbit.theta), phi: deg(orbit.phi), radius: orbit.radius, target: orbit.target.toArray(), fitMode, focus: focusKeys ? Array.from(focusKeys).map(idOf) : null, view: viewName },
+        fit: fit ? { radius: fit.radius, target: fit.target.toArray() } : null,
+        moving: !!camTween,
+        flying: !!(camTween && camTween.done),
+        tracking: tracking(),
+        exploding: !!explodeAnim,
+        explodeT,
+        rotating: autoRotating(),
+        rotateHeld,
+        pulseLive,
+        awake,
+        parts: Array.from(records.values()).map((rec) => ({
+          id: rec.part.id,
+          role: roleOf(rec),
+          vis: rec.vis,
+          visGoal: rec.visGoal,
+          fill: rec.fillK,
+          fillGoal: rec.fillKGoal,
+          sel: rec.sel,
+          selGoal: rec.selGoal,
+          pulse: rec.pulse,
+          pulseGoal: rec.pulseGoal,
+          label: rec.label.shown,
+        })),
+      };
+    },
     debugInfo() {
       const info = renderer ? renderer.info : null;
       return {
@@ -2154,6 +2571,9 @@ export function createHologram(container, options = {}) {
     },
     dispose() {
       if (disposed) return;
+      stopFlight('replaced');
+      if (explodeAnim) for (const fn of explodeAnim.done) fn('replaced');
+      explodeAnim = null;
       disposed = true;
       offHull();
       win.clearTimeout(landTimer);
@@ -2194,6 +2614,37 @@ export function createHologram(container, options = {}) {
     },
   };
 
+  /**
+   * The renderer target of a walkthrough (contract (e), SPEC §29.2): the one object a tour player
+   * drives. It never touches the viewer's DOM, and every renderer gives one (the viewer's, a
+   * Screens panel's): holo.tourTarget().
+   *   setEmphasis({ glow, ghost, hide, others } | null)  a step's look, part by part (setEmphasis)
+   *   flyTo({ ids, frame, view | dir, ms }) → Promise<'arrived' | 'touch' | 'replaced'>  (flyTo)
+   *   explode(t, animate = true) → Promise<'arrived' | 'replaced'>  when the parts stop moving
+   *   focus(id | null), select(id | null) → false for an unknown id (as the viewer's commands;
+   *     select shows the viewer's part card)
+   *   setLabels(on): true (every part's label), false (none) or [ids] (only those parts')
+   *   settled(ms) → Promise<boolean>  every mesh is final: start a tour after it
+   *   holdAutoRotate(on)  idle rotation off for the tour (true), given back after (false)
+   *   parts() → [{ id, name, group, groupName, tone, info, material, aka, shell }]
+   *   getState() → the renderer's state (exploded, selected, emphasis, labelsFor, flying, rotateHeld, …)
+   */
+  const target = Object.freeze({
+    setEmphasis: (next) => setEmphasis(next),
+    flyTo: (opts) => flyTo(opts),
+    explode: (t, animate) => api.explode(t, animate),
+    focus: (id) => api.focus(id),
+    select: (id) => api.select(id),
+    setLabels(on) {
+      api.labelsFor(Array.isArray(on) ? on : null);
+      api.setLabels(Array.isArray(on) || !!on);
+    },
+    settled: (ms) => api.settled(ms),
+    holdAutoRotate: (on) => api.holdAutoRotate(on),
+    parts: () => Array.from(records.values()).map((rec) => ({ ...publicPart(rec), shell: shellIds().has(rec.part.id) })),
+    getState: () => getState(),
+  });
+
   measure();
   updateAwake();
   emit();
@@ -2202,16 +2653,33 @@ export function createHologram(container, options = {}) {
 
 function noopController(root) {
   const nothing = () => null;
+  const arrived = () => Promise.resolve('arrived'); // nothing moves without WebGL
+  const target = Object.freeze({
+    setEmphasis: NOOP,
+    flyTo: arrived,
+    explode: arrived,
+    focus: () => false,
+    select: () => false,
+    setLabels: NOOP,
+    settled: () => Promise.resolve(false),
+    holdAutoRotate: NOOP,
+    parts: () => [],
+    getState: () => ({ ready: false, error: 'webgl' }),
+  });
   return {
     updateSpec: nothing,
     setSpec: nothing,
-    explode: NOOP,
+    explode: arrived,
     setLabels: NOOP,
     select: () => false,
     focus: () => false,
     isolate: () => false,
     setView: () => false,
     autoRotate: NOOP,
+    holdAutoRotate: NOOP,
+    setEmphasis: NOOP,
+    labelsFor: NOOP,
+    flyTo: arrived,
     resetView: NOOP,
     zoom: NOOP,
     setInsets: NOOP,
@@ -2220,8 +2688,10 @@ function noopController(root) {
     listParts: () => [],
     getPart: nothing,
     getState: () => ({ ready: false, error: 'webgl' }),
+    tourTarget: () => target,
     resize: NOOP,
     debugBench: nothing,
+    debugState: nothing,
     debugInfo: nothing,
     dispose() {
       root.remove();

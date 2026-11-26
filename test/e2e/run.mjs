@@ -53,6 +53,7 @@ import voiceGeorgeStuck from './scenarios/voice-george-stuck.mjs';
 // ---- mac-hf ▸
 // ---- mac-hf ◂
 // ---- tour-render ▸
+import tourRender from './scenarios/tour-render.mjs';
 // ---- tour-render ◂
 // ---- tours ▸
 // ---- tours ◂
@@ -93,6 +94,7 @@ const V81_SCENARIOS = [
   // ---- mac-hf ▸
   // ---- mac-hf ◂
   // ---- tour-render ▸
+  ...tourRender,
   // ---- tour-render ◂
   // ---- tours ▸
   // ---- tours ◂
