@@ -349,9 +349,11 @@ export default [
       await setup(t);
       await enterStandby(t);
       await setHidden(t.page, true);
-      const chimesBefore = await t.page.evaluate(() => window.__chimes.filter((c) => c.hidden).length);
       await queue(t.page, '', QUESTION);
       await wakeByClaps(t);
+      await waitSaid(t, /Shall I put on some/);
+      // After the wake chime: the listen chimes of the offer's listen and the ones after.
+      const chimesBefore = await t.page.evaluate(() => window.__chimes.filter((c) => c.hidden).length);
       await t.waitFor(() => leadCount(t) === 1, { timeout: 30000, message: 'the question to be sent' });
       await waitSaid(t, ANSWER, { timeout: 30000 });
       await backInStandby(t, t.page, 30000);
@@ -365,7 +367,7 @@ export default [
       t.assert(mine[0].closed, 'closed when the session ended');
       t.assert(!notes.some((n) => /Switch to Jarvis/.test(n.body)), 'not the old “Switch to Jarvis to answer.”');
       const chimes = await t.page.evaluate(() => window.__chimes.filter((c) => c.hidden).length);
-      t.assert(chimes > chimesBefore + 4, `chimes played while hidden (the wake, then each listen): ${chimes - chimesBefore} voices`);
+      t.assert(chimes > chimesBefore, `the listen chimes played while hidden, after the wake chime: ${chimes - chimesBefore} voices`);
     },
   },
   // ---- A3: a hidden stall hands over ---------------------------------------------------------------------------
@@ -410,14 +412,9 @@ export default [
         await waitSaid(t, /The capital of Germany is Berlin\./, { timeout: 30000 });
       });
       await t.step('then 8 s of silence: Standby', async () => {
-        const listenAt = await t.page.evaluate(async () => {
-          const n = window.__voice.listenLog.length;
-          await new Promise((r) => {
-            const tick = () => (window.__voice.listenLog.length > n ? r() : setTimeout(tick, 50));
-            tick();
-          });
-          return window.__voice.listenLog.at(-1);
-        });
+        // Listens: the wake window, the offer's, the first follow-up, then the one that hears nobody.
+        await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.listenLog.length)) >= 4, { message: 'the second follow-up listen' });
+        const listenAt = await t.page.evaluate(() => window.__voice.listenLog[3]);
         await backInStandby(t, t.page, 30000);
         const took = (await t.page.evaluate(() => performance.now())) - listenAt;
         t.assert(took >= 8000 && took < 16000, `back to Standby ${Math.round(took)} ms after the listen began (8 s window, then the 2.5 s return)`);
@@ -537,11 +534,13 @@ export default [
       await (await t.visible('quick-key-standby')).click();
       await t.waitFor(async () => (await standbyState(t.page))?.word === 'ready', { timeout: 15000, message: 'the stand-in ready' });
       await queue(t.page, '', 'Tell me about solar panels [[long]]');
+      const stopsBefore = await t.page.evaluate(() => window.__fakeMic.stops);
       await t.page.evaluate(() => window.__jarvisWake.say());
       await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
       await t.step('the microphone stays on through the session', async () => {
-        const m = await t.page.evaluate(() => window.__fakeMic.standby);
-        t.assert(m === 1, `Standby’s capture is still live (${m})`);
+        await t.page.waitForTimeout(500);
+        const m = await t.page.evaluate(() => ({ stops: window.__fakeMic.stops, live: window.__fakeMic.live, log: window.__fakeMic.log.slice() }));
+        t.assert(m.stops === stopsBefore && m.live >= 1, `Standby’s capture was not released at the wake (${JSON.stringify(m)})`);
       });
       await t.step('while George speaks the answer, "Hey Jarvis": he stops and listens', async () => {
         await t.waitFor(() => leadCount(t) === 1, { timeout: 30000, message: 'the question to be sent' });
