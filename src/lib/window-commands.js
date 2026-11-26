@@ -10,6 +10,8 @@
 //   matchWindowCommand("we'll do this in this window") -> { op: 'here', which: null }
 //   matchWindowCommand('show me the hologram window')  -> { op: 'focus', which: 'hologram' }
 //   matchWindowCommand('close everything')             -> { op: 'close-all', viewers: true }
+//   matchWindowCommand('make the camera window bigger') -> { op: 'size', size: 'bigger', which: 'camera' } (D5)
+//   matchWindowCommand('swap them')                    -> { op: 'swap' } (two windows open; D5)
 //   matchWindowCommand('how do I split my screen')     -> null (a question for Jarvis)
 //
 // state (the router's, all optional): { windows: [{ id, kind, label, focused }], hologram: { open } }.
@@ -79,6 +81,13 @@ const SWAP_RE = /^(?:swap|switch|flip|exchange|trade) (?:them|the windows|window
 // Bring one to the front.
 const FOCUS_RE = new RegExp(`^(?:show me|bring up|go to|switch to|focus on|focus|raise|bring forward|bring to the front) ${THE}(${THING}) ${WIN}$`);
 
+// Size (D5): "make the camera window bigger", "make it smaller", "fill the screen", "full screen".
+const SIZE_WORD = '(bigger|larger|smaller|full ?screen|full size|maximized|fill the screen)';
+const SIZE_NAMED_RE = new RegExp(`^(?:make|set|have|let) ${THE}(${THING}) ${WIN} ${SIZE_WORD}$|^(?:make|set|have|let) ${THE}(${THING}) ${WIN} fill (?:the|my) screen$`);
+const SIZE_IT_RE = new RegExp(`^(?:make|set) (?:it|this|that|${THE}${WIN}) ${SIZE_WORD}$`);
+const FILL_RE = /^(?:(?:go )?full ?screen|fill the screen|(?:make it|have it|let it) fill the screen|maximi[sz]e(?: it| this| that| the window)?)$/;
+const sizeOf = (w) => (/small/.test(w) ? 'smaller' : /big|large/.test(w) ? 'bigger' : 'fill');
+
 function action(op, extra = {}) {
   // Free and local. Closing can lose something (a camera stops), so no alternative reading closes.
   return { do: 'window', op, free: true, undo: op !== 'close' && op !== 'close-all', check: false, camera: false, ...extra };
@@ -135,6 +144,14 @@ export function matchWindowCommand(text, state = {}) {
 
   m = FOCUS_RE.exec(s);
   if (m) return action('focus', { which: kindOf(m[1]) });
+
+  m = SIZE_NAMED_RE.exec(s);
+  if (m) return action('size', { size: m[2] ? sizeOf(m[2]) : 'fill', which: kindOf(m[1] || m[3]) });
+  // "It" is a window only while one is open and no viewer in the main window owns "it".
+  const viewer = !!(state && state.hologram && state.hologram.open && !state.hologram.inWindow);
+  m = SIZE_IT_RE.exec(s);
+  if (m && open >= 1 && !viewer) return action('size', { size: sizeOf(m[1]), which: null });
+  if (FILL_RE.test(s) && open >= 1 && !viewer) return action('size', { size: 'fill', which: null });
   return null;
 }
 

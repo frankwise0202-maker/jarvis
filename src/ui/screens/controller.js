@@ -18,7 +18,7 @@
 // without a name, on the window that has focus, else the newest one.
 //   screens.runCommand(cmd, { source })  a screen command already matched (matchScreenCommand's)
 //   screens.windowCommand({ op, which, layout, a, b }, { source })  -> Promise<outcome>
-//       op 'close' | 'close-all' | 'arrange' | 'here' | 'focus' (window-commands.js)
+//       op 'close' | 'close-all' | 'arrange' | 'here' | 'focus', and D5's 'swap' | 'size' (window-commands.js)
 //   screens.commandIn(kind, command)   a viewer command ("explode it") for the window showing `kind`:
 //       { handled: true, … } or null (no window shows it: the app opens it in the main window)
 //   screens.shown(kind)                the window showing `kind`: { id, label, mode, parts, selected } | null
@@ -62,7 +62,7 @@ import { h } from '../dom.js';
 import { icon } from '../icons.js';
 import { openOverlay } from '../overlay.js';
 import { matchScreenCommand } from '../../lib/screen-commands.js';
-import { MAX_WINDOWS, detectScreenEnv, layoutArea, layoutRects, planPlacement, placementNote, rightHalf, screenWindowFeatures, windowRect } from '../../lib/screen-placement.js';
+import { MAX_WINDOWS, availRect, detectScreenEnv, layoutArea, layoutRects, planPlacement, placementNote, resizedRect, rightHalf, screenAt, screenWindowFeatures, windowRect } from '../../lib/screen-placement.js';
 import { windowName } from '../../lib/window-commands.js';
 import { answerMarkdownOf, hostOf, lookSnapshot, missionSnapshot, questionTitle, resolveScreenTarget, screenKindName } from '../../lib/screen-targets.js';
 import { createScreenFrame } from './frame.js';
@@ -167,6 +167,10 @@ export function screenMessage(o) {
       return o.moved ? `${Name} is back in the main window.` : 'Working in the main window.';
     case 'focused':
       return `${cap(windowName(o.kind, { report: !!o.report }))} is in front.`;
+    case 'swapped':
+      return 'Swapped.';
+    case 'sized':
+      return o.size === 'fill' ? (o.beside ? 'It fills the screen beside Jarvis.' : 'It fills the screen.') : o.size === 'smaller' ? 'Smaller.' : 'Bigger.';
     default:
       return txt(o.message) || 'That screen couldn’t open.';
   }
@@ -198,6 +202,10 @@ export function screenAck(o) {
       return o.moved ? "It's back here, in the main window." : 'Here, in the main window.';
     case 'focused':
       return `Here's ${windowName(o.kind, { report: !!o.report })}.`;
+    case 'swapped':
+      return 'Swapped.';
+    case 'sized':
+      return o.size === 'fill' ? (o.beside ? 'It fills the screen beside me.' : 'It fills the screen.') : o.size === 'smaller' ? 'Smaller.' : 'Bigger.';
     default:
       return txt(o.message) || "I couldn't open that screen.";
   }
@@ -1070,6 +1078,8 @@ export function createScreens(deps = {}) {
    * open in one first. Floating panels and pages from the web can't be moved by script: they stay.
    */
   async function arrange({ layout = 'side-by-side', a = null, b = null } = {}, { source = 'voice', gesture } = {}) {
+    // A phone or a tablet shows one thing at a time, full screen (as before).
+    if (detectScreenEnv(window).mobile) return { status: 'nothing', message: 'This screen shows one thing at a time.' };
     const g = gesture === undefined ? hasGesture(source) : gesture;
     for (const kind of [a, b]) {
       if (!kind || popups().some((e) => e.kind === kind && !e.external)) continue;
@@ -1133,6 +1143,44 @@ export function createScreens(deps = {}) {
       return { status: 'here', where: 'main', moved: true, kind: there.kind, report: !!there.report };
     }
     return { status: 'here', where: 'main', moved: false, kind: which || null };
+  }
+
+  /** A window's place now: where it really is (our own pages), else where Jarvis put it. */
+  const placeOf = (e) => safe(() => windowRect(e.win), null) || e.rect || null;
+
+  /** "Swap them" (D5): the two windows' places exchanged (the focused or newest one and the next newest). */
+  function swapWindows() {
+    const movable = popups().filter((e) => !e.external);
+    if (movable.length < 2) return { status: 'nothing', message: popups().length >= 2 ? 'Pages from the web can’t be moved, only Jarvis’s own windows.' : 'Swapping needs two of my windows.' };
+    const first = pickOf(movable);
+    const second = newest(movable.filter((e) => e !== first));
+    const a = placeOf(first);
+    const b = placeOf(second);
+    if (!a || !b || !moveEntry(first, b) || !moveEntry(second, a)) return { status: 'nothing', message: 'Those windows can’t be moved.' };
+    return { status: 'swapped', names: [first.kind, second.kind] };
+  }
+
+  /**
+   * "Make the camera window bigger", "smaller", "fill the screen" (D5): Jarvis's own windows only. On
+   * Jarvis's screen a window never covers his strip; elsewhere "fill" is the monitor's work area (true
+   * full screen needs a tap: the window's own full-screen button). Floating panels and pages can't be
+   * resized by script, and Jarvis says so.
+   */
+  async function sizeWindow({ size = 'bigger', which = null } = {}) {
+    const list = [...screens.values()].filter((e) => e.mode !== 'inapp' && alive(e) && (!which || e.kind === which));
+    const e = pickOf(list);
+    if (!e) return which ? { status: 'closed', count: 0, which, kind: which } : { status: 'nothing', message: 'There’s no window to resize.' };
+    if (e.mode === 'pip') return { status: 'nothing', message: 'Drag its corner; I can’t resize floating panels. Say “put it in a window” for one I can.' };
+    if (e.external) return { status: 'nothing', message: 'I can’t move a page from another site. Close it and open it again where you want it.' };
+    const where = await layoutScreens();
+    const r = placeOf(e);
+    const scr = screenAt(where.screens, r) || where.current;
+    const mine = screenAt(where.screens, windowRect(window)) || where.current;
+    const onJarvis = scr === mine || where.screens.length < 2;
+    const bounds = onJarvis ? layoutArea({ screens: [mine], current: mine, main: windowRect(window), count: 1 }).region : availRect(scr);
+    const next = resizedRect(r, size, bounds);
+    if (!moveEntry(e, next)) return { status: 'nothing', message: 'That window can’t be moved.' };
+    return { status: 'sized', size, kind: e.kind, report: !!e.report, beside: onJarvis };
   }
 
   /** "Show me the hologram window": brought to the front (a page or a floating panel too). */
@@ -1282,6 +1330,10 @@ export function createScreens(deps = {}) {
             return here(a);
           case 'focus':
             return focusWindow(a);
+          case 'swap':
+            return swapWindows();
+          case 'size':
+            return sizeWindow(a);
           default:
             return { status: 'nothing', message: 'I can’t do that with windows yet.' };
         }

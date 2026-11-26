@@ -114,3 +114,23 @@ test('windowRect: a window\'s own place on the desktop', () => {
   assert.equal(windowRect({ screenX: 0, screenY: 0, outerWidth: 0, outerHeight: 0 }), null, 'a window with no size (hidden in a test)');
   assert.equal(windowRect(null), null);
 });
+
+test('D5: bigger, smaller and "fill" stay inside their bounds; the monitor a window is on', async () => {
+  const { resizedRect, screenAt } = await import('../../src/lib/screen-placement.js');
+  const bounds = { left: 320, top: 25, width: 1120, height: 875 }; // beside Jarvis, his strip kept
+  const r = { left: 880, top: 25, width: 560, height: 875 };
+  assert.deepEqual(resizedRect(r, 'fill', bounds), bounds);
+  const bigger = resizedRect(r, 'bigger', bounds);
+  assert.deepEqual(bigger, { left: 740, top: 25, width: 700, height: 875 }, 'a quarter bigger, kept inside (never over his strip)');
+  const smaller = resizedRect(r, 'smaller', bounds);
+  assert.deepEqual(smaller, { left: 936, top: 113, width: 448, height: 700 }, 'a fifth smaller, around its centre');
+  assert.deepEqual(resizedRect({ left: 900, top: 100, width: 330, height: 250 }, 'smaller', bounds), { left: 905, top: 105, width: 320, height: 240 }, 'never below 320×240 (centre kept)');
+  for (const size of ['bigger', 'smaller', 'fill']) {
+    const x = resizedRect({ left: 300, top: 0, width: 2000, height: 2000 }, size, bounds);
+    assert.ok(x.left >= 320 && x.top >= 25 && x.left + x.width <= 1440 && x.top + x.height <= 900, `${size}: inside (${JSON.stringify(x)})`);
+  }
+  assert.equal(screenAt([LAPTOP, DELL], { left: 2000, top: 100, width: 800, height: 600 }), DELL);
+  assert.equal(screenAt([LAPTOP, DELL], { left: 100, top: 100, width: 800, height: 600 }), LAPTOP);
+  assert.equal(screenAt([LAPTOP, DELL], { left: -5000, top: 0, width: 10, height: 10 }), null);
+  assert.equal(screenAt([SCREEN], { left: 720, top: 25, width: 720, height: 875 }), SCREEN, 'window.screen (no left/top of its own)');
+});

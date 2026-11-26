@@ -12,6 +12,7 @@
 //   layoutRects({ screens, current, main, count, layout })  -> [{ left, top, width, height }, …]
 //   layoutArea({ screens, current, main, count, layout })   -> { area, region, screen, strip }
 //   windowRect(win)                                -> a window's own rect (screenX/Y, outer size)
+//   resizedRect(rect, 'bigger' | 'smaller' | 'fill', bounds), screenAt(screens, rect)   (D5)
 //
 // Modes:
 //   screen  a window maximized on another monitor (Window Management API: getScreenDetails)
@@ -293,6 +294,39 @@ export function layoutRects(opts = {}) {
     out.push({ left: r.left + (span ? 0 : col * colW), top: r.top + row * rowH, width: span ? colW * 2 : colW, height: rowH });
   }
   return out;
+}
+
+/**
+ * A new place for a window (D5): 'bigger' / 'smaller' (by a quarter, around its centre) or 'fill',
+ * inside `bounds` (the usable area of its monitor, or beside Jarvis with his strip kept), never
+ * smaller than 320×240. -> { left, top, width, height } in whole pixels
+ */
+export function resizedRect(rect, size, bounds) {
+  const b = { left: num(bounds && bounds.left), top: num(bounds && bounds.top), width: Math.max(320, num(bounds && bounds.width, 1280)), height: Math.max(240, num(bounds && bounds.height, 800)) };
+  if (size === 'fill' || !rect) return { left: Math.round(b.left), top: Math.round(b.top), width: Math.floor(b.width), height: Math.floor(b.height) };
+  const k = size === 'bigger' ? 1.25 : 0.8;
+  const width = Math.round(Math.min(b.width, Math.max(320, num(rect.width) * k)));
+  const height = Math.round(Math.min(b.height, Math.max(240, num(rect.height) * k)));
+  const cx = num(rect.left) + num(rect.width) / 2;
+  const cy = num(rect.top) + num(rect.height) / 2;
+  const left = Math.round(Math.min(b.left + b.width - width, Math.max(b.left, cx - width / 2)));
+  const top = Math.round(Math.min(b.top + b.height - height, Math.max(b.top, cy - height / 2)));
+  return { left, top, width, height };
+}
+
+/** The monitor whose area holds the centre of `rect` (ScreenDetailed or window.screen objects), or null. */
+export function screenAt(screens, rect) {
+  if (!rect || !Array.isArray(screens)) return null;
+  const cx = num(rect.left) + num(rect.width) / 2;
+  const cy = num(rect.top) + num(rect.height) / 2;
+  return (
+    screens.find((s) => {
+      if (!s || typeof s !== 'object') return false;
+      const left = num(s.left, num(s.availLeft));
+      const top = num(s.top, num(s.availTop));
+      return cx >= left && cx < left + num(s.width, num(s.availWidth)) && cy >= top && cy < top + num(s.height, num(s.availHeight));
+    }) || null
+  );
 }
 
 /** A short line for the owner about a fallback ('' when nothing needs saying). */

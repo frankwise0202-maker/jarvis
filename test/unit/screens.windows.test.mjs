@@ -112,3 +112,24 @@ test('names: spoken names to kinds, and what Jarvis calls each window', () => {
   assert.equal(windowName('mission'), 'the Mission Control window');
   assert.equal(windowName('link'), 'the page window');
 });
+
+test('D5: size and swap words (a named window always; "it" only with a window open and no viewer in the main window)', () => {
+  assert.deepEqual(pick(matchWindowCommand('make the camera window bigger', NONE)), { op: 'size', size: 'bigger', which: 'camera' });
+  assert.deepEqual(pick(matchWindowCommand('make the hologram window smaller', TWO)), { op: 'size', size: 'smaller', which: 'hologram' });
+  assert.deepEqual(pick(matchWindowCommand('make the report window fill the screen', TWO)), { op: 'size', size: 'fill', which: 'answer' });
+  assert.deepEqual(pick(matchWindowCommand('make it bigger', ONE)), { op: 'size', size: 'bigger', which: null });
+  assert.deepEqual(pick(matchWindowCommand('make the window smaller', ONE)), { op: 'size', size: 'smaller', which: null });
+  assert.deepEqual(pick(matchWindowCommand('make it full screen', ONE)), { op: 'size', size: 'fill', which: null });
+  assert.deepEqual(pick(matchWindowCommand('full screen', ONE)), { op: 'size', size: 'fill', which: null });
+  assert.deepEqual(pick(matchWindowCommand('fill the screen', ONE)), { op: 'size', size: 'fill', which: null });
+  assert.equal(matchWindowCommand('make it bigger', NONE), null, 'no window: a question for Jarvis ("make it bigger" about an answer)');
+  assert.equal(matchWindowCommand('make it bigger', { ...ONE, hologram: { open: true, inWindow: false } }), null, 'a viewer in the main window owns "it"');
+  assert.equal(matchWindowCommand('full screen', NONE), null);
+  assert.equal(matchWindowCommand('make it shorter', ONE), null);
+  assert.equal(matchWindowCommand('make it funnier', ONE), null);
+  assert.equal(matchWindowCommand('full screen ahead', ONE), null);
+  assert.equal(matchWindowCommand('full screen protector for iPhone', ONE), null);
+  assert.deepEqual(pick(matchWindowCommand('swap them', TWO)), { op: 'swap' });
+  assert.deepEqual(pick(matchWindowCommand('switch sides', TWO)), { op: 'swap' });
+  assert.equal(matchWindowCommand('swap the windows on my house', TWO), null);
+});
