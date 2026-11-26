@@ -1230,7 +1230,7 @@ export default [
         });
         await play(t.page, DOUBLE_CLAP);
         await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
-        await t.page.locator(tid('music-card')).last().waitFor({ state: 'attached', timeout: 30000 });
+        await t.page.locator(tid('voice-music-card')).last().waitFor({ state: 'attached', timeout: 30000 });
         await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
         const brakes = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
         t.assert(leadCount(t) === afterBrake, `nothing paid (${leadCount(t) - afterBrake})`);
