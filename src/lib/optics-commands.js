@@ -159,8 +159,10 @@ const LIVE_VIEW_OFF = /^(?:(?:stop|end|turn off|switch off|exit|leave)(?: the)? 
 
 function hologramOf(n) {
   if (!/\bholo ?grams?\b|\bhollow ?grams?\b/.test(n)) return null;
-  // "Turn the hologram off (on)", "hologram off" switch the one shown: never a request for a new hologram (ROUTING-R4-2).
-  if (/^(?:(?:turn|switch)\b.*|(?:the )?(?:holo ?grams?|hollow ?grams?)) (?:on|off)$/.test(n)) return null;
+  // "Turn the hologram off (on)", "turn off the hologram", "hologram off" switch the one shown: never a request for a
+  // new hologram (ROUTING-R4-2). Only a switched hologram: "turn this into a hologram with the labels on" still is one
+  // (ROUTING-R5-1).
+  if (/^(?:(?:turn|switch) (?:the |this |that )?(?:holo ?grams?|hollow ?grams?)(?: back)? (?:on|off)|(?:turn|switch) (?:on|off) (?:the |this |that )?(?:holo ?grams?|hollow ?grams?)|(?:the )?(?:holo ?grams?|hollow ?grams?) (?:on|off))$/.test(n)) return null;
   // "hologram of this", "make a hologram of the battery", "show me this as a hologram", "hologram it".
   if (!/^(?:(?:make|build|show|do|give|create|turn)(?: me)?(?: (?:a|the|this|that|it))?(?: (?:as|into|in))?(?: a)? (?:holo ?gram|hollow ?gram)|(?:a )?holo ?gram|(?:a )?hollow ?gram|show (?:me )?(?:this|that|it) (?:as|in) (?:a )?(?:holo ?gram|hollow ?gram)|(?:can i|could i|let me) (?:see|get|have) (?:a )?(?:holo ?gram|hollow ?gram))\b/.test(n)) return null;
   const m = /\b(?:holo ?gram|hollow ?gram)s? of (?:the |a |an |my |that |this )?(.+)$/.exec(n);

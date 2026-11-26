@@ -972,6 +972,10 @@ export const OPTICS = {
       ['turn the hologram off', st, null],
       ['turn the hologram on', st, null],
     ]),
+    // ROUTING-R5-1: a request to turn this into a hologram is Optics' hologram, whatever its last word.
+    ...['VL', 'OV'].flatMap((st) =>
+      ['turn this into a hologram with the labels on', 'turn it into a hologram with the lid off', 'turn this into a hologram so I can see what is going on', "turn this into a hologram of what I'm working on"].map((w) => [w, st, 'optics:optics']),
+    ),
   ],
   not: [
     // E4: the 16 steals of the voice study's probe (8 sentences, with the camera live and a Look on screen).
