@@ -254,15 +254,14 @@ export const NEVER_QUOTED = /approve|cancel|say|yes|allow|deny|stop|jarvis/;
  * The same words, and the reserved answer phrases, by their sound (REDTEAM-LINK-8): matched on the letters after
  * foldSounds, so "Aprove", "Approove", "Ah-prove", "Kancel", "Cancle", "Appr0ve", "Alow once" and "Javis" are never
  * quoted either, nor "Spend more in Chrome" or "More steps in Chrome"; nor (CHROME-LINK-R2-6) "Uh-prove", "Uprove",
- * "Apruve", "Cansul", "Jarvas", "Jarviz", "Spend mor", "Mor steps" or "More stepz"; nor (CHROME-LINK-R3-2) their
- * cross-spellings "Uh-pruve", "Approuve", "Cansle", "Jarvus", "Spen more", "Mo steps" or "Spend mo in Chrome". ("Stahp" is left: its fold, "stap",
+ * "Apruve", "Cansul", "Jarvas", "Jarviz", "Spend mor", "Mor steps" or "More stepz". ("Stahp" is left: its fold, "stap",
  * would take every "Staples" with it. A list of sounds always has neighbours: the extension's own policy decides every
  * answer, never the quote.)
  */
-export const NEVER_QUOTED_SOUNDS = Object.freeze(['approve', 'aprov', 'ahprov', 'uprov', 'apruv', 'upruv', 'aprouv', 'cancel', 'kancel', 'kansel', 'cancle', 'cansul', 'cansle', 'say', 'yes', 'allow', 'deny', 'stop', 'jarvis', 'javis', 'jarvas', 'jarvus', 'spendmore', 'spendmor', 'spenmor', 'spendmoin', 'moresteps', 'morestep', 'morstep', 'mosteps']);
+export const NEVER_QUOTED_SOUNDS = Object.freeze(['approve', 'aprov', 'ahprov', 'uprov', 'apruv', 'cancel', 'kancel', 'kansel', 'cancle', 'cansul', 'say', 'yes', 'allow', 'deny', 'stop', 'jarvis', 'javis', 'jarvas', 'spendmore', 'spendmor', 'moresteps', 'morestep', 'morstep']);
 
 /** Short yes-words, matched as whole words after foldSounds (as stems, "yea" and "yup" would take "Yearly" and "Yuppie"). */
-export const NEVER_QUOTED_WORDS = Object.freeze(['ye', 'yea', 'yeah', 'yeh', 'ya', 'yah', 'yas', 'yep', 'yup', 'spendmo']);
+export const NEVER_QUOTED_WORDS = Object.freeze(['ye', 'yea', 'yeah', 'yeh', 'ya', 'yah', 'yas', 'yep', 'yup']);
 
 const lettersOf = (s) =>
   String(s)

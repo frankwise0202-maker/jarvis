@@ -5424,11 +5424,10 @@ only as one quote of at most about 40 characters after "The button says" (or "Th
 only Latin letters, digits and plain punctuation, and never when its letters contain approve, cancel, say, yes,
 allow, deny, stop or jarvis (checked with spaces, accents and look-alike forms removed: critique M4), nor, after a
 fold by sound (digits read as letters, doubled letters, k for c, s for z, a soft c, ph for f, or for oar, a silent h),
-one of those or the stems aprov, ahprov, uprov, apruv, upruv, aprouv, kancel, kansel, cancle, cansul, cansle, javis,
-jarvas, jarvus, spendmore, spendmor, spenmor, spendmoin, moresteps, morestep, morstep and mosteps (REDTEAM-LINK-8: "Aprove", "Approove", "Ah-prove", "Kancel", "Appr0ve",
+one of those or the stems aprov, ahprov, uprov, apruv, kancel, kansel, cancle, cansul, javis, jarvas, spendmore,
+spendmor, moresteps, morestep and morstep (REDTEAM-LINK-8: "Aprove", "Approove", "Ah-prove", "Kancel", "Appr0ve",
 "Alow once", "Spend more in Chrome"; CHROME-LINK-R2-6: "Uh-prove", "Apruve", "Cansul", "Jarviz", "Spend mor in
-Chrome", "Mor steps", "More stepz"; CHROME-LINK-R3-2: "Uh-pruve", "Approuve", "Cansle", "Jarvus", "Spen more", "Mo
-steps", "Spend mo in Chrome"), nor a word that folds to ye, yea, yeah, yeh, ya, yah, yas, yep, yup or spendmo ("Yep",
+Chrome", "Mor steps", "More stepz"), nor a word that folds to ye, yea, yeah, yeh, ya, yah, yas, yep or yup ("Yep",
 "Yeah"; whole words only, so "Yearly" and "Yuppie" are still quoted). A list of sounds always has neighbours
 ("Stahp" is left, or "Staples" would go with it): the quote only describes the step, and the extension's own policy
 decides every answer. A site whose
