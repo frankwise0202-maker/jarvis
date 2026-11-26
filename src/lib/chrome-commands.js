@@ -2,7 +2,9 @@
 // the pure logic around it: which address, whether it is safe, and what Jarvis says. No DOM.
 //
 //   matchChromeCommand('pull this up in Chrome')     -> { do: 'chrome-open', target: { kind: 'this' }, where: 'auto', … }
-//   matchChromeCommand('open the second link')       -> { …, target: { kind: 'link', ordinal: 2 } }
+//   matchChromeCommand('open the second link', { reply: { links: [...] } })
+//                                                    -> { …, target: { kind: 'link', ordinal: 2 } } (only when the
+//                                                       newest reply has links: else a Chrome task's, lead decision D1)
 //   matchChromeCommand('google USB-C chargers')      -> { …, target: { kind: 'search', query: 'usb-c chargers' }, check: true }
 //   matchChromeCommand('open YouTube')               -> { …, target: { kind: 'site', url: 'https://www.youtube.com/', name: 'YouTube' } }
 //   matchChromeCommand('look it up on Google')       -> { …, target: { kind: 'this-search' } }
@@ -12,6 +14,10 @@
 //
 // Only browser words open the browser: "Chrome", "Google", "tab", "browser", a link, a site's name or
 // address. "Look it up", "look it up online", "research …" stay Jarvis's own (paid) answers.
+// Things on a web page and what is done to them are Jarvis for Chrome's task words (lead decision D1:
+// chrome.task comes first in the router's destination layer): this matcher declines every sentence that
+// starts with "click", and every page object ("the cheapest one", "the first result", "that result",
+// "the second item", "this product", "the listing", "the cart"); it never searches Google for one.
 // A search sends the owner's words to Google, so it goes through the 2-second check (check: true);
 // "this", links and sites act at once.
 //
@@ -72,7 +78,7 @@ const QUESTION = /^(?:what|whats|why|how|hows|which|who|whos|when|where|wheres|i
 const BROWSER = '(?:google chrome|chrome|my chrome|my google chrome|the chrome|my browser|the browser|a browser|my normal chrome|my usual chrome|my own chrome|my regular chrome|a new tab|new tab|another tab|a tab|a normal tab|a regular tab|a new chrome tab|a chrome tab|chrome tab|a browser tab|my normal browser|my usual browser)';
 const IN_BROWSER = `(?:in|on|into|with|using|over in|up in|up on) (${BROWSER})`;
 const MINE = /\b(?:my|normal|regular|usual|own)\b/;
-const THIS = '(?:this|that|it)(?: (?:page|link|one|thing|up))?';
+const THIS = '(?:this|that|it)(?: (?:page|link|thing))?';
 const THIS_RE = [
   new RegExp(`^(?:pull|bring|put|open|show|load|get|throw|send|take)(?: me)? ${THIS}(?: up)? ${IN_BROWSER}$`),
   new RegExp(`^(?:pull|bring|open|show) up ${THIS} ${IN_BROWSER}$`),
@@ -83,7 +89,16 @@ const THIS_SEARCH_RE = [
   /^search google for (?:it|this|that)$/,
   new RegExp(`^(?:look|search) (?:it|this|that) up ${IN_BROWSER}$`),
 ];
-const LINK_RE = new RegExp(`^(?:open|pull up|bring up|show me|go to|load|click|click on|follow|visit)(?: up)? (?:the )?(?:(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last|top) )?(?:link|source|result|website|site|article|page)(?: (?:number )?(\\d|one|two|three|four|five))?(?: ${IN_BROWSER})?$`);
+// A link of the newest reply ("open the second link", "open link 3", "open the source").
+const LINK_RE = new RegExp(`^(?:open|pull up|bring up|show me|go to|load|follow|visit)(?: up)? (?:the )?(?:(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last|top) )?(?:link|source)(?: (?:number )?(\\d|one|two|three|four|five))?(?: ${IN_BROWSER})?$`);
+// A thing on a web page (lead decision D1): Jarvis for Chrome's task words take it; it is never a search.
+const PAGE_QUAL = '(?:cheapest|priciest|most expensive|least expensive|best|top|first|second|third|fourth|fifth|last|next|previous|other|1st|2nd|3rd|4th|5th|highest rated|top rated|lowest priced)';
+const PAGE_NOUN = '(?:result|results|item|items|product|products|listing|listings|option|options|deal|deals|offer|offers|entry|entries|video|videos|review|reviews|post|posts|tab|tabs)';
+const PAGE_OBJECT = new RegExp(`^(?:(?:the|this|that|these|those|my) )?(?:(?:${PAGE_QUAL} )?${PAGE_NOUN}|${PAGE_QUAL} (?:one|ones)|(?:shopping )?(?:cart|basket|bag|checkout))(?: (?:on|in|from|of) (?:this|the) (?:page|site|list))?$`);
+// "Open the cheapest 4K monitor in Chrome": a pick on a page too, not a search for those words.
+const PAGE_PICK = new RegExp(`^(?:(?:the|this|that) )?${PAGE_QUAL}\\b`);
+// Page verbs (lead decision D1): "click …", "search this site for …".
+const PAGE_VERB = /^(?:click|tap on|double click|scroll|search this (?:site|page) for)\b/;
 // "google … is a company", "google maps is down again": a statement about Google, not a search.
 const NOT_QUERY = /^(?:is|was|are|were|has|have|had|does|did|do|will|would|can|could|should|bought|buys|owns|makes|made|said|says|announced|reported|and|or|but|vs|versus)\b/;
 // A search that goes on to act on the page is a job for Jarvis for Chrome (a task), not a search tab.
@@ -109,23 +124,34 @@ function chromeAction(target, where, { check = false } = {}) {
 
 const whereOf = (said) => (said && MINE.test(said) ? 'mine' : 'auto');
 
-/** A search for the owner's words (checked first), "this" for "search for it", or null for a task. */
+/** A search for the owner's words (checked first), "this" for "search for it", or null (a task's words). */
 function searchAction(query, said) {
   const q = String(query || '')
     .replace(/^(?:for|up) /, '')
     .replace(/^(?:google|chrome) (?:for )?/, '')
     .trim();
   if (!q || /^(?:it|this|that|them)$/.test(q)) return chromeAction({ kind: 'this-search' }, whereOf(said));
-  if (q.split(' ').length > 16 || TASKISH.test(q)) return null;
+  if (q.split(' ').length > 16 || TASKISH.test(q) || PAGE_OBJECT.test(q)) return null;
   return chromeAction({ kind: 'search', query: q }, whereOf(said), { check: true });
 }
 
-/** The Chrome command in `text`, or null (see the header). */
-export function matchChromeCommand(text) {
+/** How many links the newest reply has (the router's state.reply.links: a list, or a count). */
+function replyLinkCount(state) {
+  const links = state && state.reply ? state.reply.links : null;
+  if (Array.isArray(links)) return links.length;
+  const n = Number(links);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * The Chrome command in `text`, or null (see the header). `state` is the router's: "open the second
+ * link" counts only when the newest reply has links (state.reply.links).
+ */
+export function matchChromeCommand(text, state = {}) {
   const s = normalizeChromeText(text);
   if (!s || s.split(' ').length > MAX_WORDS) return null;
   if (CLOSE_TAB_RE.test(s)) return { do: 'chrome-close-tab', free: true, undo: false, check: false, camera: false };
-  if (QUESTION.test(s)) return null;
+  if (QUESTION.test(s) || PAGE_VERB.test(s)) return null;
   let m;
   for (const re of THIS_RE) {
     m = re.exec(s);
@@ -137,6 +163,8 @@ export function matchChromeCommand(text) {
   }
   m = LINK_RE.exec(s);
   if (m) {
+    // No links in the newest reply: the words are about a page (a Chrome task's, in a Chrome context).
+    if (!replyLinkCount(state)) return null;
     const ordinal = m[1] ? ORDINALS[m[1]] : m[2] ? Number(ORDINALS[m[2]] || m[2]) : 1;
     return chromeAction({ kind: 'link', ordinal }, whereOf(m[3]));
   }
@@ -161,8 +189,10 @@ export function matchChromeCommand(text) {
     const said = m[2] || '';
     if (named) return chromeAction({ kind: 'site', url: named[0], name: named[1] }, whereOf(said));
     if (DOMAIN.test(site)) return chromeAction({ kind: 'site', url: `https://${site}/`, name: site }, whereOf(said));
-    // "Open the Lenovo support page in Chrome": not an address, so a search for those words.
-    if (said && !NOT_A_SITE.test(m[1].trim()) && site.split(' ').length <= 8 && !TASKISH.test(site)) return chromeAction({ kind: 'search', query: site }, whereOf(said), { check: true });
+    // "Open the Lenovo support page in Chrome": not an address, so a search for those words. Never a
+    // page object or a pick on a page ("open the cheapest one in Chrome": a Chrome task's).
+    const onPage = PAGE_OBJECT.test(m[1].trim()) || PAGE_PICK.test(m[1].trim());
+    if (said && !onPage && !NOT_A_SITE.test(m[1].trim()) && site.split(' ').length <= 8 && !TASKISH.test(site)) return chromeAction({ kind: 'search', query: site }, whereOf(said), { check: true });
   }
   return null;
 }

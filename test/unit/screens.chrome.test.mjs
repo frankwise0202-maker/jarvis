@@ -10,8 +10,11 @@ import { CHROME_SITES, addressAction, chromeLine, matchChromeCommand, normalizeC
 import { classifyAddress } from '../../extension/src/background/address.js';
 import { matchScreenCommand } from '../../src/lib/screen-commands.js';
 
-const target = (t) => {
-  const m = matchChromeCommand(t);
+// The router's state with a newest reply that has links (and one without).
+const LINKS = { reply: { links: [{ url: 'https://example.com/a', title: 'A' }, { url: 'https://example.com/b', title: 'B' }] } };
+const NO_LINKS = { reply: { links: [] } };
+const target = (t, state = LINKS) => {
+  const m = matchChromeCommand(t, state);
   return m && m.do === 'chrome-open' ? { ...m.target, where: m.where, check: m.check } : m && m.do;
 };
 
@@ -43,7 +46,7 @@ test('the owner\'s words: "pull this up in Chrome", links, Google, sites', () =>
 test('"in my Chrome", "in a normal tab": the owner\'s usual window, never the Jarvis window', () => {
   assert.equal(matchChromeCommand('pull this up in my Chrome').where, 'mine');
   assert.equal(matchChromeCommand('open it in a normal tab').where, 'mine');
-  assert.equal(matchChromeCommand('open the second link in my browser').where, 'mine');
+  assert.equal(matchChromeCommand('open the second link in my browser', LINKS).where, 'mine');
   assert.equal(matchChromeCommand('search for heat pipes in my normal Chrome').where, 'mine');
   assert.equal(matchChromeCommand('pull this up in Chrome').where, 'auto');
   assert.equal(matchChromeCommand('open that in a new tab').where, 'auto');
@@ -93,6 +96,47 @@ test('not Chrome: no browser word, questions, statements, tasks for Jarvis for C
   ];
   for (const t of negatives) assert.equal(matchChromeCommand(t), null, `"${t}"`);
   assert.ok(matchScreenCommand('open the link on my other screen'), 'Screens takes it');
+});
+
+test('lead decision D1: page words are Jarvis for Chrome\'s tasks; "open the Nth link" only with reply links', () => {
+  // Sentences that start with "click": never this matcher's (in a Chrome context they are tasks).
+  for (const t of ['click the first result', 'click the first link', 'click on the second link', 'click add to cart', 'Click the cheapest one in Chrome']) {
+    assert.equal(matchChromeCommand(t, LINKS), null, `"${t}"`);
+  }
+  // Page objects: never a Google search, never "this".
+  for (const t of [
+    'open the cheapest one in Chrome',
+    'open the second result in Chrome',
+    'open the first result',
+    'open the first result in Chrome',
+    'open that result in Chrome',
+    'open the second item in Chrome',
+    'open this product in Chrome',
+    'open the listing in Chrome',
+    'go to the cart in Chrome',
+    'open the cheapest 4K monitor in Chrome',
+    'google the cheapest one',
+    'search for that result in Chrome',
+    'look up the first result on Google',
+    'search this site for USB-C chargers in Chrome',
+    'scroll down in Chrome',
+    'pull that one up in Chrome',
+  ]) {
+    assert.equal(matchChromeCommand(t, LINKS), null, `"${t}"`);
+  }
+  // "Open the second link": the newest reply's link when it has links; otherwise declined (in a
+  // Chrome context it becomes a task).
+  assert.deepEqual(target('open the second link', LINKS), { kind: 'link', ordinal: 2, where: 'auto', check: false });
+  assert.equal(matchChromeCommand('open the second link', NO_LINKS), null, 'no links in the newest reply');
+  assert.equal(matchChromeCommand('open the second link'), null, 'no reply state: declined');
+  assert.equal(matchChromeCommand('open the second link in Chrome', NO_LINKS), null, 'never a search for "second link"');
+  assert.deepEqual(target('open the second link', { reply: { links: 3 } }), { kind: 'link', ordinal: 2, where: 'auto', check: false }, 'a count of links works too');
+  // Still Chrome's: searches that merely contain such words, sites, "this".
+  assert.deepEqual(target('google best USB-C chargers'), { kind: 'search', query: 'best usb-c chargers', where: 'auto', check: true });
+  assert.deepEqual(target('search for top deals on laptops in Chrome'), { kind: 'search', query: 'top deals on laptops', where: 'auto', check: true });
+  assert.equal(target('open Best Buy in Chrome').kind, 'site');
+  assert.equal(target('pull this up in Chrome').kind, 'this');
+  assert.equal(target('open this page in Chrome').kind, 'this');
 });
 
 test('normalization keeps addresses and model names whole', () => {
