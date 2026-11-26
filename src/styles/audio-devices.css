@@ -273,3 +273,27 @@
 .standby-tip[hidden] {
   display: none;
 }
+
+/* The slot: the Microphone and speaker card, then the Always on card (A10), spaced like the cards around it
+   (.set-card + .set-card). */
+.ad-slot {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.set-card + .ad-slot,
+.ad-slot + .set-card {
+  margin-top: var(--sp-3);
+}
+
+.ad-slot > .set-card + .set-card {
+  margin-top: 0;
+}
+
+.ao-told-title {
+  margin: 0;
+}
+
+.ao-told .icon {
+  color: var(--text-4);
+}

@@ -3593,6 +3593,14 @@ export async function startApp(rootEl) {
               tts,
               createCapture: (o) => createStandbyCapture({ ...o, ...captureOn('wake') }),
               createWakeWord: () => (wakeStubAllowed() ? createWakeWordStub() : createWakeWord()),
+              // A10's card: is George ready to speak (from the home base, or on this Mac)?
+              george: () => {
+                const st = getSettings();
+                if (safe(() => tts.audioStuck(), false)) return { ready: false };
+                if (senses && sensesAllowed && st.homeBaseSpeak === true && safe(() => senses.canSpeak(), false)) return { ready: true, label: 'George (home base)' };
+                if (naturalVoice && st.naturalVoice === true && safe(() => naturalVoice.engine.status().state, 'off') === 'ready') return { ready: true, label: 'George (this Mac)' };
+                return { ready: false };
+              },
             }
           : null,
       // ---- mac-dev ◂

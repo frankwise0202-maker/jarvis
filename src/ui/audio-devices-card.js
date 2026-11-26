@@ -15,6 +15,13 @@
 //     createWakeWord () -> the "Hey Jarvis" client, for the hands-free Test's second step (optional)
 //   card.el · card.sync() · card.destroy()
 //
+//   const always = createAlwaysOnCard({ audio, getSettings, george, notifications, standalone });   (A10, SHOULD)
+//     Settings → Voice, beside it: what keeps Jarvis listening and speaking day and night on this Mac, each line OK
+//     or what to do: the microphone allowed, the chosen microphone connected, the Bluetooth note, on power
+//     (navigator.getBattery), installed as an app, notifications, the wake words, George ready, the recognizer
+//     on the chosen microphone, the hands-free Test's last results, and what a page can't see (told only).
+//     Test ids: always-on, always-on-row (data-check, data-ok: 'true' | 'false' | 'told').
+//
 // Test ids: audio-devices, audio-devices-status, audio-devices-permission, audio-devices-show,
 // audio-devices-facts, audio-devices-setups, audio-setup (data-setup), audio-setup-custom, audio-input,
 // audio-output, audio-test-mic, audio-test-speaker, audio-compare, audio-test-handsfree, audio-test-status,
@@ -25,8 +32,10 @@
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
 import {
+  ALWAYS_ON_TOLD,
   AUDIO_NOTES,
   AUDIO_SETUPS,
+  alwaysOnChecks,
   BLUETOOTH_FACTS,
   CHROME_MIC_SETTINGS,
   HANDS_FREE_TEST_KEY,
@@ -42,6 +51,8 @@ import {
   setupOf,
 } from '../lib/audio-devices.js';
 import { micPermission, showMyDevices, openMic, recognizerTakesTrack } from '../platform/audio-devices.js';
+import { notifyPermission } from './attention.js';
+import { isStandalone } from '../platform/env.js';
 import { levelFromSamples } from '../platform/voice/natural/audio-out.js';
 import '../styles/audio-devices.css';
 
@@ -629,6 +640,88 @@ export function createAudioDevicesCard({ audio, stt = null, tts = null, createCa
     destroy() {
       destroyed = true;
       stopRunning();
+      for (const off of offs) safe(() => typeof off === 'function' && off());
+    },
+  };
+}
+
+// ---- A10 (SHOULD): the "Always on" card ------------------------------------------------------------------------
+
+export function createAlwaysOnCard({ audio, getSettings = () => ({}), george = () => null, notifications = notifyPermission, standalone = isStandalone, storage = null, scope = globalThis } = {}) {
+  if (!audio || !safe(() => audio.supported(), false)) return null;
+  const store = storage || { get: (k) => safe(() => localStorage.getItem(k), null) };
+  let destroyed = false;
+  let mic = 'unknown';
+  let power = null;
+  let battery = null;
+  const offs = [];
+  const list = h('ul', { class: 'ad-results ao-list', attrs: { 'aria-label': 'Always on' } });
+  const told = h('ul', { class: 'ad-results ao-told', attrs: { 'aria-label': 'What Jarvis can’t check' } }, ...ALWAYS_ON_TOLD.map((t) => h('li', { class: 'ad-result', attrs: { 'data-testid': 'always-on-row', 'data-check': 'told', 'data-ok': 'told' } }, icon('info', { size: 14 }), h('span', { text: t }))));
+  const el = h(
+    'div',
+    { class: 'set-card ad-card ao-card', attrs: { 'data-testid': 'always-on' } },
+    h('div', { class: 'set-card-title' }, icon('moon', { size: 16 }), h('span', { text: 'Always on' })),
+    h('p', { class: 'set-help set-help--card', text: 'What keeps Jarvis listening and speaking on this Mac day and night. Each line is checked now, or says what to do.' }),
+    list,
+    h('p', { class: 'set-label ao-told-title', text: 'Jarvis can’t see these: check them once' }),
+    told,
+  );
+
+  function render() {
+    if (destroyed) return;
+    const rows = alwaysOnChecks({
+      mic,
+      plan: safe(() => audio.plan(), null),
+      devices: safe(() => audio.devices(), null),
+      power,
+      installed: !!safe(() => standalone(), false),
+      notifications: safe(() => notifications(), 'unsupported'),
+      settings: safe(() => getSettings() || {}, {}),
+      george: safe(() => george(), null),
+      trackUse: safe(() => audio.trackUse(), null),
+      takesTrack: recognizerTakesTrack(scope),
+      test: store.get(HANDS_FREE_TEST_KEY),
+    });
+    list.replaceChildren(
+      ...rows.map((r) => h('li', { class: 'ad-result', attrs: { 'data-testid': 'always-on-row', 'data-check': r.check, 'data-ok': r.ok === null ? 'unknown' : String(r.ok) } }, icon(r.ok === true ? 'check' : r.ok === false ? 'alert' : 'info', { size: 14 }), h('span', { text: r.text }))),
+    );
+  }
+
+  offs.push(safe(() => audio.subscribe(() => render()), null));
+  micPermission(scope).then((p) => {
+    mic = p;
+    render();
+  });
+  try {
+    const nav = scope.navigator;
+    if (nav && typeof nav.getBattery === 'function') {
+      nav
+        .getBattery()
+        .then((b) => {
+          if (destroyed || !b) return;
+          battery = b;
+          power = !!b.charging;
+          const onCharge = () => {
+            power = !!b.charging;
+            render();
+          };
+          b.addEventListener('chargingchange', onCharge);
+          offs.push(() => b.removeEventListener('chargingchange', onCharge));
+          render();
+        })
+        .catch(() => {});
+    }
+  } catch {
+    /* no battery API: the line says so */
+  }
+  render();
+
+  return {
+    el,
+    sync: () => render(),
+    destroy() {
+      destroyed = true;
+      battery = null;
       for (const off of offs) safe(() => typeof off === 'function' && off());
     },
   };

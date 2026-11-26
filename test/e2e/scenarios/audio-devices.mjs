@@ -18,6 +18,9 @@
 //                             tried again in the background on a Mac
 //   standby-muted             (A12, SHOULD) the microphone's mute button: 10 s of exact digital silence makes
 //                             the pill ask "MICROPHONE MUTED?"; the first sound puts it back
+//   mac-always-on-card        (A10, SHOULD) Settings → Voice → Always on: each line checked (the microphone, the
+//                             speakerphone, power, installed, notifications, wake words, George, the recognizer, the
+//                             hands-free Test) or told (what a page can't see)
 
 import { tid } from '../harness.mjs';
 import { CORE_URL } from '../core-fakes.mjs';
@@ -346,6 +349,41 @@ export default [
         t.assert(await t.page.evaluate(() => document.hidden), 'still hidden');
         await setHidden(t.page, false);
       });
+    },
+  },
+  {
+    name: 'mac-always-on-card',
+    title: 'Mac, Settings → Voice → Always on (A10): the microphone allowed, the speakerphone connected and only speaking, on power, not installed, notifications off, two claps on, George ready, the recognizer not checked yet, the last hands-free Test; and the four lines a page can’t check',
+    device: 'mac',
+    seed: { settings: { ...SETUP1, ...GEORGE } },
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 90000,
+    async run(t) {
+      await t.newPage({ device: 'mac' });
+      await t.page.addInitScript(installFakeSpeech, { noSpeechMs: 8000 });
+      await t.page.addInitScript(installFakeMic, {});
+      await t.page.addInitScript(installAudioFakes, {});
+      await t.page.addInitScript(() => {
+        localStorage.setItem('jarvis.handsFreeTest.v1', JSON.stringify({ at: Date.now(), hiddenWords: true, selfTrigger: 'failed', heardSpeaker: true }));
+        Object.defineProperty(navigator, 'getBattery', { configurable: true, value: () => Promise.resolve({ charging: true, level: 1, addEventListener() {}, removeEventListener() {} }) });
+      });
+      await t.goto('/');
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'the home base’s senses read' });
+      await (await t.visible('settings-button')).click();
+      const card = await t.visible('always-on', { message: 'Settings → Voice has Always on' });
+      await card.scrollIntoViewIfNeeded();
+      const rows = () => t.page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll('[data-testid="always-on"] [data-testid="always-on-row"]')).filter((r) => r.dataset.check !== 'told').map((r) => [r.dataset.check, r.dataset.ok])));
+      await t.waitFor(async () => (await rows()).power === 'true' && (await rows()).mic === 'true', { timeout: 8000, message: async () => `the checks (${JSON.stringify(await rows())})` });
+      const r = await rows();
+      t.assert(r.device === 'true' && r.bluetooth === 'true', `The speakerphone connected, and only speaking (${JSON.stringify(r)})`);
+      t.assert(r.installed === 'false' && r.notifications === 'false', `Not installed, notifications off: what to do (${JSON.stringify(r)})`);
+      t.assert(r.wake === 'true' && r.george === 'true', `Two claps on, George ready (${JSON.stringify(r)})`);
+      t.assert(r.recognizer === 'unknown', `The recognizer not checked yet (${JSON.stringify(r)})`);
+      t.assert(r['test-hidden'] === 'true' && r['test-self'] === 'false' && r['test-speaker'] === 'true', `The last hands-free Test (${JSON.stringify(r)})`);
+      const told = await t.page.evaluate(() => Array.from(document.querySelectorAll('[data-testid="always-on"] [data-check="told"]')).map((x) => x.textContent));
+      t.assert(told.length === 4 && told.some((x) => /Prevent automatic sleeping on power adapter when the display is off/.test(x)) && told.some((x) => /Always keep these sites active/.test(x)), `What a page can’t check (${told.join(' | ')})`);
+      t.assert((await A(t)).gets.length === 0, 'No microphone was opened');
+      await t.screenshot('1-always-on');
     },
   },
   {

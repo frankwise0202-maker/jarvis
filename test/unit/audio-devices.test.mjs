@@ -5,7 +5,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ALWAYS_ON_TOLD,
   AUDIO_SETUPS,
+  alwaysOnChecks,
   RECOMMENDED_SETUP,
   SETUP_IDS,
   audioConstraints,
@@ -314,4 +316,51 @@ test('the hands-free Test: the stored shape Voice Mode’s barge-in reads, check
   assert.deepEqual(lines.map((x) => [x.step, x.ok]), [['hidden', false], ['self', false], ['speaker', true]]);
   assert.match(lines[1].text, /interrupting him by voice stays off/);
   assert.deepEqual(handsFreeLines(null), []);
+});
+
+test('A10, the "Always on" card: each line checked from what the page can see, or said when it can’t', () => {
+  const l = listAudioDevices(MAC_BT);
+  const chosen1 = { input: { id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)' }, output: { id: 'sp-out', label: 'Desk Speakerphone (Bluetooth)' } };
+  const good = alwaysOnChecks({
+    mic: 'granted',
+    plan: planSetup('speaker-mac-mic', l, chosen1),
+    devices: l,
+    power: true,
+    installed: true,
+    notifications: 'granted',
+    settings: { wakeClap: true, wakeWord: true },
+    george: { ready: true, label: 'George (home base)' },
+    trackUse: { used: true },
+    takesTrack: true,
+    test: { at: 1, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true },
+  });
+  const by = (rows) => Object.fromEntries(rows.map((r) => [r.check, r.ok]));
+  assert.deepEqual(by(good), { mic: true, device: true, bluetooth: true, power: true, installed: true, notifications: true, wake: true, george: true, recognizer: true, 'test-hidden': true, 'test-self': true, 'test-speaker': true });
+  assert.match(good.find((r) => r.check === 'device').text, /Listening on MacBook Pro Microphone; speaking on Desk Speakerphone/);
+
+  const chosen2 = { input: { id: 'sp-mic', label: 'Desk Speakerphone (Bluetooth)' }, output: chosen1.output };
+  const bad = alwaysOnChecks({
+    mic: 'prompt',
+    plan: planSetup('speakerphone-both', l, chosen2, { output: true }),
+    devices: l,
+    power: false,
+    installed: false,
+    notifications: 'default',
+    settings: { wakeClap: false, wakeWord: false },
+    george: { ready: false },
+    trackUse: null,
+    takesTrack: false,
+    test: null,
+  });
+  const b = by(bad);
+  assert.deepEqual([b.mic, b.device, b.bluetooth, b.power, b.installed, b.notifications, b.wake, b.george, b.recognizer, b.test], [false, false, false, false, false, false, false, false, false, null]);
+  assert.match(bad.find((r) => r.check === 'mic').text, /Allow on every visit/);
+  assert.match(bad.find((r) => r.check === 'bluetooth').text, /phone call/);
+  assert.match(bad.find((r) => r.check === 'recognizer').text, /set Chrome’s microphone to Desk Speakerphone/);
+  // Nothing chosen, no battery API: said, not judged.
+  const none = by(alwaysOnChecks({ mic: 'granted', plan: planSetup('', l, {}), devices: l, power: null, settings: {} }));
+  assert.equal(none.device, null);
+  assert.equal(none.power, null);
+  assert.equal('recognizer' in none, false, 'no question microphone chosen: nothing to say about it');
+  assert.ok(ALWAYS_ON_TOLD.some((t) => /Prevent automatic sleeping on power adapter when the display is off/.test(t)) && ALWAYS_ON_TOLD.some((t) => /Always keep these sites active/.test(t)));
 });
