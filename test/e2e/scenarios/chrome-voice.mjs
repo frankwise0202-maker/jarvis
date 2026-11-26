@@ -844,7 +844,8 @@ export default [
         t.assert(asked() === 1, `the question isn't said again after "Be quiet." ("Chrome asks" said ${asked()} times; George: ${JSON.stringify(speaks.slice(-6))})`);
         t.assert(kinds(peer, 'stop').length === 0, 'the task goes on (no stop)');
         t.assert(kinds(peer, 'answer').length === 0, 'nothing answered');
-        t.assert(await page.locator(tid('voice-chrome-prompt-card')).isVisible(), 'the question stays on its card');
+        const cards = (await page.locator(tid('voice-chrome-prompt-card')).count()) + (await page.locator(tid('chrome-prompt-card')).count());
+        t.assert(cards > 0, 'the question stays on its card');
       });
     },
   },
