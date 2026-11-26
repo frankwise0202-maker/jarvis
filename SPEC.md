@@ -5040,6 +5040,18 @@ the focus), it tries again when this window gets it; reading refused, it leaves 
 unlink: it sends `unlinked {}` first if it can (the app waits 5 s at most), then forgets its copy; the other side
 forgets its copy when the message arrives.
 
+**The code stays out of the chat** (REDTEAM-LINK-5, CHROME-LINK-R2-5). `containsLinkSecret(text)` (chrome-link.js)
+spots a link code (the fixed base64url start of `{"v":1,"core":"`, and a code's worth after it) or this device's link
+key (and K1 while a rekey is unconfirmed). Such words never start a turn, whatever surface they were typed in: app.js
+`send()`, where every turn starts, refuses them with the composer's line ("That’s the Jarvis for Chrome link code: it
+stays out of the chat. Paste it in Jarvis for Chrome’s side panel."). The chat box refuses first (the text stays in
+the box); Voice Mode's Type field says it (`startTurnForVoice` throws it, so Voice Mode apologises with it); a
+hologram's or blueprint's field and Optics' Ask field show it (`sendFromViewer`, `lookFromOptics`, `askFromOptics`).
+A key-shaped text (`containsApiKey`) is refused the same way ("That looks like an API key, so it stays out of the
+chat. To send it to Claude anyway, use the chat box."), except from the chat box, which asks first and passes
+`keyOk` once the owner chose **Send anyway** (a Retry of such a message is refused too: send it again from the chat
+box). A conversation holding either stays out of backups and sync (backup.js `mentionsKey`).
+
 The app keeps `{ v: 1, core, key, linkedAt, extSeenAt, madeAt }` (plus `prev`, `rekeyAt`, `prevSeenAt` while a rekey
 is unconfirmed) in localStorage `jarvis.chromeLink.v1`
 (`linkedAt` is null while it waits for the extension; `extSeenAt`, its last sign of life, is written at most every
