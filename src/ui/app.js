@@ -94,6 +94,11 @@ import { createStandbyCapture } from '../platform/wake/capture.js';
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';
+import { createWakePending } from '../lib/wake/pending.js';
+import { setPausesWhenHidden as naturalPausesWhenHidden } from '../platform/voice/natural/natural-stream.js';
+import { createStandbyLock } from '../platform/standby-lock.js';
+import { bargeInAllowed, readHandsFreeTest } from '../lib/hands-free.js';
+import { setupOf } from '../lib/audio-devices.js';
 // v8.1: one router for what the owner says (SPEC §30), and each track's commands in its own module.
 import { createRouter, registerTodayCommands, emptyState, REOPEN_ACTIONS } from '../lib/command-router.js';
 import { register as registerMacCommands } from './commands/mac.js';
@@ -101,6 +106,8 @@ import { register as registerAudioCommands } from './commands/audio.js';
 import { register as registerTourCommands } from './commands/tours.js';
 import { register as registerVoiceCommands } from './commands/voice.js';
 import { register as registerChromeVoiceCommands } from './commands/chrome-voice.js';
+import { createChromeVoice, voiceAdapter } from './chrome-task.js'; // v8.1 chrome-voice
+import { notify as notifyAttention, closeNotify } from './attention.js'; // v8.1 chrome-voice
 import { register as registerWindowCommands } from './commands/windows.js';
 import { register as registerOpticsCommands } from './commands/optics.js';
 import { register as registerChromeCommands } from './commands/chrome.js';
@@ -1474,6 +1481,7 @@ export async function startApp(rootEl) {
   // send() reports problems with toasts or by opening Settings, both hidden behind the overlay,
   // so Voice Mode gets errors it can say out loud instead.
   let voiceApi = null; // the open Voice Mode: viewers opened from it route words and 2D requests through it
+  let voiceOwnerStarted = false; // v8.1 (A1): the owner opened it (a tap, a key, a wake): it may go on hidden
   let voiceInfo = null; // its listening state, mirrored on the mic button of a hologram viewer over it
   // The hologram last shown over this Voice Mode ({ segment, conversationId, turnId }): once its
   // viewer is closed, a command for it ("expand it", "show the separator") opens it again, free.
@@ -1642,7 +1650,8 @@ export async function startApp(rootEl) {
    * Open Voice Mode. Call synchronously inside a click/keydown (iOS mic and speech rules). The wake
    * routine (Standby, v7.4) opens it without a tap: { wake } carries the routine's hooks.
    */
-  function openVoice({ wake = null } = {}) {
+  function openVoice({ wake = null, ownerStarted = true } = {}) {
+    voiceOwnerStarted = ownerStarted !== false; // every way it opens today is the owner's own (a tap, a key, a wake)
     refreshCameraPermission();
     if (senses && !state.demo) safe(() => senses.prime({ warm: true })); // hearing / voice through the home base: a fresh reading, warmed up
     checkVoiceAuto(); // v7.8: George from the home base, on once by itself (when it couldn't be asked at launch)
@@ -1677,6 +1686,9 @@ export async function startApp(rootEl) {
         // Standby (v7.4): "Jarvis, standby" / "go to sleep" closes Voice Mode into Standby.
         standby: state.demo ? null : {},
         wake,
+        // v8.1 (A1, SPEC §28.1): on a computer, a session the owner started goes on while Jarvis is hidden.
+        listenWhileHidden: () => handsFreeHidden(),
+        ...devVoiceOptions(), // v8.1 tests: a shorter hold
         // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
         // recognizer may hold the mic, so a second stream must be tested on a device first.
         createMicBands: safe(() => isIOS(), false) ? null : createMicBands,
@@ -1714,6 +1726,7 @@ export async function startApp(rootEl) {
         onClose: (info) => {
           voiceApi = null;
           voiceInfo = null;
+          safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts go to notifications
           lastVoiceHologram = null;
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
           const reason = info && info.reason;
@@ -1733,6 +1746,7 @@ export async function startApp(rootEl) {
           updateAll();
         },
       });
+      safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts and cards come to Voice Mode
     } catch (err) {
       console.error('[jarvis] voice mode failed:', err);
       toast('Voice mode couldn’t start in this browser.', { level: 'warn' });
@@ -1746,6 +1760,44 @@ export async function startApp(rootEl) {
   // time of day): the routine asks Claude nothing; only what the owner asks next costs. On a phone
   // listening pauses while Jarvis is not on screen; on a Mac it goes on in a background tab.
   const phoneLike = safe(() => isIOS() || isAndroid() || (isTouch() && window.matchMedia('(max-width: 1024px)').matches), false);
+  // v8.1 (A3, SPEC §26 note): on a computer the voices go on while Jarvis is hidden, so their watchdogs count that
+  // time too (a stall there hands over in about 4 s); an iPhone or iPad keeps today's rule (iOS pauses them).
+  safe(() => deviceTts.setPausesWhenHidden(phoneLike));
+  safe(() => naturalPausesWhenHidden(phoneLike));
+
+  /**
+   * v8.1 (A1, SPEC §28.1): Voice Mode goes on listening and speaking while Jarvis is hidden: a computer, Settings →
+   * Voice → Wake Jarvis → "Keep talking when Jarvis is in the background (Mac)" on (the default), and a session the
+   * owner started. Nothing else ever opens the microphone for questions.
+   */
+  function handsFreeHidden() {
+    return !phoneLike && safe(() => getSettings().handsFreeBackground !== false, false) && voiceOwnerStarted;
+  }
+
+  /**
+   * v8.1 dev and test override ('jarvis.dev.voice' JSON { holdCapMs }): a held session's cap, shorter only (2 s to
+   * its 2 minutes). On localhost it also gives tests window.__jarvisVoice { hold(reason), release(reason) } for the
+   * open Voice Mode (nothing in the app holds a session yet besides a tour).
+   */
+  function devVoiceOptions() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('jarvis.dev.voice') || 'null');
+      const v = raw && typeof raw === 'object' ? Number(raw.holdCapMs) : Number.NaN;
+      if (!Number.isFinite(v)) return {};
+      const host = location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') {
+        window.__jarvisVoice = { hold: (r) => !!voiceApi && safe(() => (voiceApi.hold(r), true), false), release: (r) => !!voiceApi && safe(() => (voiceApi.release(r), true), false) };
+      }
+      return { holdCapMs: Math.min(120000, Math.max(2000, v)) };
+    } catch {
+      return {};
+    }
+  }
+
+  // v8.1 (lead decision D3): the lines said before the wake greeting. wakePending.add(fn, { waits }):
+  // fn() -> a line or null, asked at each wake; waits: it asks something and waits for the answer (Chrome's
+  // question), said first. The command modules get it as deps.wakePending (src/lib/wake/pending.js).
+  const wakePending = createWakePending();
   standby = createStandby({
     getSettings,
     onSettingsChange,
@@ -1761,6 +1813,14 @@ export async function startApp(rootEl) {
     unlock: (o) => safe(() => unlockSpeech(o)), // v7.8.1: { tap: false } when Standby is entered again
     pauseWhenHidden: phoneLike,
     isIOS: safe(() => isIOS(), false),
+    // v8.1 (A9, SPEC §28.5): one Jarvis per Mac listens on Standby (a Web Lock; "Use this window" moves it).
+    createLock: (onChange) => createStandbyLock({ onChange }),
+    // v8.1 (A8, SPEC §28.4): barge-in. In setup 1 or 3, once the hands-free Test's self-trigger step passed,
+    // Standby's microphone and "Hey Jarvis" stay on through a woken session; what they hear goes to Voice Mode.
+    bargeIn: {
+      keep: () => !phoneLike && safe(() => bargeInAllowed({ computer: true, setup: setupOf(getSettings()), test: readHandsFreeTest(localStorage) }), false),
+      detected: ({ trigger }) => !!voiceApi && safe(() => voiceApi.bargeIn(trigger) === true, false),
+    },
   });
 
   /** Tests on localhost only: a stand-in for the "Hey Jarvis" worker (no download, said on demand). */
@@ -2002,9 +2062,11 @@ export async function startApp(rootEl) {
         briefing: () => wakeBriefing(),
         returnToStandby: () => getSettings().wakeReturn !== false,
         canSleep: () => !musicPlayer.isPlaying(),
+        pending: () => wakePending.lines(), // v8.1 (D3): said before the greeting
         // Woken in a background tab (a Mac): the greeting is said out loud; a notification brings Jarvis forward.
+        // v8.1 (A1): hands-free on, Voice Mode shows its own ("Jarvis is listening. Ask away, …") and listens there.
         onAwake: ({ line, hidden }) => {
-          if (hidden) safe(() => missionFinished({ title: 'Jarvis is awake', summary: `${line} Switch to Jarvis to answer.` }));
+          if (hidden && !handsFreeHidden()) safe(() => missionFinished({ title: 'Jarvis is awake', summary: `${line} Switch to Jarvis to answer.` }));
         },
       },
     });
@@ -4137,7 +4199,8 @@ export async function startApp(rootEl) {
     // The chat's Speak reading an answer aloud: "stop" typed (or said in a viewer's field) stops it.
     if (surface !== 'voice') s.speaking = !!state.speaking;
     // ---- voice ◂
-    // ---- chrome-voice ▸
+    // ---- chrome-voice ▸ (s.chrome: the link, the latest task, the Chrome context)
+    if (chromeVoice) s.chrome = { ...s.chrome, ...safe(() => chromeVoice.state(), {}) };
     // ---- chrome-voice ◂
     // ---- windows ▸ (s.windows, s.reply.links)
     // The windows Jarvis opened (the one with the focus marked); a hologram's window carries its parts and
@@ -4439,6 +4502,10 @@ export async function startApp(rootEl) {
             safe(() => stopSpeakingNow());
             break;
           // 'tour' (tours) and 'chrome' (chrome-voice) are added by their builders here.
+          case 'chrome':
+            // v8.1 chrome-voice: a bare "stop" stops the Chrome task too (its line is said: "Chrome is stopping").
+            safe(() => chromeVoice && chromeVoice.stopFromVoice());
+            break;
           default:
             break;
         }
@@ -4450,6 +4517,40 @@ export async function startApp(rootEl) {
    * Each track's commands, registered once (contract (b)): every module gets the shared deps plus its
    * own, added in its own call below (keep one line between calls).
    */
+  // ---- chrome-voice ▸ Jarvis for Chrome by voice (v8.1 G4, G5): the controller and its cards in the chat
+  // (src/ui/chrome-task.js). Tasks, prompts and the final answer reach Jarvis here: Voice Mode says them
+  // (api.prompt, api.chrome), the chat shows the cards above the composer, and with Voice Mode closed or
+  // on Standby a prompt is a notification.
+  const chromeDock = h('div', { class: 'chrome-dock', attrs: { 'data-testid': 'chrome-dock' } });
+  main.insertBefore(chromeDock, composer.el);
+  const chromeVoice = safe(
+    () =>
+      createChromeVoice({
+        link: () => chromeLinkForVoice(),
+        voice: () => voiceAdapter(voiceApi && safe(() => isVoiceModeOpen(), false) ? voiceApi : null),
+        dock: chromeDock,
+        notify: (n) => notifyAttention(n),
+        closeNotice: (tag) => closeNotify(tag),
+        focusApp: () => safe(() => window.focus()),
+        toast: (msg, opts) => toast(msg, opts),
+        hidden: () => !!document.hidden,
+      }),
+    null,
+  );
+  /** app.chromeLink (contract (f)): chrome-relay's installChromeLink made it (`chromeLink`), or null (demo, a phone). */
+  function chromeLinkForVoice() {
+    return chromeLink || null;
+  }
+  // Tests on localhost only ('jarvis.dev.chromeVoice' = '1'): window.__jarvisChromeVoice.question(spec) asks an owner
+  // question in the open Voice Mode (the chrome-voice-stack E2E: a stand-in for a tour's decision beside a prompt).
+  safe(() => {
+    const host = location.hostname;
+    if ((host === 'localhost' || host === '127.0.0.1') && localStorage.getItem('jarvis.dev.chromeVoice') === '1') {
+      window.__jarvisChromeVoice = { question: (spec) => !!voiceApi && safe(() => !!voiceApi.question(spec), false) };
+    }
+  });
+  // ---- chrome-voice ◂
+
   function registerCommandModules() {
     const shared = {
       getSettings,
@@ -4459,6 +4560,7 @@ export async function startApp(rootEl) {
       routerState: (surface, local) => routerState(surface, local),
       phone: phoneLike,
       demo: state.demo,
+      wakePending, // v8.1 (D3): wakePending.add(fn, { waits }) -> remove: a line before the wake greeting
     };
     const register = (name, fn, deps) => {
       try {
@@ -4476,7 +4578,7 @@ export async function startApp(rootEl) {
     // voice (src/ui/commands/voice.js):
     register('voice', registerVoiceCommands, { ...shared, ...voiceCommandDeps() });
     // chrome-voice (src/ui/commands/chrome-voice.js):
-    register('chrome-voice', registerChromeVoiceCommands, { ...shared });
+    register('chrome-voice', registerChromeVoiceCommands, { ...shared, chromeVoice: () => chromeVoice });
     // windows (src/ui/commands/windows.js):
     register('windows', registerWindowCommands, { ...shared, screens: screensCtl, tabs: browserTabs, thisInputs: () => thisInputs(), links: () => newestReplyLinks(), closeViewers: () => closeViewers() });
     // optics (src/ui/commands/optics.js):

@@ -51,6 +51,7 @@ import voiceGeorgeStuck from './scenarios/voice-george-stuck.mjs';
 // ---- mac-dev ▸
 // ---- mac-dev ◂
 // ---- mac-hf ▸
+import macHandsFree from './scenarios/mac-handsfree.mjs';
 // ---- mac-hf ◂
 // ---- tour-render ▸
 // ---- tour-render ◂
@@ -60,6 +61,7 @@ import voiceGeorgeStuck from './scenarios/voice-george-stuck.mjs';
 import voiceCommands from './scenarios/voice-commands.mjs';
 // ---- voice ◂
 // ---- chrome-voice ▸
+import chromeVoice from './scenarios/chrome-voice.mjs';
 // ---- chrome-voice ◂
 // ---- windows ▸
 import windowsScenarios from './scenarios/windows.mjs';
@@ -91,6 +93,7 @@ const V81_SCENARIOS = [
   // ---- mac-dev ▸
   // ---- mac-dev ◂
   // ---- mac-hf ▸
+  ...macHandsFree,
   // ---- mac-hf ◂
   // ---- tour-render ▸
   // ---- tour-render ◂
@@ -100,6 +103,7 @@ const V81_SCENARIOS = [
   ...voiceCommands,
   // ---- voice ◂
   // ---- chrome-voice ▸
+  ...chromeVoice,
   // ---- chrome-voice ◂
   // ---- windows ▸
   ...windowsScenarios,

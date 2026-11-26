@@ -8,6 +8,8 @@
 //   player.pauseForMic() pause because the microphone is about to listen (Voice Mode, dictation)
 //   player.subscribe(fn) -> unsubscribe; fn({ id, playing, loading, time, duration, error })
 //   player.state()
+//   player.setSink(id)   v8.1: the speaker previews play on (HTMLMediaElement.setSinkId; '' = the default
+//                        output), with George's: Settings → Voice → Microphone and speaker
 //
 // canStart() -> true | false | 'listening' | 'checking': previews never start while the mic listens,
 // nor while what the owner said waits to be sent (the 2-second check of words from the chat's mic).
@@ -24,11 +26,34 @@ export function createMusicPlayer({ canStart = () => true, onStart = () => {}, c
   let loading = false;
   let error = null;
   let fadeTimer = 0;
+  let sinkId = ''; // v8.1: '' = the default output (nothing is asked of the element)
   const listeners = new Set();
+
+  function applySink(a) {
+    try {
+      if (!a || typeof a.setSinkId !== 'function') return Promise.resolve(false);
+      return Promise.resolve(a.setSinkId(sinkId)).then(
+        () => true,
+        () => false,
+      );
+    } catch {
+      return Promise.resolve(false);
+    }
+  }
+
+  /** v8.1: the speaker previews play on ('' = the default output); kept for the element made later. */
+  function setSink(id) {
+    const next = typeof id === 'string' ? id : '';
+    const same = next === sinkId;
+    sinkId = next;
+    if (!audio || (same && (audio.sinkId || '') === next)) return Promise.resolve(true);
+    return applySink(audio);
+  }
 
   function ensureAudio() {
     if (audio) return audio;
     audio = typeof createAudio === 'function' ? createAudio() : new Audio();
+    if (sinkId) applySink(audio);
     audio.preload = 'none';
     // Fetched without the browser's Apple cookies (CORS, anonymous: Apple's host answers
     // Access-Control-Allow-Origin: *), like the search; set before any src.
@@ -197,6 +222,7 @@ export function createMusicPlayer({ canStart = () => true, onStart = () => {}, c
     },
     isPlaying: () => state().playing,
     state,
+    setSink,
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);

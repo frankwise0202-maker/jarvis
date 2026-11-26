@@ -43,7 +43,8 @@
 //      noStart(u, n)            no 'start' event although audio plays
 //      boundaries: false        (config) no boundary events
 //      cpsFor(u, n) -> cps      (config) this utterance's own speed (default cps)
-//   g  fake.setHidden(true)      document.hidden: audio pauses, nothing new starts
+//   g  fake.setHidden(true)      document.hidden: audio pauses, nothing new starts (iOS)
+//      playsHidden: true         (config) v8.1: a computer instead: audio goes on while hidden (Chrome on a Mac)
 //   h  cancelErrorDelayMs: ms    when cancel()'s 'interrupted'/'canceled' errors arrive
 //      deadEngine: true          nothing ever plays and no event ever fires (each utterance is
 //                                dropped as in d, so `speaking` stays true)
@@ -289,9 +290,14 @@ export function createFakeSpeech(clock, config = {}) {
     for (const [u, code] of victims) setTimeout(() => fire(u, 'error', { error: code }), q.cancelErrorDelayMs || 0);
   };
 
+  /** Quirk g: the page is hidden and audio pauses there (iOS; not with config.playsHidden, a computer). */
+  function paused() {
+    return doc.hidden && !cfg.playsHidden;
+  }
+
   /** Hand the first queued utterance to the platform (after the engine's gap) once nothing holds it. */
   function handOff() {
-    if (handTimer || cur || stuck || !items.length || doc.hidden) return;
+    if (handTimer || cur || stuck || !items.length || paused()) return;
     handTimer = setTimeout(() => {
       handTimer = 0;
       startFront();
@@ -299,7 +305,7 @@ export function createFakeSpeech(clock, config = {}) {
   }
 
   function startFront() {
-    if (cur || stuck || !items.length || doc.hidden) return;
+    if (cur || stuck || !items.length || paused()) return;
     const u = items[0];
     if (u.__rec) u.__rec.reached = true;
     if (u.__dead) {
@@ -344,7 +350,7 @@ export function createFakeSpeech(clock, config = {}) {
 
   function step(c) {
     if (cur !== c) return;
-    if (doc.hidden) {
+    if (paused()) {
       setTimeout(() => step(c), cfg.stepMs); // paused in the background (quirk g)
       return;
     }

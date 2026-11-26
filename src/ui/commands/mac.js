@@ -22,6 +22,7 @@
 /**
  * @param {{ register: Function }} router  the app's command router
  * @param {object} deps  shared: { getSettings, saveSettings, toast, voice() (the open Voice Mode's api,
- *   or null), routerState(surface, local), phone, demo }, plus this module's own (app.js)
+ *   or null), routerState(surface, local), phone, demo, wakePending (v8.1, D3: wakePending.add(fn,
+ *   { waits }) -> remove, a line said before the wake greeting) }, plus this module's own (app.js)
  */
 export function register(router, deps) {}
