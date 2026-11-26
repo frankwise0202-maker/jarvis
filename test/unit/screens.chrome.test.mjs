@@ -203,11 +203,34 @@ test('what Jarvis says', () => {
   assert.equal(chromeLine({ status: 'opened', via: 'window', kind: 'page' }), 'It’s open beside me.');
   assert.equal(chromeLine({ status: 'opened', via: 'jarvis', beside: true }), 'It’s open in the Jarvis window, beside me.');
   assert.equal(chromeLine({ status: 'opened', via: 'jarvis' }), 'It’s open in the Jarvis window.');
-  assert.equal(chromeLine({ status: 'opened', via: 'tab', kind: 'page', fellBack: true }), 'I can’t reach Jarvis for Chrome, so it’s in a normal tab. It’s open in Chrome.');
+  // The link down: the line says where the page went, and never "Jarvis for Chrome" aloud (lead's fix).
+  assert.equal(chromeLine({ status: 'opened', via: 'tab', kind: 'page', fellBack: true }), 'I can’t reach the Jarvis window, so it’s in a normal tab.');
+  assert.equal(chromeLine({ status: 'opened', via: 'window', kind: 'page', fellBack: true }), 'I can’t reach the Jarvis window, so I opened it beside me.', 'placed beside Jarvis (Optics, a tour or the live view on screen)');
+  assert.equal(chromeLine({ status: 'opened', via: 'tab', kind: 'search', words: 'heat pipes', fellBack: true }), 'I can’t reach the Jarvis window, so I’m searching Google for heat pipes in a normal tab.');
+  assert.equal(chromeLine({ status: 'opened', via: 'window', kind: 'search', words: 'heat pipes', fellBack: true }), 'I can’t reach the Jarvis window, so I’m searching Google for heat pipes beside me.');
   assert.equal(chromeLine({ status: 'opened', via: 'tab', kind: 'page', note: 'That reply has 3 links; I opened the first.' }), 'It’s open in Chrome. That reply has 3 links; I opened the first.');
   assert.equal(chromeLine({ status: 'needs_click', via: 'tab', does: 'adds to a cart' }), 'That address looks like it adds to a cart, so it opens only when you click Open.');
   assert.equal(chromeLine({ status: 'needs_click', via: 'jarvis' }), 'That address looks like it does something, so it waits for your click in the Jarvis window.');
-  assert.equal(chromeLine({ status: 'needs_click', via: 'tab', does: 'adds to a cart', fellBack: true }), 'I can’t reach Jarvis for Chrome. That address looks like it adds to a cart, so it opens only when you click Open.', 'the link down: said once, though nothing opened yet');
+  assert.equal(chromeLine({ status: 'needs_click', via: 'tab', does: 'adds to a cart', fellBack: true }), 'I can’t reach the Jarvis window. That address looks like it adds to a cart, so it opens only when you click Open.', 'the link down: said once, though nothing opened yet');
+  // Every line is spoken in Voice Mode: none says "Jarvis for Chrome".
+  for (const o of [
+    { status: 'opened', via: 'jarvis' },
+    { status: 'opened', via: 'jarvis', beside: true },
+    { status: 'opened', via: 'tab', kind: 'page' },
+    { status: 'opened', via: 'window', kind: 'page' },
+    { status: 'opened', via: 'tab', kind: 'page', fellBack: true },
+    { status: 'opened', via: 'window', kind: 'page', fellBack: true },
+    { status: 'opened', via: 'tab', kind: 'search', words: 'x', fellBack: true },
+    { status: 'opened', via: 'window', kind: 'search', words: 'x', fellBack: true },
+    { status: 'needs_click', via: 'jarvis' },
+    { status: 'needs_click', via: 'tab', does: 'adds to a cart', fellBack: true },
+    { status: 'needs_tap' },
+    { status: 'needs_tap', hidden: true },
+    { status: 'closed', count: 1 },
+    { status: 'error', why: 'the Chrome Web Store is off limits' },
+  ]) {
+    assert.doesNotMatch(chromeLine(o), /Jarvis for Chrome/, JSON.stringify(o));
+  }
   assert.equal(chromeLine({ status: 'needs_tap' }), 'Tap Open in Chrome, and it’ll open.');
   assert.equal(chromeLine({ status: 'needs_tap', hidden: true }), 'I couldn’t open it: allow pop-ups for Jarvis once.');
   assert.equal(chromeLine({ status: 'nothing', say: 'There’s nothing to pull up yet.' }), 'There’s nothing to pull up yet.');

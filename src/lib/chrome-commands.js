@@ -309,18 +309,24 @@ export function planChromeOpen(target, { thisTarget = null, links = [] } = {}) {
 export function chromeLine(o) {
   if (!o || typeof o !== 'object') return '';
   const note = o.note ? ` ${o.note}` : '';
-  const fell = o.fellBack ? 'I can’t reach Jarvis for Chrome, so it’s in a normal tab. ' : '';
+  // These lines are spoken: never "Jarvis for Chrome" (a spoken "Jarvis" sits next to barge-in), and the
+  // line says where the page really went (a window beside Jarvis, or a normal tab).
+  const lost = 'I can’t reach the Jarvis window';
   switch (o.status) {
     case 'opened': {
       if (o.via === 'jarvis') return `${o.beside ? 'It’s open in the Jarvis window, beside me.' : 'It’s open in the Jarvis window.'}${note}`;
-      if (o.kind === 'search' && o.words) return `${fell}${o.via === 'window' ? `Searching Google for ${o.words}, beside me.` : `Searching Google for ${o.words}.`}${note}`;
-      if (o.via === 'window') return `${fell}It’s open beside me.${note}`;
-      return `${fell}It’s open in Chrome.${note}`;
+      const beside = o.via === 'window';
+      if (o.kind === 'search' && o.words) {
+        if (o.fellBack) return `${lost}, so I’m searching Google for ${o.words} ${beside ? 'beside me' : 'in a normal tab'}.${note}`;
+        return `${beside ? `Searching Google for ${o.words}, beside me.` : `Searching Google for ${o.words}.`}${note}`;
+      }
+      if (o.fellBack) return `${lost}, so ${beside ? 'I opened it beside me' : 'it’s in a normal tab'}.${note}`;
+      return `${beside ? 'It’s open beside me.' : 'It’s open in Chrome.'}${note}`;
     }
     case 'needs_click':
       if (o.via === 'jarvis') return 'That address looks like it does something, so it waits for your click in the Jarvis window.';
       // The link was down: said here, once, since the page opens only after the click.
-      return `${o.fellBack ? 'I can’t reach Jarvis for Chrome. ' : ''}That address looks like it ${o.does || 'does something'}, so it opens only when you click Open.`;
+      return `${o.fellBack ? `${lost}. ` : ''}That address looks like it ${o.does || 'does something'}, so it opens only when you click Open.`;
     case 'needs_tap':
       return o.hidden ? 'I couldn’t open it: allow pop-ups for Jarvis once.' : 'Tap Open in Chrome, and it’ll open.';
     case 'closed':

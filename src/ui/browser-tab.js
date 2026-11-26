@@ -81,7 +81,7 @@ export function createBrowserTabs(deps = {}) {
   const call = (name, fallback, ...args) => (typeof deps[name] === 'function' ? safe(() => deps[name](...args), fallback) : fallback);
   let card = null; // { el, timer }
   let tabs = []; // [{ win, url }] opened by voice, newest last
-  let saidFallback = false; // "I can't reach Jarvis for Chrome": said once an outage
+  let saidFallback = false; // "I can't reach the Jarvis window": said once an outage
   const prefs = loadPrefs();
 
   function dismiss() {
