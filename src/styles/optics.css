@@ -285,7 +285,34 @@
   pointer-events: none;
 }
 .optics[data-frozen='true'] .optics-liveview-caption,
-.optics[data-liveview='off'] .optics-liveview-caption { display: none; }
+.optics[data-liveview='off'] .optics-liveview-caption,
+.optics[data-liveview-paused='cap'] .optics-liveview-caption,
+.optics[data-liveview-paused='offline'] .optics-liveview-caption { display: none; } /* not watching: no "what he sees now" */
+/* Phones (portrait, sideways, 320 px): the picture keeps the room. One line of caption; only the
+   newest thing Jarvis said, on at most two lines ("+4" says there are more); a tap on it shows the
+   last five. The older lines stay readable to screen readers (clipped, not removed). */
+.optics[data-layout='phone'] .optics-liveview-caption { max-width: calc(100% - var(--safe-left) - var(--safe-right) - 32px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.optics[data-layout='phone'] .optics-liveview-lines { cursor: pointer; }
+.optics[data-layout='phone'] .optics-liveview:not([data-expanded='true']) .optics-liveview-line:not(.is-newest) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.optics[data-layout='phone'] .optics-liveview:not([data-expanded='true']) .optics-liveview-line.is-newest .optics-liveview-text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.optics[data-layout='phone'] .optics-liveview:not([data-expanded='true']) .optics-liveview-lines[data-more]:not([data-more='']) { padding-right: 26px; }
+.optics[data-layout='phone'] .optics-liveview:not([data-expanded='true']) .optics-liveview-lines[data-more]:not([data-more=''])::after {
+  content: attr(data-more);
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
 
 /* ---- control deck (the one blurred layer while live) -------------------------------------------- */
 .optics-deck {
@@ -558,6 +585,10 @@
   .optics:not([data-frozen='true']) .optics-watch { right: calc(var(--live-col) + var(--safe-right) + 16px); }
   .optics:not([data-frozen='true']) .optics-liveview,
   .optics:not([data-frozen='true']) .optics-liveview-caption { right: calc(var(--live-col) + var(--safe-right) + 16px); }
+  /* Held sideways the picture is short: the panel keeps to the top-left corner, and the caption to the
+     picture's side of the key column. */
+  .optics:not([data-frozen='true']) .optics-liveview { right: auto; width: min(340px, calc(100vw - var(--live-col) - var(--safe-right) - var(--safe-left) - 32px)); }
+  .optics[data-layout='phone']:not([data-frozen='true']) .optics-liveview-caption { max-width: calc(100% - var(--live-col) - var(--safe-right) - var(--safe-left) - 32px); }
   .optics[data-frozen='true'] .optics-liveview { right: calc(var(--side-w) + var(--safe-right) + 16px); }
   .optics-liveview-caption { bottom: 12px; }
   /* Four keys in the column: Live view takes the next line when they don't fit. */

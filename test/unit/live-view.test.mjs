@@ -17,6 +17,7 @@ import {
   liveBackoff,
   liveMeterText,
   liveResumeShownAt,
+  liveSpentText,
   nextLiveDelay,
 } from '../../src/lib/live-view.js';
 import { LIVE_SCHEMA, LIVE_SYSTEM, runLiveLook } from '../../src/engine/live.js';
@@ -573,6 +574,20 @@ test('liveMeterText: "LIVE VIEW · 12 min · 9¢ this hour · limit $1"', () => 
   assert.equal(liveMeterText({ elapsedMs: MIN, spentUsd: 0.1, capUsd: 2.5 }), 'LIVE VIEW · 1 min · 10¢ this hour · limit $2.50');
   assert.equal(liveMeterText({ elapsedMs: -5, spentUsd: Number.NaN }), 'LIVE VIEW · 0 min · 0¢ this hour · limit $1');
   assert.equal(liveMeterText(), 'LIVE VIEW · 0 min · 0¢ this hour · limit $1');
+});
+
+test('liveMeterText at the limit: "$1.00" from 99.5¢ (never "100¢ this hour · limit $1"), 99¢ below it', () => {
+  // Paused at the limit the hour is between about 99.986¢ and $1: formatUsd alone would say "100¢".
+  for (const spentUsd of [0.995, 0.9996, 0.99986, 0.99999, 1]) {
+    assert.equal(liveMeterText({ elapsedMs: 5 * MIN, spentUsd, capUsd: 1 }), 'LIVE VIEW · 5 min · $1.00 this hour · limit $1', String(spentUsd));
+    assert.equal(liveSpentText(spentUsd), '$1.00', String(spentUsd));
+  }
+  assert.equal(liveSpentText(0.994), '99¢');
+  assert.equal(liveSpentText(0.99), '99¢');
+  assert.equal(liveSpentText(1.0812), '$1.08', 'a question answered at the limit');
+  assert.equal(liveSpentText(0.09), '9¢');
+  assert.equal(liveSpentText(0), '0¢');
+  assert.equal(liveSpentText(Number.NaN), '0¢');
 });
 
 test('liveResumeShownAt: the time named in "It can go on at 2:41 PM" is rounded up, so Resume works at the minute named', () => {

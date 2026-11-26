@@ -15,11 +15,37 @@ import { fakeJpeg } from './optics.support.mjs';
 const cmd = (text, opts) => matchOpticsCommand(text, opts);
 
 test('"live view", "start live view", "turn on live view", "watch me", "keep watching" start the live view (typed or said, frozen or not)', () => {
-  for (const words of ['Live view', 'live view.', 'Start live view', 'Start the live view', 'Turn on live view', 'Turn the live view on', 'Jarvis, watch me.', 'Watch me', 'Keep watching', 'Can you keep watching?', 'Keep watching me, please']) {
+  for (const words of ['Live view', 'live view.', 'Start live view', 'Start the live view', 'Turn on live view', 'Turn the live view on']) {
     for (const frozen of [false, true]) {
       assert.deepEqual(cmd(words, { frozen }), { action: 'liveview', on: true }, `${words} (frozen ${frozen})`);
     }
     assert.equal(isLiveViewRequest(words), true, words);
+  }
+  // "Watch me", "keep watching": the live view too, marked, because while Watch is on they mean "go on".
+  for (const words of ['Jarvis, watch me.', 'Watch me', 'Keep watching', 'Can you keep watching?', 'Keep watching me, please']) {
+    for (const frozen of [false, true]) {
+      assert.deepEqual(cmd(words, { frozen }), { action: 'liveview', on: true, watching: true }, `${words} (frozen ${frozen})`);
+    }
+    assert.equal(isLiveViewRequest(words), true, words);
+  }
+});
+
+test('words that name the live view are the live view\'s: "show me the live view", "back to the live view", "resume live view" start it (or go on with it); "go live", "back to the camera", "unfreeze" are the camera', () => {
+  // RPUX-4: before, these were the camera's words: "This is the live view." and nothing started.
+  for (const words of ['Show me the live view.', 'Show the live view', 'Resume live view.', 'Resume the live view', 'Go back to the live view', 'Back to live view', 'Back to the live view.', 'Continue the live view', 'Restart live view']) {
+    for (const frozen of [false, true]) {
+      assert.deepEqual(cmd(words, { frozen }), { action: 'liveview', on: true }, `${words} (frozen ${frozen})`);
+    }
+    assert.equal(isLiveViewRequest(words), true, words);
+  }
+  for (const words of ['Go live', 'Live', 'Back to the camera', 'Back to live', 'Show me the camera', 'Resume the camera', 'Unfreeze', 'Unfreeze it']) {
+    assert.deepEqual(cmd(words, { frozen: true }), { action: 'live' }, words);
+    assert.equal(isLiveViewRequest(words), false, words);
+  }
+  // v8.1 (E1, changed on purpose): "new picture" and "new look" take a new picture; never Live, never the live view.
+  for (const words of ['New picture', 'New look']) {
+    assert.deepEqual(cmd(words, { frozen: true }), { action: 'look', question: 'What am I looking at?', explicit: true, fresh: true }, words);
+    assert.equal(isLiveViewRequest(words), false, words);
   }
 });
 
@@ -33,8 +59,8 @@ test('"stop live view", "turn off live view", "that\'s enough" stop it; "stop wa
 });
 
 test('the live view words never swallow other Optics words or questions', () => {
-  assert.equal(cmd('Go back to the live view').action, 'live', 'back to the camera from a Look');
-  assert.equal(cmd('Back to live view').action, 'live');
+  assert.equal(cmd('Go back to the camera').action, 'live', 'back to the camera from a Look');
+  assert.equal(cmd('Back to live').action, 'live');
   assert.equal(cmd('What am I looking at?').action, 'look');
   assert.equal(cmd('Close the camera').action, 'close');
   assert.equal(cmd('Keep going').action, 'more');
@@ -52,6 +78,18 @@ test('Voice Mode with Optics closed: "live view" opens the camera by voice only 
   assert.equal(voiceLiveViewRequest('Live view', { cameraAllowed: 'denied' }), 'need-tap');
   assert.equal(voiceLiveViewRequest('What is the capital of France?', { cameraAllowed: 'granted' }), null);
   assert.equal(voiceCameraRequest('Live view', { cameraAllowed: 'granted' }), null, 'not a Look');
+  assert.equal(voiceLiveViewRequest('Show me the live view', { cameraAllowed: 'granted', ios: false }), 'start', 'words that name it');
+});
+
+test('Voice Mode with a hologram or blueprint on screen: the live view words never turn the camera on (they are Jarvis\'s, as "what is this?" is)', () => {
+  // RPUX-1: before, "keep watching" said over a hologram opened Optics over it and started looking.
+  for (const words of ['Keep watching.', 'Watch me', 'Live view', 'Start the live view', 'Show me the live view']) {
+    for (const ios of [false, true]) {
+      assert.equal(voiceLiveViewRequest(words, { viewerOpen: true, cameraAllowed: 'granted', ios }), null, `${words} (ios ${ios})`);
+    }
+    assert.notEqual(voiceLiveViewRequest(words, { viewerOpen: false, cameraAllowed: 'granted' }), null, `${words}, no viewer`);
+  }
+  assert.equal(voiceCameraRequest('What am I looking at?', { viewerOpen: true, cameraAllowed: 'granted' }), null, 'the same rule as a Look');
 });
 
 // ---- the strict mock -------------------------------------------------------------------------
