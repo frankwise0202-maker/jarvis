@@ -1276,7 +1276,7 @@ export default [
         timeout: 15000,
         message: async () => `Standby back and listening (${JSON.stringify(await standbyState(t.page))}; Voice Mode open ${(await t.page.locator(tid('voice-mode')).count()) > 0})`,
       });
-      t.assert((await t.page.locator(tid('voice-mode')).count()) === 0, 'the idle Voice Mode closed');
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 }); // the idle Voice Mode closed
     },
   },
   {
