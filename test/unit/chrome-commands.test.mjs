@@ -33,6 +33,24 @@ test('what Jarvis says about the link', () => {
   assert.match(chromeLinkLine({ linked: true, online: true }, { phone: true }), /on your Mac/);
 });
 
+test('REDTEAM-VOICE-15: said aloud, the link\'s lines never name "Jarvis for Chrome" (his own name sets off his barge-in)', () => {
+  const states = [null, { linked: false, online: false }, { linked: true, online: true }, { linked: true, online: false }];
+  for (const st of states) {
+    for (const phone of [false, true]) assert.doesNotMatch(chromeLinkLine(st, { phone, spoken: true }), /jarvis for chrome/i, JSON.stringify({ st, phone }));
+  }
+  assert.doesNotMatch(LINK_STEPS_SAID, /jarvis for chrome/i);
+  // What it tells the owner to say to set it up is a sentence the link's words take.
+  const say = /Say “([^”]+)”/.exec(chromeLinkLine(null, { spoken: true }))[1];
+  assert.equal(matchChromeLinkCommand(say).do, 'chrome-link-setup', say);
+  // Shown, the name stays (the Settings section is called that).
+  assert.match(chromeLinkLine({ linked: true, online: true }), /^Jarvis for Chrome is linked/);
+  const said = [];
+  const r = fakeRouter();
+  register(r, { chromeLink: { state: () => ({ linked: true, online: true }) }, openSettings: () => {}, phone: false, demo: false });
+  for (const words of ['is Jarvis for Chrome linked', 'link Jarvis for Chrome']) said.push(r.entries[0].run(r.entries[0].match(words), { surface: 'voice' }).say);
+  for (const line of said) assert.doesNotMatch(line, /jarvis for chrome/i, line);
+});
+
 function fakeRouter() {
   const entries = [];
   return { entries, register: (e) => entries.push(e) && (() => {}) };
@@ -55,8 +73,10 @@ test('register: typed, "link Jarvis for Chrome" opens Settings at Jarvis for Chr
   assert.equal(said.say, LINK_STEPS_SAID);
   assert.equal(opened.length, 1, 'no sheet over Voice Mode');
   state = { ...state, linked: true, online: true };
-  assert.equal(entry.run(setup, { surface: 'voice' }).say, 'Jarvis for Chrome is already linked and online.');
-  assert.equal(entry.run(entry.match('is Chrome linked?'), { surface: 'voice' }).say, 'Jarvis for Chrome is linked and online.');
+  // (Said aloud: "Chrome", never "Jarvis for Chrome": REDTEAM-VOICE-15.)
+  assert.equal(entry.run(setup, { surface: 'voice' }).say, 'Chrome is already linked and online.');
+  assert.equal(entry.run(entry.match('is Chrome linked?'), { surface: 'voice' }).say, 'Chrome is linked and online.');
+  assert.equal(entry.run(entry.match('is Chrome linked?'), { surface: 'chat' }).say, 'Jarvis for Chrome is linked and online.');
   state = { ...state, online: false };
   assert.match(entry.run(entry.match('is Chrome linked?'), { surface: 'chat' }).say, /can’t reach it/);
 });
