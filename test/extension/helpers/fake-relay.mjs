@@ -6,7 +6,11 @@
 //   relay.fetch                                       an in-process fetch for unit tests
 //   relay.serve(req, res, bodyText)                   for the E2E test server (http)
 //   relay.down = true                                 the home base can't be reached (fetch fails)
+//   relay.put(box, msg)                               a message as it is, again (the tests' replays)
 //   relay.requests                                    what was asked: { method, path, query, at }
+//
+// Unlike Core, which keeps a repeated id once, this fake keeps every copy: the extension's own replay
+// protection is what the tests check (a home base that misbehaves must not get a message taken twice).
 //
 //   const app = await createAppPeer({ relay, key });  Jarvis: app.request(kind, body) -> its reply,
 //   app.post(kind, body), app.received (everything the extension sent, opened), app.waitFor(fn)
