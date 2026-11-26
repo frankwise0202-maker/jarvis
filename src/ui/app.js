@@ -38,6 +38,9 @@ import { isOverlayOpen } from './overlay.js';
 import { currentPhoto } from './photos.js';
 import { createScreens, screenAck, screenMessage } from './screens/controller.js';
 import { isScreenMode } from './screens/screen-page.js';
+import { createBrowserTabs } from './browser-tab.js';
+import { linksOf, lookSnapshot } from '../lib/screen-targets.js';
+import { detectScreenEnv } from '../lib/screen-placement.js';
 import { matchHologramCommand, normalizeCommandText } from '../lib/hologram-commands.js';
 import { matchScreenCommand } from '../lib/screen-commands.js';
 import { createJarvis, MODELS, DEPTHS, blueprintCostUsd, costLabel, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine, appendHomeBaseTurn } from '../engine/index.js';
@@ -99,6 +102,9 @@ import { register as registerChromeVoiceCommands } from './commands/chrome-voice
 import { register as registerWindowCommands } from './commands/windows.js';
 import { register as registerOpticsCommands } from './commands/optics.js';
 import { register as registerChromeCommands } from './commands/chrome.js';
+// v8.1 chrome-relay: Jarvis for Chrome, linked through the home base (SPEC §32.1).
+import { installChromeLink } from '../platform/chrome-link.js';
+import { notify as notifyOwner } from './attention.js';
 
 const { sttSupported, startListening } = stt;
 // Speech: the device voice (tts.js), or the opt-in natural voice (Kokoro in a Worker) when it
@@ -375,6 +381,21 @@ export async function startApp(rootEl) {
           }),
         null,
       );
+  // ---- chrome-relay ▸ Jarvis for Chrome, linked through the home base (v8.1, SPEC §32.1): `chromeLink` is
+  // app.chromeLink (contract (f)) for "pull this up in Chrome" and Chrome tasks by voice (pass it in your
+  // register() deps); Settings → Jarvis for Chrome gets `chromeLinkCtl.control`. Computers only; not in the demo.
+  const chromeLinkCtl = state.demo ? null : safe(() => installChromeLink({ getSettings, notice: (n) => chromeLinkNotice(n) }), null);
+  const chromeLink = chromeLinkCtl ? chromeLinkCtl.api : null;
+  /** Something Jarvis for Chrome did that no request is waiting for (D5: a task that started late was stopped). */
+  function chromeLinkNotice(n) {
+    const line = n && typeof n.line === 'string' ? n.line : '';
+    if (!line) return;
+    safe(() => toast(line, { level: 'warn', timeout: 8000 }));
+    const voice = safe(() => (voiceApi && isVoiceModeOpen() ? voiceApi : null), null);
+    if (voice && typeof voice.say === 'function') safe(() => voice.say(line));
+    else if (document.hidden) safe(() => notifyOwner({ tag: 'chrome-link', title: 'Jarvis', body: line }));
+  }
+  // ---- chrome-relay ◂
   const morningCard = brain
     ? safe(
         () =>
@@ -812,6 +833,8 @@ export async function startApp(rootEl) {
         onChange: () => updateCore(),
         // Jarvis's open_screen may move a camera that is on, never turn one on (controller.js).
         cameraLive: () => opticsCameraBridge.isLive(),
+        // v8.1 (windows, D6): Jarvis floating ("float yourself"): his core, the state word, the words heard.
+        jarvisState: () => ({ core: root.dataset.core || 'idle', word: safe(() => presence.word().word, ''), heard: safe(() => (voiceInfo && voiceInfo.listening ? voiceInfo.heard || '' : ''), '') }),
       }),
     null,
   );
@@ -830,6 +853,101 @@ export async function startApp(rootEl) {
     });
     return res;
   }
+
+  // ---- windows (v8.1, SPEC §31): several windows by voice, "pull this up in Chrome" --------------------
+  // The words are src/ui/commands/windows.js's (registered with the router below); this part gives them
+  // what the app knows: the newest reply's links, what "this" is, the Chrome link, and the viewers.
+
+  /** The newest reply's links, in order ([{ url, title }]; none when it has none). */
+  function newestReplyLinks() {
+    const turns = state.conv ? turnsOf(state.conv) : [];
+    for (let i = turns.length - 1; i >= 0; i -= 1) {
+      const t = turns[i];
+      if (t.role !== 'jarvis') continue;
+      return linksOf(segmentsOf(t).filter((x) => x.kind === 'text' && typeof x.text === 'string').map((x) => x.text).join('\n\n'));
+    }
+    return [];
+  }
+
+  /** The owner's last question in the open chat (its first line). */
+  function lastOwnerQuestion() {
+    const turns = state.conv ? turnsOf(state.conv) : [];
+    for (let i = turns.length - 1; i >= 0; i -= 1) if (turns[i].role === 'user' && typeof turns[i].text === 'string') return turns[i].text.split('\n')[0];
+    return '';
+  }
+
+  /** What "this" can be right now: resolveThis's inputs (src/lib/this-target.js, contract (c)). */
+  function thisInputs() {
+    const inapp = screensCtl ? safe(() => screensCtl.inappTarget(), null) : null;
+    const linkWin = screensCtl ? safe(() => screensCtl.shown('link'), null) : null;
+    const linkRef = inapp && inapp.kind === 'link' ? inapp.ref : linkWin ? linkWin.ref : null;
+    const optics = currentOptics();
+    const frozen = optics ? safe(() => optics.frozenLook(), null) : null;
+    const snap = frozen && state.conv ? safe(() => lookSnapshot(state.conv, frozen.frameId), null) : null;
+    const labels = snap && snap.data && Array.isArray(snap.data.pins) ? snap.data.pins.map((p) => p.text) : [];
+    const live = optics ? safe(() => optics.liveView, null) : null;
+    let hologram = null;
+    const holo = getHologramViewer();
+    if (holo) {
+      const st = safe(() => holo.getState(), null) || {};
+      const part = st.selected ? (safe(() => holo.parts(), []) || []).find((p) => p && p.id === st.selected) : null;
+      hologram = { title: st.title || '', part: part ? part.name : '' };
+    } else if (screensCtl) {
+      const w = safe(() => screensCtl.shown('hologram'), null);
+      const part = w && w.selected && Array.isArray(w.parts) ? w.parts.find((p) => p && p.id === w.selected) : null;
+      if (w) hologram = { title: w.title || '', part: part ? part.name : '' };
+    }
+    return {
+      linkOnScreen: linkRef && linkRef.url ? { url: linkRef.url, title: linkRef.title || '' } : null,
+      look: labels.length ? { labels, selected: null } : null,
+      liveSummary: live && live.on && typeof live.summary === 'string' ? live.summary : '',
+      hologram,
+      reply: { links: newestReplyLinks() },
+      lastQuestion: lastOwnerQuestion(),
+    };
+  }
+
+  /** "Close everything": the main window's viewers close too (Voice Mode stays). */
+  function closeViewers() {
+    const sheet = getBlueprintViewer();
+    if (sheet) safe(() => sheet.close());
+    const holo = getHologramViewer();
+    if (holo) safe(() => holo.close());
+    const optics = currentOptics();
+    if (optics) safe(() => optics.close());
+    if (mcSheet) safe(() => mcSheet.sheet.close('screens'));
+  }
+
+  /**
+   * D3: words for the hologram while it is in a window and no viewer is open here act in that window
+   * ({ handled, command }); null when no window shows it or the window can't run that command.
+   */
+  function windowHologramCommand(text) {
+    if (!screensCtl || getHologramViewer() || getBlueprintViewer()) return null;
+    const w = safe(() => screensCtl.shown('hologram'), null);
+    if (!w) return null;
+    const cmd = safe(() => matchHologramCommand(String(text || ''), w.parts || [], { selected: w.selected || null }), null);
+    if (!cmd) return null;
+    const res = safe(() => screensCtl.commandIn('hologram', cmd), null);
+    return res && res.handled ? { handled: true, command: cmd } : null;
+  }
+
+  /** "Pull this up in Chrome": a tab, a window beside Jarvis, or the Jarvis window (src/ui/browser-tab.js). */
+  const browserTabs = createBrowserTabs({
+    // app.chromeLink (contract (f), made by the Chrome link's own wiring), when there is one.
+    chromeLink: () => safe(() => (typeof chromeLink !== 'undefined' && chromeLink ? chromeLink.api || chromeLink : null), null),
+    screens: screensCtl,
+    // Optics (its live view included) or a walkthrough on screen: the page goes beside Jarvis.
+    onScreen: () =>
+      safe(() => {
+        const tour = routerState('voice').tour;
+        return isOpticsOpen() || !!(tour && tour.active);
+      }, false),
+    hidden: () => !!document.hidden,
+    standalone: () => safe(() => detectScreenEnv(window).standalone, false),
+    listensHidden: () => false,
+    toast: (msg, opts) => toast(msg, opts),
+  });
 
   // ---- Apple Music (find & open, free) --------------------------------------------------------
   /**
@@ -1482,6 +1600,9 @@ export async function startApp(rootEl) {
   function voiceCommand(text, { signal = null, spoken = true, later = false } = {}) {
     let holo = getHologramViewer();
     const sheet = getBlueprintViewer();
+    // v8.1 (windows, D3): the hologram is in a window and none is here: its words act there.
+    const inWindow = !holo && !sheet ? windowHologramCommand(text) : null;
+    if (inWindow) return inWindow;
     if (!holo && !sheet) holo = reopenForVoice(text); // the viewer was closed: "expand it" opens it again
     if (sheet) {
       const words = String(text || '');
@@ -3554,6 +3675,7 @@ export async function startApp(rootEl) {
       // ---- optics ▸
       // ---- optics ◂
       // ---- chrome-relay ▸ (Jarvis for Chrome)
+      chromeLink: chromeLinkCtl ? chromeLinkCtl.control : null,
       // ---- chrome-relay ◂
     });
     const sheet = createSheet({
@@ -3996,10 +4118,28 @@ export async function startApp(rootEl) {
     // ---- chrome-voice ▸
     // ---- chrome-voice ◂
     // ---- windows ▸ (s.windows, s.reply.links)
+    // The windows Jarvis opened (the one with the focus marked); a hologram's window carries its parts and
+    // selection, for its words said here (windows-hologram, D3). The newest reply's links ("open the second link").
+    s.windows = screensCtl
+      ? safe(
+          () =>
+            screensCtl.list().map((w) => {
+              const holoWin = w.kind === 'hologram' ? screensCtl.shown('hologram') : null;
+              const own = holoWin && holoWin.id === w.id;
+              return { id: w.id, kind: w.kind, label: w.label, focused: !!w.focused, ...(own ? { parts: holoWin.parts || [], selected: holoWin.selected || null } : {}) };
+            }),
+          [],
+        )
+      : [];
+    s.reply.links = safe(() => newestReplyLinks(), []);
     // ---- windows ◂
     // ---- optics ▸ (s.optics.mode 'aside', card, sceneChanged)
     // ---- optics ◂
     // ---- chrome-relay ▸ (s.chrome)
+    if (chromeLink) {
+      const c = safe(() => chromeLink.state(), null);
+      if (c) s.chrome = { ...(s.chrome || {}), linked: c.linked, online: c.online, task: c.task };
+    }
     // ---- chrome-relay ◂
     return local ? Object.assign(s, local) : s;
   }
@@ -4164,11 +4304,11 @@ export async function startApp(rootEl) {
     // chrome-voice (src/ui/commands/chrome-voice.js):
     register('chrome-voice', registerChromeVoiceCommands, { ...shared });
     // windows (src/ui/commands/windows.js):
-    register('windows', registerWindowCommands, { ...shared });
+    register('windows', registerWindowCommands, { ...shared, screens: screensCtl, tabs: browserTabs, thisInputs: () => thisInputs(), links: () => newestReplyLinks(), closeViewers: () => closeViewers() });
     // optics (src/ui/commands/optics.js):
     register('optics', registerOpticsCommands, { ...shared });
     // chrome-relay (src/ui/commands/chrome.js):
-    register('chrome', registerChromeCommands, { ...shared });
+    register('chrome', registerChromeCommands, { ...shared, chromeLink, openSettings: (opts) => openSettings(opts) });
   }
   registerCommandModules();
 
