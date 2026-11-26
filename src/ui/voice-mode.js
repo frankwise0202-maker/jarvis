@@ -171,7 +171,7 @@ import { openingIntent, routineReply, answerParts, greetingLine, suggestionLine,
 import { createVoiceTag } from './voice-tag.js';
 import { createQuestionStack, createPromptChannel, boundAction } from '../lib/voice-questions.js';
 import { createVoiceHold, HOLD_CAP_MS } from '../lib/voice-hold.js';
-import { ANSWER_WINDOW_MS, WITHDRAWN_LINE, againLine, chooseAnswer, matchChromeAnswer } from '../lib/chrome-prompt-words.js';
+import { ANSWER_WINDOW_MS, WITHDRAWN_LINE, againLine, chooseAnswer, isNoWord, matchChromeAnswer } from '../lib/chrome-prompt-words.js';
 import { TASK_CHECK_HIDDEN_MS, TASK_CHECK_MS } from '../lib/chrome-task-words.js';
 import { createRouter, registerTodayCommands, emptyState } from '../lib/command-router.js';
 import { followUp, createSelfMask } from '../lib/hands-free.js';
@@ -414,7 +414,14 @@ function createVoiceMode(opts) {
   //              voice's askedAt above)
   //   greeting   { id, line }: a prompt the wake greeting says ("Chrome is waiting for you: …")
   //   lastDone   { text, at }: the last line spoken to the end
-  const C = { check: null, saidAt: 0, saidKey: 0, greeting: null, lastDone: null, hint: '', pump: 0 };
+  //   pendingPrompt  the prompt waiting to be said once Voice Mode is free: its own slot, so an owner question
+  //              waiting beside it never takes its place (REDTEAM-VOICE-6)
+  //   unheard    the open prompt's key when it was said in full with no listen after it (Continuous off, the
+  //              brake, a hidden idle session): its 30 s start at the owner's next listen (PRIVACY-1)
+  //   hiddenIdle hidden, and the owner's follow-up window is over (a hidden listen ended with nothing, or he was
+  //              hidden while nothing was under way): Chrome's lines open no microphone (PRIVACY-1). A tap, a
+  //              key, a wake, a barge-in, the owner's words or Jarvis on screen again end it.
+  const C = { check: null, saidAt: 0, saidKey: 0, greeting: null, lastDone: null, hint: '', pump: 0, pendingPrompt: null, unheard: 0, hiddenIdle: false };
   // holdCapMs (v8.1, tests only: 'jarvis.dev.voice' through app.js): a shorter hold, never a longer one.
   const hold = createVoiceHold(Number(holdCapMs) > 0 ? { capMs: Math.min(HOLD_CAP_MS, Number(holdCapMs)) } : {});
   const listenHidden = typeof listenWhileHidden === 'function' ? listenWhileHidden : () => false;
@@ -938,6 +945,7 @@ function createVoiceMode(opts) {
     unlockSpeech();
     clearRetry();
     if (S.review) return reviewSend('tap'); // the 2-second check: send now
+    if (chromeStop()) return; // v8.1 chrome-voice: a tap withdraws a Chrome check (said, or counting down)
     if (S.listen) return requestSend(S.listen, false);
     // The spoken part is complete (its last sentences are being said, or the details below the
     // line are being written): stop the voice and listen; the details keep coming in the chat.
@@ -963,6 +971,7 @@ function createVoiceMode(opts) {
     unlockSpeech();
     clearRetry();
     if (S.review) return reviewSend('tap');
+    if (chromeStop()) return; // v8.1 chrome-voice: Stop withdraws a Chrome check (said, or counting down)
     if (S.listen) return requestSend(S.listen, false);
     if (S.run && spokenDone(S.run) && isTalking(liveOf(S.run))) {
       // Stop the voice only (as in v4): the details are still being written, then shown to read.
@@ -1336,6 +1345,7 @@ function createVoiceMode(opts) {
       // he listens for the answer.
       startListening({ keepAnswer: true });
     }
+    chromeVisibility(); // v8.1 chrome-voice: hidden with nothing under way, Chrome's lines open no microphone
     updateLevelLoop();
   }
 
@@ -1566,6 +1576,7 @@ function createVoiceMode(opts) {
     // noSpeechMs, oneTry (v8.1, narrate()'s listenAfter): its own silence window, and no second try.
     const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild, review, alts: [], sendNow: false, keepAnswer, wakeWindow, noSpeechMs: Number(noSpeechMs) > 0 ? Number(noSpeechMs) : 0, oneTry: !!oneTry };
     S.listen = L;
+    chromeListens(L); // v8.1 chrome-voice: a prompt said with no listen counts as asked from here
     S.noRelisten = false;
     // A preview playing now would be heard as speech: it pauses before the mic opens.
     try {
@@ -1704,6 +1715,7 @@ function createVoiceMode(opts) {
     // The listen is over (sent, cancelled, closed): the mark goes, unless the check holds a newer one.
     if (phase === 'idle' && S.listen !== L && !(S.review && S.review.L && S.review.L !== L)) showHomeBaseMark(null);
     if (S.listen !== L || S.closed) return;
+    chromeHomeBase(phase); // v8.1 chrome-voice: the home base hearing the owner pauses a Chrome check
     if (phase === 'listening' || phase === 'speech' || phase === 'sending') {
       const wasSpeaking = L.hb === 'speech';
       L.hb = phase;
@@ -1776,9 +1788,14 @@ function createVoiceMode(opts) {
     }
     if (reason === 'cancel') {
       play('listen-stop');
+      if (C.check) {
+        withdrawCheck(C.check, 'voice'); // v8.1 chrome-voice: the owner stopped the check's listen: nothing goes
+        return;
+      }
       goIdle('ready');
       return;
     }
+    C.hiddenIdle = !text && !!document.hidden; // v8.1 chrome-voice: a hidden listen ended with nothing (words: the owner is here)
     if (text) {
       S.silentTries = 0;
       if (!L.wakeWindow) S.asked += 1; // v8.1 (A6): one more question without the wake words or a tap
@@ -3645,6 +3662,12 @@ function createVoiceMode(opts) {
       else sayAsked(q.say);
       return;
     }
+    if (isPrompt) {
+      // v8.1 chrome-voice: the prompt waits in its own slot; a question waiting too never takes its place.
+      C.pendingPrompt = q;
+      promptPump();
+      return;
+    }
     S.pendingAsk = { q, isPrompt };
     setTimeout(() => {
       if (S.pendingAsk && S.pendingAsk.q === q && canSayNow()) sayPendingAsk();
@@ -3762,19 +3785,26 @@ function createVoiceMode(opts) {
   // ================================================== v8.1 Jarvis for Chrome by voice (chrome-voice)
   // The prompt channel's internals (contract (a) api.prompt; brief G5) and the spoken check (G4; the
   // lead's decision D2). src/ui/chrome-task.js drives them through api.prompt and api.chrome.
-  //   - A prompt is said once Voice Mode is free (askQuestion → sayPrompt), with one listen after it.
-  //     Said to the end, it opens the 30-second window for a yes; cut short (barge-in), it is said again
-  //     first. A prompt the wake greeting said ("Chrome is waiting for you: …") counts as said there.
+  //   - A prompt is said once Voice Mode is free (askQuestion → sayPrompt). It waits in its own slot
+  //     (C.pendingPrompt): an owner question waiting beside it is said too, first, and never takes its place.
+  //     One listen follows it only when this session would listen anyway (Continuous on, no brake, not a
+  //     hidden idle session; rule 4: never because the extension said so); otherwise "Tap me to answer.", and
+  //     its 30 s start at the owner's next listen. Said to the end, it opens the 30-second window for a yes;
+  //     cut short (barge-in, a tap, Stop), it is said again first. A prompt the wake greeting said ("Chrome is
+  //     waiting for you: …") counts as said there.
   //   - Its answers (the router's 'prompt' and 'chrome-prompt'): a no acts at once. A yes counts
   //     only from the best reading, within the window, and when no other reading is a no, cancel or
   //     stop word (else Jarvis says why and asks again); then the check ("Approving: … · say cancel"),
   //     and only then onAnswer, which sends it with the prompt's hash.
   //   - The spoken check (a task's "Chrome, up to a dollar: … Say cancel to stop.", or a yes's): said,
-  //     then 2 s (5 s while Jarvis is hidden) with the microphone open; talking pauses it; "cancel",
-  //     "no" or "stop" withdraws it (before the prompt's own words: never the prompt's no then); "no,
-  //     I said …" withdraws it and routes the new words from the top; "yes" or "okay" lets it count on;
-  //     other words withdraw it; a barge-in followed by silence withdraws it; "start now" lets it go.
-  //     Nothing goes to Chrome before it ends, and closing Voice Mode withdraws it.
+  //     then 2 s (5 s while Jarvis is hidden) with the microphone open. Only a line said in full counts
+  //     down: Stop or a tap while it is said (or counting) withdraws it at once, and a barge-in leaves it
+  //     to the owner's words (silence withdraws it; "okay" has the line said again). Talking pauses it,
+  //     also when the home base hears the owner (no live words there); "cancel", "no" or "stop" withdraws
+  //     it (before the prompt's own words: never the prompt's no then), and "stop" also stops a task that
+  //     runs; any other reading that is a no withdraws it too; "no, I said …" withdraws it and routes the
+  //     new words (a task's as a Chrome task); "yes" or "okay" lets it count on; other words withdraw it;
+  //     "start now" lets it go. Nothing goes to Chrome before it ends, and closing Voice Mode withdraws it.
 
   /**
    * Words heard during a check that no answer layer took for Chrome (`hit`: the router's pick, or null)
@@ -3800,20 +3830,58 @@ function createVoiceMode(opts) {
       if (S.closed || !prompts.current()) {
         clearInterval(C.pump);
         C.pump = 0;
+        C.pendingPrompt = null;
         return;
       }
-      if (S.pendingAsk && S.pendingAsk.isPrompt && canSayNow()) sayPendingAsk();
+      if (!C.pendingPrompt || !canSayNow()) return;
+      // A question waiting beside it is said first; the prompt follows once that is said (afterSpeech).
+      if (S.pendingAsk && sayPendingAsk()) return;
+      sayPendingPrompt();
     }, 400);
   }
 
-  /** Say the prompt (`before`: a line first, said with it), with one listen for its answer after it. */
+  /** The prompt waiting in its own slot, if it is still open: true when it is said now. */
+  function sayPendingPrompt() {
+    const q = C.pendingPrompt;
+    if (!q || S.closed || C.check) return false; // never over a Chrome check; it is said after it
+    C.pendingPrompt = null;
+    if ((prompts.current() || {}).key !== q.key) return false;
+    if (greetedPrompt(q)) return false; // the wake greeting has just said it
+    sayPrompt(q);
+    return true;
+  }
+
+  /**
+   * Whether a line from Chrome (its question, its news) may open the microphone after it: only when this
+   * session would listen anyway (rule 4: never because the extension said so; PRIVACY-1).
+   *   'listen'    Continuous on, the brake not said, and not a hidden session whose follow-up window is over
+   *               (nor one deaf in the background)
+   *   'withheld'  no listen: the owner answers after a tap ("Tap me to answer.")
+   *   'none'      no microphone here at all (typing, no recognizer): nothing to withhold
+   */
+  function chromeListenRule() {
+    if (!S.sttOk || S.typing || S.sttBlocked) return 'none';
+    if (!S.continuous || S.braked) return 'withheld';
+    if (document.hidden && (C.hiddenIdle || S.deaf)) return 'withheld';
+    return 'listen';
+  }
+
+  /**
+   * Say the prompt (`before`: a line first, said with it). One listen for its answer after it, when this session
+   * would listen anyway (a prompt a yes can be said to: its 30-s window; a click-only one: today's rule).
+   * Otherwise "Tap me to answer.", no listen, and its 30 s start at the owner's next listen (PRIVACY-1).
+   */
   function sayPrompt(p, before = '') {
     if (S.listen) stopListening();
     clearRetry();
     askedAt.set(`p${p.key}`, ++askSeq); // asked again now (a bare "cancel" or "no" is its if it was asked last)
     C.saidKey = p.key;
     C.saidAt = 0; // the window opens when this saying ends
-    const line = before ? `${before} ${p.say}` : p.say;
+    C.unheard = 0;
+    const yes = Array.isArray(p.answers) && p.answers.some((a) => a && a.check);
+    const rule = chromeListenRule();
+    const tail = rule === 'withheld' && yes ? ' Tap me to answer.' : '';
+    const line = `${before ? `${before} ${p.say}` : p.say}${tail}`;
     if (!S.ttsOk) {
       // No voice here: shown is all there is, so it counts as said.
       renderSpoken(line, 'answer');
@@ -3822,14 +3890,19 @@ function createVoiceMode(opts) {
       afterSpeech();
       return;
     }
-    speak(line, 'ack', 0, { onEnd: (how) => promptSpoken(p, how), listenAfter: { noSpeechMs: ANSWER_WINDOW_MS } });
+    const listenAfter = rule !== 'listen' ? false : yes ? { noSpeechMs: ANSWER_WINDOW_MS } : null;
+    speak(line, 'ack', 0, { onEnd: (how) => promptSpoken(p, how, rule === 'withheld'), listenAfter });
   }
 
-  function promptSpoken(p, how) {
+  function promptSpoken(p, how, unheard = false) {
     const cur = prompts.current();
     if (!cur || cur.key !== p.key) return;
-    if (how === 'done') C.saidAt = Date.now();
-    else if (how === 'interrupted') askQuestion(cur, true); // cut short: said again first, once Voice Mode is free
+    if (how === 'done' || how === 'failed') {
+      // Said in full (or the voice failed: shown is all there is). With no listen after it, its 30 s start when
+      // the owner next listens (chromeListens).
+      if (unheard) C.unheard = p.key;
+      else C.saidAt = Date.now();
+    } else askQuestion(cur, true); // cut short (a barge-in, a tap, Stop): said again first, once Voice Mode is free
   }
 
   /** The wake greeting said this prompt to the end just now: it counts as said (and isn't said twice). */
@@ -3853,10 +3926,10 @@ function createVoiceMode(opts) {
     // While a check counts down, its own words come first ("cancel" withdraws the check, never a no
     // to the prompt the router's 'prompt' would make of it).
     if (C.check && a.do !== 'chrome-check') {
-      const own = matchChromeAnswer(hit.reading, { chromeCheck: { kind: C.check.kind } });
+      const own = matchChromeAnswer(hit.reading, { chromeCheck: { kind: C.check.kind } }, readings);
       if (own) a = own;
     }
-    if (a.do === 'chrome-check') return checkWords(a, readings);
+    if (a.do === 'chrome-check') return checkWords(a, readings, hit.reading);
     if (a.do === 'chrome-hint') {
       // A bare "yes" (or "okay", "continue") never answers Chrome: Jarvis says what does.
       if (!prompts.current() || !C.hint) return false;
@@ -3896,14 +3969,33 @@ function createVoiceMode(opts) {
         const now = prompts.current();
         if (now && now.key === p.key) prompts.answer(p.id, answer.id, { words, via: 'voice' });
       },
+      // "Stop" or "stop Chrome" during it: not approved, and the task waiting on this prompt stops too.
+      onStop: () => {
+        const now = prompts.current();
+        const stop = now && now.key === p.key ? (Array.isArray(now.answers) ? now.answers : []).find((x) => x && x.stopTask) : null;
+        return !!stop && prompts.answer(p.id, stop.id, { words, via: 'voice', quiet: true });
+      },
     });
     return true;
   }
 
-  /** Words heard while a check counts down (matchChromeAnswer's 'chrome-check'). */
-  function checkWords(a, readings) {
+  /**
+   * Words heard while a check counts down (matchChromeAnswer's 'chrome-check'). `readings`: all of them;
+   * `best`: the one the router took. Any other reading that is a no withdraws it (a "no" heard as "go").
+   */
+  function checkWords(a, readings, best = '') {
     const K = C.check;
     if (!K) return false;
+    const others = (Array.isArray(readings) ? readings : []).filter((r) => typeof r === 'string' && r !== best);
+    if ((a.how === 'go' || a.how === 'keep') && others.some((r) => isNoWord(r))) {
+      withdrawCheck(K, 'voice');
+      return true;
+    }
+    if ((a.how === 'go' || a.how === 'keep') && K.interrupted) {
+      // The line was cut short (a barge-in): the price may not have been heard. It is said again in full first.
+      sayCheck(K);
+      return true;
+    }
     if (a.how === 'go') {
       goCheck(K);
       return true;
@@ -3921,19 +4013,44 @@ function createVoiceMode(opts) {
       return true;
     }
     if (a.how === 'withdraw') {
-      withdrawCheck(K, 'voice');
+      // "Stop" (not "cancel" or "no") while a task runs or waits: that task stops too (REDTEAM-VOICE-4).
+      let stopping = false;
+      if (a.stop && typeof K.spec.onStop === 'function') {
+        try {
+          stopping = !!K.spec.onStop();
+        } catch {
+          stopping = false;
+        }
+      }
+      if (!stopping) {
+        withdrawCheck(K, 'voice');
+        return true;
+      }
+      withdrawCheck(K, 'stopped');
+      if (!S.closed) speakAck(`${K.kind === 'task' ? 'Okay, nothing sent.' : WITHDRAWN_LINE} Chrome is stopping.`);
       return true;
     }
-    // "No, I said …": the check goes, and the corrected words are routed again from the top (D2).
+    // "No, I said …": the check goes, and the corrected words are routed again from the top (D2). A task's
+    // stay a Chrome task ("no, I said find a 5K monitor" keeps its "in Chrome"), unless they name one of
+    // Jarvis's own things or are a question without page words (REDTEAM-VOICE-12).
     withdrawCheck(K, 'corrected');
-    if (a.words) heard(a.words, []);
+    if (!a.words) return true;
+    if (K.kind === 'task') {
+      const words = String(a.words).trim().replace(/[.!?]+$/, '');
+      const carried = /\b(?:in|on|using) (?:google )?chrome$/i.test(words) || /^in (?:google )?chrome\b/i.test(words) ? words : `${words} in Chrome`;
+      const local = routeLocal([carried]);
+      const hit = routeWords([carried], local);
+      if (hit && hit.id === 'chrome-task' && act(hit, [carried])) return true;
+    }
+    heard(a.words, []);
     return true;
   }
 
   /**
-   * The spoken check (api.chrome.check): `say` is said and `show` shown; once said, it counts 2 s (5 s
-   * while Jarvis is hidden) with one listen open, then onGo(). Never two at once (a new one withdraws
-   * the old one). -> { cancel(), go() }
+   * The spoken check (api.chrome.check): `say` is said and `show` shown; once said in full, it counts 2 s
+   * (5 s while Jarvis is hidden) with one listen open, then onGo(). Never two at once (a new one withdraws
+   * the old one). spec: { kind, show, say, cancelLine, onGo, onCancel(how), onCount(ms), onStop() → true when
+   * a task that runs is being stopped } -> { cancel(), go() }
    */
   function startCheck(spec = {}) {
     const o = spec && typeof spec === 'object' ? spec : {};
@@ -3942,23 +4059,11 @@ function createVoiceMode(opts) {
       return { cancel: () => false, go: () => false };
     }
     if (C.check) withdrawCheck(C.check, 'replaced');
-    const K = { kind: o.kind === 'approve' ? 'approve' : 'task', phase: 'saying', timer: 0, until: 0, ms: 0, interrupted: false, spec: o };
+    const K = { kind: o.kind === 'approve' ? 'approve' : 'task', phase: 'saying', timer: 0, until: 0, ms: 0, interrupted: false, spec: o, sp: null, hb: false, hbTimer: 0 };
     C.check = K;
     clearRetry();
     if (S.listen) stopListening();
-    const say = String(o.say || '').trim();
-    const done = (how) => {
-      if (C.check !== K) return;
-      if (how === 'interrupted') {
-        // A barge-in: the owner wants to talk. Their words decide; silence withdraws it.
-        K.phase = 'paused';
-        K.interrupted = true;
-        return;
-      }
-      countCheck(K); // said in full (or speech isn't working: the card and the caption show it)
-    };
-    if (say && S.ttsOk) speak(say, 'ack', 0, { onEnd: done, listenAfter: { noSpeechMs: TASK_CHECK_HIDDEN_MS + 2000 } });
-    else done('done');
+    sayCheck(K);
     return {
       cancel: () => {
         if (C.check !== K) return false;
@@ -3971,10 +4076,127 @@ function createVoiceMode(opts) {
     };
   }
 
+  /** Say the check's line (again); only once it is said in full does it count down (REDTEAM-VOICE-1). */
+  function sayCheck(K) {
+    if (C.check !== K || S.closed) return;
+    clearTimeout(K.timer);
+    K.timer = 0;
+    K.phase = 'saying';
+    K.interrupted = false;
+    K.sp = null;
+    const say = String(K.spec.say || '').trim();
+    if (!say || !S.ttsOk) {
+      countCheck(K); // no voice here: the card and the caption show the check
+      return;
+    }
+    if (S.listen) stopListening();
+    speak(say, 'ack', 0, { onEnd: (how) => checkLineEnded(K, how), listenAfter: { noSpeechMs: TASK_CHECK_HIDDEN_MS + 2000 } });
+    if (C.check === K && S.speech && S.speech.onEnd) K.sp = S.speech;
+  }
+
+  /**
+   * The check's line ended. Said in full: it counts down. The voice failing before a word came out: the card
+   * and the caption are the check, and it counts. Cut short (Stop, a tap, a barge-in, another line): it never
+   * counts down. With a listen open (a barge-in) the owner's words decide and silence withdraws it; with
+   * none, it is withdrawn now ("Okay, nothing sent to Chrome.").
+   */
+  function checkLineEnded(K, how) {
+    if (C.check !== K) return;
+    if (how === 'done' || (how === 'failed' && !(K.sp && K.sp.started))) {
+      countCheck(K);
+      return;
+    }
+    K.phase = 'paused';
+    K.interrupted = true;
+    clearTimeout(K.timer);
+    K.timer = 0;
+    if (!S.listen) withdrawCheck(K, 'voice');
+  }
+
+  /**
+   * Stop or a tap (the dock's main button, the core, Space) while a Chrome check is said or counts down:
+   * withdrawn at once, said ("Okay, nothing sent to Chrome." / "Okay, not approved."). Words being heard
+   * decide instead (the tap sends them). True when it acted.
+   */
+  function chromeStop() {
+    const K = C.check;
+    if (!K || S.closed) return false;
+    const L = S.listen;
+    if (L && (L.text || L.hb === 'speech' || L.hb === 'sending')) return false;
+    if (L) stopListening();
+    withdrawCheck(K, 'voice');
+    return true;
+  }
+
+  /** A listen starts: a prompt said with no listen after it counts as asked from now (its 30 s; PRIVACY-1). */
+  function chromeListens(L) {
+    if (L && L.gesture) C.hiddenIdle = false;
+    const p = prompts.current();
+    if (C.unheard && p && p.key === C.unheard) {
+      C.saidKey = p.key;
+      C.saidAt = Date.now();
+    }
+    C.unheard = 0;
+  }
+
+  /** Hidden while nothing is under way: the owner's follow-up window is over (PRIVACY-1). On screen: it isn't. */
+  function chromeVisibility() {
+    if (!document.hidden) C.hiddenIdle = false;
+    else if (!S.listen && !S.speech && !S.run && !S.review && !S.retryTimer && !S.wake && !C.check) C.hiddenIdle = true;
+  }
+
+  /**
+   * The home base hears this listen (no live words: Whisper hears whole utterances, so there are no
+   * partials). While a Chrome check counts down, its 'speech' and 'sending' pause it as words heard do
+   * (VT-MISSED-1); 'listening' again with no words lets it go on (or withdraws one cut short). Words that
+   * never come within HOME_HEAR_CHECK_MS, or a home base that fails while the owner talked, withdraw it: a
+   * "cancel" it never delivered must not become a send.
+   */
+  function chromeHomeBase(phase) {
+    const K = C.check;
+    if (!K || S.closed) return;
+    if (phase === 'speech' || phase === 'sending') {
+      if (K.phase === 'counting') {
+        clearTimeout(K.timer);
+        K.timer = 0;
+        K.phase = 'paused';
+      }
+      K.hb = true;
+      clearTimeout(K.hbTimer);
+      K.hbTimer = setTimeout(() => {
+        K.hbTimer = 0;
+        if (C.check === K && K.hb) withdrawCheck(K, 'voice');
+      }, HOME_HEAR_CHECK_MS);
+      return;
+    }
+    if (!K.hb) return;
+    if (phase === 'listening' || phase === 'idle') {
+      // No words after all (a cough, the room): the full time again, or withdrawn when the line was cut short.
+      K.hb = false;
+      clearTimeout(K.hbTimer);
+      K.hbTimer = 0;
+      if (K.phase !== 'paused') return;
+      if (K.interrupted) withdrawCheck(K, 'voice');
+      else countCheck(K);
+      return;
+    }
+    if (phase === 'fallback') {
+      // This device's recognizer takes over and the owner is asked to say it again: it stays paused, and
+      // silence now withdraws it.
+      K.hb = false;
+      clearTimeout(K.hbTimer);
+      K.hbTimer = 0;
+      K.interrupted = true;
+    }
+  }
+
   /** Count the check down: 2 s after it was said, or 5 s while Jarvis is hidden. */
   function countCheck(K) {
     if (C.check !== K || S.closed) return;
     clearTimeout(K.timer);
+    K.hb = false;
+    clearTimeout(K.hbTimer);
+    K.hbTimer = 0;
     K.phase = 'counting';
     K.ms = document.hidden ? TASK_CHECK_HIDDEN_MS : TASK_CHECK_MS;
     K.until = Date.now() + K.ms;
@@ -4008,11 +4230,16 @@ function createVoiceMode(opts) {
     C.check = null;
     clearTimeout(K.timer);
     K.timer = 0;
+    clearTimeout(K.hbTimer);
+    K.hbTimer = 0;
     if (reason === 'closed') callQuietly(() => K.spec.onCancel && K.spec.onCancel('closed'));
     return K;
   }
 
-  /** The check withdrawn: nothing goes out. `how`: 'voice' (said why), 'corrected', 'other', 'replaced'. */
+  /**
+   * The check withdrawn: nothing goes out. `how`: 'voice' (said why), 'stopped' (its words also stopped a
+   * task; the caller says the line), 'corrected', 'other', 'replaced'.
+   */
   function withdrawCheck(K, how) {
     if (C.check !== K) return;
     endCheck();
@@ -4034,13 +4261,47 @@ function createVoiceMode(opts) {
     callQuietly(() => K.spec.onGo && K.spec.onGo());
   }
 
-  /** api.chrome.say(): a line when Voice Mode is free (an open prompt doesn't stop it; a check does). */
+  /**
+   * api.chrome.say(): a line when Voice Mode is free (an open prompt doesn't stop it; a check does). It opens
+   * the microphone after it only when this session would listen anyway (PRIVACY-1: never because the extension
+   * said something).
+   */
   function chromeSay(text) {
     const line = String(text ?? '').replace(/\s+/g, ' ').trim();
     if (!line) return true;
     if (!canSayNow()) return false;
-    sayAsked(line);
+    if (chromeListenRule() === 'listen' || !S.ttsOk) {
+      sayAsked(line);
+      return true;
+    }
+    if (S.listen) stopListening();
+    clearRetry();
+    S.lastLine = line;
+    speak(line, 'ack', 0, { listenAfter: false });
     return true;
+  }
+
+  /**
+   * Woken, the opening words are a stop for Chrome or an answer to its question (REDTEAM-VOICE-10): "stop
+   * Chrome", a bare "stop" while a task runs, the prompt's reserved words. After two claps (which may have been
+   * a bang) only the stops and the no words count; after "Hey Jarvis", the owner's own words, any answer.
+   */
+  function chromeWakeWords(readings, spoken) {
+    let hit = null;
+    try {
+      hit = routeWords(readings, routeLocal(readings));
+    } catch {
+      hit = null;
+    }
+    if (!hit) return false;
+    const a = hit.action || {};
+    if (hit.id === 'chrome-stop') return true;
+    if (hit.id === 'stop') return Array.isArray(a.targets) && a.targets.includes('chrome');
+    if ((hit.id !== 'prompt' && hit.id !== 'chrome-prompt') || !a.answer) return false; // (a bare "yes": the greeting)
+    if (spoken) return true;
+    const p = prompts.current();
+    const answer = p && Array.isArray(p.answers) ? p.answers.find((x) => x && x.id === a.answer) : null;
+    return !!(answer && (answer.negative || answer.stopTask));
   }
 
   /** api.chrome.card(): a Chrome card under the captions (it leaves when its view is destroyed). */
@@ -4089,6 +4350,7 @@ function createVoiceMode(opts) {
    */
   function startWake() {
     S.wakeSession = true;
+    C.hiddenIdle = false; // v8.1 chrome-voice: woken, the owner is here
     const W = { phase: 'opening', offer: null, timer: 0, hidden: !!document.hidden };
     S.wake = W;
     W.offer = Promise.resolve()
@@ -4184,6 +4446,13 @@ function createVoiceMode(opts) {
         S.wake = null;
         goToStandby(readings[sleepAt]);
         return true;
+      }
+      // v8.1 chrome-voice (REDTEAM-VOICE-10): "Hey Jarvis, stop Chrome", "… stop" while a Chrome task runs, "…
+      // deny": short, but no greeting. The routine steps aside and the words go on to the router.
+      if (chromeWakeWords(readings, wake.trigger === 'word')) {
+        S.wake = null;
+        clearTimeout(W.timer);
+        return false;
       }
       // A fragment ("up", "Jarvis"): the greeting as if nothing was said.
       if (intents[0] === 'greet') {
@@ -4871,6 +5140,7 @@ function createVoiceMode(opts) {
     }
     if (takeHeld()) return; // what the owner said while the hologram built comes first
     if (sayPendingAsk()) return; // v8.1: a question (or the prompt) that waited for Jarvis to be free
+    if (sayPendingPrompt()) return; // v8.1 chrome-voice: then Chrome's question, from its own slot
     if (S.noRelisten) {
       // A Music card is up: the owner's next move is probably Preview or Open in Apple Music.
       S.noRelisten = false;
@@ -4943,6 +5213,7 @@ function createVoiceMode(opts) {
     S.asked = 0; // the owner called him: the hidden count starts again
     S.braked = false;
     S.deaf = false;
+    C.hiddenIdle = false; // v8.1 chrome-voice
     hold.heard();
     disarmSleep();
     clearRetry();
@@ -5182,6 +5453,7 @@ function createVoiceMode(opts) {
     clearInterval(C.pump);
     callQuietly(() => prompts.close());
     S.pendingAsk = null;
+    C.pendingPrompt = null;
     S.heldWords = '';
     callQuietly(() => clearMusicCard()); // a preview playing carries on (its card is in the chat too)
     if (micBands) callQuietly(() => micBands.destroy());
