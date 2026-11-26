@@ -3927,12 +3927,14 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
    tour pauses; a Chrome task, the live view, a music preview and Jarvis's voice stop. Nothing running: "Okay.". With
    a hologram or blueprint on top and nothing running it yields, and the viewer holds the model still.
 4. `destination`: `chrome-task` (a Jarvis for Chrome task, a carrier), `chrome-open` (a page in Chrome), `windows`,
-   `screens`, `screen-look` ("look at my screen"). Lead decision D1: the task comes first, and each declines the
-   other's sentences: page objects ("the cheapest one", "the first result") and page verbs ("click …", "sort by …") are
-   tasks in a Chrome context or with "in Chrome"; addresses, sites, searches, "pull this up in Chrome" and "open the Nth
-   link" (when the newest reply has links) open a page. Screens' fixes (C3): "expand this in a different window" is a
-   window; "bring … back" and "close …" go to the hologram on top when no screen is open and it takes them ("bring
-   everything back" shows every part, the same in Voice Mode and the hologram's field).
+   `optics-card` (a Look's picture card, only while a Look is on screen: "put the picture to the side" goes back into
+   its card, not a Screens float), `screens`, `screen-look` ("look at my screen"). Lead decision D1: the task comes
+   first, and each declines the other's sentences: page objects ("the cheapest one", "the first result") and page
+   verbs ("click …", "sort by …") are tasks in a Chrome context or with "in Chrome"; addresses, sites, searches,
+   "pull this up in Chrome" and "open the Nth link" (when the newest reply has links) open a page. Screens' fixes
+   (C3): "expand this in a different window" is a window; "bring … back" and "close …" go to the hologram on top when
+   no screen is open and it takes them ("bring everything back" shows every part, the same in Voice Mode and the
+   hologram's field).
 5. `top`: `tour`, `tour-start`, any other top-layer matcher, then `blueprint`, `hologram`, `optics` (each only while
    its thing is on top). Inside a hologram its part names win (R10).
 6. `app`: `voice-controls` (Voice Mode only), `app`, `optics-open`, `liveview`, `research`, then the rest of the layer.
@@ -3946,7 +3948,9 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
   voice-corpus-base.mjs `PARITY_EXCEPTIONS`): Voice Mode's controls, the camera words, the answers and the words held
   while a reply builds (Voice Mode); the home base (Voice Mode and the chat, where its answers are said or written);
   Optics' words (Voice Mode and Optics; typed in Optics' field they are the Look's question); the hologram's words
-  (Voice Mode and its field); Apple Music in a hologram's field while Voice Mode is open (Voice Mode's).
+  (Voice Mode and its field); Apple Music in a hologram's field while Voice Mode is open (Voice Mode's); the surfaces
+  optics' and mac-dev's matchers register ("research this" in Voice Mode and Optics' field; "open optics", "close the
+  camera" and "which microphone are you using" are not taken in a viewer's field, where they are its question).
 - R3: whole sentences after the fillers; a reading of more than 18 words goes only to carriers (`carrier: true`: Chrome
   tasks, Apple Music, the home base's research and watches, Optics' questions about "this").
 - R4: a sentence that starts like a question is never a command, except fixed forms a matcher names ("what am I looking

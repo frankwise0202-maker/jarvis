@@ -20,7 +20,8 @@ test('the layers of contract (b), in the order (1)-(8), each with its ids', () =
 
 test('within a layer: the declared order (D1: a Chrome task before a page in Chrome)', () => {
   assert.deepEqual([...ORDER.answer], ['prompt', 'question', 'reply-building'], "the Chrome prompt's words, then the newest owner question");
-  assert.deepEqual([...ORDER.destination], ['chrome-task', 'chrome-open', 'windows', 'screens', 'screen-look']);
+  // Optics' picture card before Screens: "put the picture to the side" with a Look on screen is its card's.
+  assert.deepEqual([...ORDER.destination], ['chrome-task', 'chrome-open', 'windows', 'optics-card', 'screens', 'screen-look']);
   assert.deepEqual([...ORDER.top], ['tour', 'tour-start', 'blueprint', 'hologram', 'optics'], 'a tour, then a hologram or blueprint, then Optics');
   assert.deepEqual([...ORDER.app], ['voice-controls', 'app', 'optics-open', 'liveview', 'research']);
   assert.deepEqual([...ORDER.media], ['music', 'homebase', 'brain']);

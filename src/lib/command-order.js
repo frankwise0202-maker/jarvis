@@ -14,7 +14,9 @@
 //   (3) stop         a bare "stop": pauses a tour, stops a Chrome task, the live view, a preview and
 //                    Jarvis's voice; nothing running: "Okay." (src/lib/app-commands.js)
 //   (4) destination  places the owner names: a Jarvis for Chrome task first, then opening a page in
-//                    Chrome (lead decision D1, below), windows, Screens, "my screen"
+//                    Chrome (lead decision D1, below), windows, Optics' picture card (only while a Look
+//                    is on screen: "put the picture to the side" goes back into its card, not a Screens
+//                    float), Screens, "my screen"
 //   (5) top          the thing on top: a tour, then a hologram or blueprint, then Optics (with the
 //                    live view's words)
 //   (6) app          Voice Mode's controls, the app's commands, "open optics", the live view's words
@@ -71,7 +73,7 @@ export const ORDER = Object.freeze({
   standby: Object.freeze(['standby']),
   answer: Object.freeze(['prompt', 'question', 'reply-building']),
   stop: Object.freeze(['stop']),
-  destination: Object.freeze(['chrome-task', 'chrome-open', 'windows', 'screens', 'screen-look']),
+  destination: Object.freeze(['chrome-task', 'chrome-open', 'windows', 'optics-card', 'screens', 'screen-look']),
   top: Object.freeze(['tour', 'tour-start', 'blueprint', 'hologram', 'optics']),
   app: Object.freeze(['voice-controls', 'app', 'optics-open', 'liveview', 'research']),
   media: Object.freeze(['music', 'homebase', 'brain']),
@@ -85,7 +87,7 @@ export const ORDER_STEPS = Object.freeze(
     { step: 1, layer: 'standby', what: 'Standby words' },
     { step: 2, layer: 'answer', what: "the Chrome prompt's reserved words, then the newest owner question" },
     { step: 3, layer: 'stop', what: '"stop": pauses a tour, stops a Chrome task' },
-    { step: 4, layer: 'destination', what: 'a Chrome task, a page in Chrome, windows, Screens, "my screen"' },
+    { step: 4, layer: 'destination', what: 'a Chrome task, a page in Chrome, windows, Optics\' picture card, Screens, "my screen"' },
     { step: 5, layer: 'top', what: 'the thing on top: a tour, a hologram or blueprint, Optics' },
     { step: 6, layer: 'app', what: 'Voice Mode controls, app commands, "open optics", live view words, "research this"' },
     { step: 7, layer: 'media', what: 'Apple Music, the home base, its brain' },
