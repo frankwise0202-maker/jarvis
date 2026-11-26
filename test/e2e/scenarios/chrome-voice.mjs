@@ -330,24 +330,33 @@ export default [
           });
         });
       const answers = () => page.evaluate(() => window.__answers || []);
+      const QUESTION = 'Do you want to see it enclosed, or opened?';
+      const asked = async () => (await saidLines(t)).filter((l) => l.includes(QUESTION)).length;
+      /** Ask the stand-in's question (again), and wait until it has been said once more. */
+      const askAndWait = async (what) => {
+        const before = await asked();
+        t.assert(await ask(), `the question is asked (${what})`);
+        await t.waitFor(async () => (await asked()) > before, { timeout: 20000, message: `the question said (${what})` });
+      };
       await withPeer(peer, async () => {
         const p = await peer.prompt(CART);
         await waitSaid(t, 'Chrome asks: Add the 27-inch 4K monitor', 'the prompt');
         await t.step('the question asked beside the prompt: "continue" is the question\'s, never the prompt\'s', async () => {
-          t.assert(await ask(), 'the question is asked');
-          await waitSaid(t, 'Do you want to see it enclosed, or opened?', 'the question');
+          await askAndWait('first');
           await hear(t, 'Continue.');
           await t.waitFor(async () => (await answers()).includes('next'), { timeout: 10000, message: async () => `the question to take "continue" (${JSON.stringify(await answers())})` });
           t.assert(kinds(peer, 'answer').length === 0, 'the prompt got nothing');
         });
         await t.step('asked again: "enclosed" answers the question', async () => {
-          t.assert(await ask(), 'the question is asked again');
-          await waitSaid(t, 'Do you want to see it enclosed, or opened?', 'the question');
+          await askAndWait('again');
           await hear(t, 'Enclosed.');
           await t.waitFor(async () => (await answers()).includes('enclosed'), { timeout: 10000, message: 'the question to take "enclosed"' });
           t.assert(kinds(peer, 'answer').length === 0, 'the prompt got nothing');
         });
-        await t.step('"approve": the prompt (said again first if its 30 s are over), one decision with its hash', async () => {
+        await t.step('"approve" with the question asked last: the prompt (said again first if its 30 s are over), one decision with its hash', async () => {
+          // (A tour's decision would go on talking after its answer; the stand-in asks again instead, so the
+          // microphone is open, and the question is the one asked last.)
+          await askAndWait('a third time');
           await hear(t, 'Approve.');
           await t.waitFor(async () => (await saidLines(t)).some((l) => l === 'Approving. Say cancel to stop.' || /^Let me ask again\./.test(l)), { timeout: 15000, message: 'the check, or the prompt again' });
           if (!(await saidLines(t)).includes('Approving. Say cancel to stop.')) {
