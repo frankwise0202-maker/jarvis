@@ -192,14 +192,17 @@ export const WINDOWS = {
       { words: 'open the hologram of the battery', state, winner: 'windows-hologram', why: 'Selects the battery part in its window (free, undoable), as in the main window.' },
     ]),
     // Lead decision D1 (chrome.task before chrome.open): "open the Nth link" is the reply's link only when the
-    // newest reply has links; page words are never chrome.open's. Out of a Chrome context these reach Claude;
-    // the Chrome-context rows (and "… in Chrome" with a page object) have the Chrome task as winner and go in with
-    // chrome-voice's matcher.
+    // newest reply has links; page words are never chrome.open's, links or not. Out of a Chrome context they reach
+    // Claude, unless they say "in Chrome" (a Chrome task). voice's rows cover the Chrome context (CC, CCL).
     { words: 'open the second link', state: 'WINL', winner: 'chrome-open', why: 'The newest reply has links: its second one, in Chrome.' },
     { words: 'open the second link', state: 'V0', winner: null, why: 'No links in the newest reply and no Chrome task: a question for Jarvis.' },
     { words: 'click the first link', state: 'WINL', winner: null, why: '"Click …" is a page verb: never chrome.open (a Chrome task in a Chrome context).' },
     { words: 'open the first result', state: 'WINL', winner: null, why: 'A page object: never a Google search (a Chrome task in a Chrome context).' },
     { words: 'click the first result', state: 'V0', winner: null, why: '"Click …" is a page verb: never chrome.open (a Chrome task in a Chrome context).' },
+    { words: 'click the first result', state: 'WINL', winner: null, why: 'The reply\'s links don\'t make "click …" chrome.open\'s.' },
+    { words: 'open the first result', state: 'V0', winner: null, why: 'A page object with no Chrome context: a question for Jarvis.' },
+    { words: 'open the cheapest one in Chrome', state: 'WINL', winner: 'chrome-task', why: 'A page object "in Chrome": a Chrome task, even when the reply has links.' },
+    { words: 'open the second result in Chrome', state: 'WINL', winner: 'chrome-task', why: 'A page object "in Chrome": a Chrome task, even when the reply has links.' },
   ],
 };
 
