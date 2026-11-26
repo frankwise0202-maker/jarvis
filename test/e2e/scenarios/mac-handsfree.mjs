@@ -699,6 +699,47 @@ export default [
     },
   },
   {
+    name: 'mac-standby-at-launch-two-windows',
+    title: 'REGRESS-1, MISSED-1: Standby at launch with a second Jarvis window on the Mac: the window opened second comes up on the app, not on a Standby that can’t listen, and waits for nothing; when the owner leaves Standby in the first, the second’s microphone stays closed and claps wake nothing there',
+    device: 'mac',
+    settings: { wakeWord: true, standbyAtLaunch: '' }, // automatic (the harness seeds 'off')
+    timeout: 120000,
+    async run(t) {
+      const a = await setup(t, { wordStub: true });
+      await t.step('A opens Standby by itself and listens', async () => {
+        await t.visible('standby', { page: a, message: 'Standby at launch in A' });
+        await waitListening(t, a);
+      });
+      const b = await t.page.context().newPage();
+      t.attachPageGuards(b);
+      await setup(t, { page: b });
+      await t.step('B, opened second, comes up on the app', async () => {
+        await b.waitForTimeout(2000);
+        const st = await standbyState(b);
+        t.assert(!st, `no Standby in B (${JSON.stringify(st)})`);
+        const covered = await b.evaluate(() => {
+          const c = document.querySelector('[data-testid="composer-input"]');
+          if (!c) return 'no composer';
+          const r = c.getBoundingClientRect();
+          const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return el && el.closest('[data-testid="standby"]') ? 'standby' : '';
+        });
+        t.assert(covered === '', `the chat isn’t covered (${covered})`);
+        t.assert((await b.evaluate(() => window.__fakeMic.gets)) === 0, 'B never opened the microphone');
+      });
+      await t.step('the owner leaves Standby in A: B’s microphone stays closed, and claps wake nothing in B', async () => {
+        await setHidden(b, true);
+        await a.keyboard.press('Escape');
+        await a.locator(tid('standby')).waitFor({ state: 'detached', timeout: 5000 });
+        await b.waitForTimeout(1500);
+        t.assert((await b.evaluate(() => window.__fakeMic.gets)) === 0, 'B’s microphone never opened');
+        await play(b, DOUBLE_CLAP);
+        await b.waitForTimeout(2000);
+        t.assert(!(await b.locator(tid('voice-mode')).count()), 'claps wake nothing in B');
+      });
+    },
+  },
+  {
     name: 'standby-word-restart',
     title: '"Hey Jarvis" whose download failed starts again by itself with back-off (the hint says so); once the download works, Standby listens for it',
     device: 'mac',

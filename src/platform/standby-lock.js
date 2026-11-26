@@ -31,6 +31,10 @@
 //   const close = holdVoiceLock({ locks });   Voice Mode opened; close() when it closes (a closed window lets go too)
 //   voiceOpenSomewhere({ locks })             Promise<boolean>: Voice Mode is open in some window (false without
 //                                             Web Locks: as before)
+//
+// REGRESS-1: Standby at launch (A11) opens only where it can listen. app.js asks standbyHeldSomewhere({ locks })
+// (Promise<boolean>, read-only: navigator.locks.query()) before opening it, and a launch that still finds Standby
+// held elsewhere steps back (standby.js) instead of covering the window with a Standby that can't listen.
 
 export const STANDBY_LOCK = 'jarvis-standby';
 export const VOICE_LOCK = 'jarvis-voice';
@@ -286,6 +290,23 @@ export function voiceOpenSomewhere({ locks = defaultLocks(), name = VOICE_LOCK }
   try {
     return Promise.resolve(locks.request(name, { mode: 'exclusive', ifAvailable: true }, (lock) => !lock)).then(
       (busy) => busy === true,
+      () => false,
+    );
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+/**
+ * REGRESS-1: whether some Jarvis window holds Standby now (another window, since this one asks before it opens
+ * Standby). Read-only (navigator.locks.query()): it neither takes the lock nor waits in line, so a window opening
+ * Standby at that moment isn't disturbed. Unknown (no query(), an error): false.
+ */
+export function standbyHeldSomewhere({ locks = defaultLocks(), name = STANDBY_LOCK } = {}) {
+  if (!locks || typeof locks.query !== 'function') return Promise.resolve(false);
+  try {
+    return Promise.resolve(locks.query()).then(
+      (snap) => !!snap && Array.isArray(snap.held) && snap.held.some((l) => l && l.name === name),
       () => false,
     );
   } catch {

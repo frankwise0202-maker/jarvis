@@ -16,6 +16,9 @@
 //   standby.enter()       inside a tap where possible (iOS starts audio only there): show it, listen
 //   standby.enter({ again: true })   v7.8.1: entered again without a tap (Voice Mode closed into Standby):
 //                         unlock({ tap: false }), so what the voice knows about stuck audio stays
+//   standby.enter({ again: true, launch: true })   REGRESS-1: opened by itself as Jarvis started (A11): if another
+//                         Jarvis window has Standby, it steps back to the app at once (no Standby that can't listen,
+//                         nothing waiting in line for the microphone)
 //   standby.resume()      after the wake routine (Voice Mode closed): show it again, listen again
 //   standby.rest()        MAC-2: the woken session left for a sheet: still woken (resume() later), but a microphone
 //                         kept for barge-in is let go meanwhile
@@ -115,6 +118,7 @@ export function createStandby(deps = {}) {
   let prevFocus = null;
   let kept = false; // v8.1: the microphone stayed on through the woken session (barge-in)
   let checking = false; // MAC-6: a wake waits for voiceElsewhere()'s answer
+  let atLaunch = false; // REGRESS-1: opened by itself at launch, and the lock hasn't answered yet
   const els = {};
   // v8.1: the capture's retries (2 s, 5 s, 15 s, 60 s, then every 5 minutes), the microphone it started on,
   // and the watchers of the chosen devices and of the Mac's sleep while Standby is open.
@@ -247,9 +251,10 @@ export function createStandby(deps = {}) {
    * Open Standby (call inside the tap that asked for it where possible). `again`: entered without a tap (Voice
    * Mode closed into Standby): the voice is told so (v7.8.1: what it knows about stuck audio stays).
    */
-  function enter({ again = false } = {}) {
+  function enter({ again = false, launch = false } = {}) {
     if (phase === 'open') return;
     if (typeof createCapture !== 'function') return;
+    atLaunch = !!launch;
     try {
       unlock({ tap: !again }); // the voice that will greet the owner later is unlocked in this tap (iOS)
     } catch {
@@ -267,6 +272,7 @@ export function createStandby(deps = {}) {
   /** Back to Standby after the wake routine or a conversation (no tap needed: the context is ready). */
   function resume() {
     if (phase === 'open') return;
+    atLaunch = false;
     if (!capture && typeof createCapture === 'function') capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState, onSilence: onCaptureSilence });
     open();
   }
@@ -304,6 +310,7 @@ export function createStandby(deps = {}) {
     const was = phase;
     phase = 'closed';
     kept = false;
+    atLaunch = false;
     wordRetry.cancel();
     teardown();
     stopWord({ terminate: true });
@@ -460,6 +467,14 @@ export function createStandby(deps = {}) {
   }
 
   function onLockChange(st) {
+    if (phase === 'open' && atLaunch && st === 'elsewhere') {
+      // REGRESS-1: opened by itself at launch, but another Jarvis window has Standby: back to the app (this window
+      // couldn't listen, and mustn't wait in line to take the microphone later).
+      atLaunch = false;
+      exit();
+      return;
+    }
+    if (st === 'held') atLaunch = false; // from now on an ordinary Standby (Use this window elsewhere: it waits)
     if (phase === 'open' && st === 'left') {
       // PRIVACY-7: the owner left Standby in the window that listened: this one leaves too (it doesn't start
       // listening by itself). Only that window closing hands Standby on.

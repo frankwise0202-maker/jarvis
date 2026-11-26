@@ -368,8 +368,9 @@ other windows, minimized, or with the display asleep.
 - **Turn it off** with Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**.
   Then he greets you from the background and waits for you to switch to him, as before.
 - **Standby when Jarvis starts.** With "Hey Jarvis" on, Jarvis opens Standby by himself when he starts (after a
-  restart or an update, say). Settings → Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)** turns that
-  on or off. Chrome lets a page speak only after one click, so until you click, Standby says **CLICK ONCE SO JARVIS
+  restart or an update, say), unless another Jarvis window is already on Standby: a second window or tab opens on
+  the app, as before. Settings → Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)** turns that on or
+  off. Chrome lets a page speak only after one click, so until you click, Standby says **CLICK ONCE SO JARVIS
   CAN SPEAK**: that click (or Enter) lets him speak, and Standby stays. If George can already speak (installed
   Jarvis, his voice ready), there is no such line.
 - **If he can't hear you in the background** (a Chrome or Mac setting can stop that), he says once "I can't hear you
@@ -1308,14 +1309,15 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   (Mac)** turns this off. See [Hands-free on a Mac](#hands-free-on-a-mac).
   - **It ends by itself.** After each answer he listens about 8 seconds for a follow-up, then goes back
     to Standby. In the background he takes at most 3 questions in a row without "Hey Jarvis", a tap or
-    a key, then stops listening, so a TV can't keep him going.
+    a key, then stops taking questions, so a TV can't keep him going.
   - **Interrupting him by voice** (with "Speakerphone speaks, Mac listens" or "Switch", once the
     hands-free Test passed) keeps Standby's microphone on through the whole conversation, listening on
     the Mac for "Hey Jarvis" or two claps, as on Standby: nothing it hears is recorded or sent.
   - **One window listens.** With Jarvis open in two windows, only one listens on Standby. Another
     takes over by itself only when that window closes; when you leave Standby, the others leave it
-    too, so no microphone turns on by itself. **Use this window** moves it when you choose. While
-    Voice Mode is open in one window, Standby in another doesn't wake.
+    too, so no microphone turns on by itself. **Use this window** moves it when you choose. A window
+    you open while another is on Standby doesn't open Standby by itself. While Voice Mode is open in
+    one window, Standby in another doesn't wake.
   - **Chrome's questions are said out loud** (Jarvis for Chrome: "Chrome asks: …"), in Voice Mode and
     at the next wake, and he listens up to 30 seconds for your answer, so anyone in the room can hear
     them. With Voice Mode closed, a notification says Chrome is asking instead.

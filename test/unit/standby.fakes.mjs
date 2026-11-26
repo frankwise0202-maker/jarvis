@@ -7,7 +7,8 @@
 //                       that withdraws a waiting request (AbortError), and steal (the holders' requests then
 //                       fail with AbortError). locks.holder(name) (the first holder), locks.holders(name),
 //                       locks.waiting(name); locks.close('A'): window A goes away (a closed tab: its locks are
-//                       let go and its requests dropped, and nothing more runs in it).
+//                       let go and its requests dropped, and nothing more runs in it). query() as the browser's:
+//                       { held: [{ name, mode, clientId }], pending: [...] } over every window.
 
 const abortError = (message) => Object.assign(new Error(message), { name: 'AbortError' });
 
@@ -46,6 +47,9 @@ export function createFakeLocks() {
     list.splice(i, 1);
     pump(name);
   }
+  function held_entries() {
+    return held.entries();
+  }
   function pump(name) {
     const q = line(name);
     while (q.length && fits(name, q[0].mode)) grant(name, q.shift());
@@ -68,6 +72,13 @@ export function createFakeLocks() {
     },
     as(who) {
       return {
+        query() {
+          const held = [];
+          const pending = [];
+          for (const [name, list] of held_entries()) for (const h of list) held.push({ name, mode: h.mode, clientId: h.entry.who });
+          for (const [name, q] of lines) for (const e of q) pending.push({ name, mode: e.mode, clientId: e.who });
+          return Promise.resolve({ held, pending });
+        },
         request(name, options, cb) {
           if (typeof options === 'function') {
             cb = options;

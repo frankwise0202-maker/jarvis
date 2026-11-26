@@ -199,6 +199,7 @@ async function setup(t) {
       needsClick,
       unlock,
       onWake: (w) => woken.push(w.trigger),
+      onExit: more.onExit,
       createLock: lock ? (onChange) => createStandbyLock({ locks: locks.as(who), onChange }) : null,
       bargeIn,
       ...more, // voiceElsewhere, pauseWhenHidden, …
@@ -444,6 +445,50 @@ test('MAC-10: a phone (Standby pauses while hidden) takes no lock: a hidden, pau
   await settle();
   assert.equal(b.sb.listening, 'live', 'B listens, as before v8.1');
   assert.equal(locks.holder('jarvis-standby'), null, 'no lock on a phone');
+});
+
+// REGRESS-1 and MISSED-1: with "Hey Jarvis" on, every Jarvis page on a Mac opened Standby by itself at launch. A
+// second tab then came up behind a full-screen Standby that couldn't listen, and waited in line for the microphone.
+test('REGRESS-1: Standby opened by itself at launch while another window has it steps back at once (no screen that can’t listen, nothing waiting in line)', async (t) => {
+  const { make, locks, shown } = await setup(t);
+  const a = make('A');
+  a.sb.enter();
+  await settle();
+  assert.equal(a.sb.listening, 'live');
+  const exits = [];
+  const b = make('B', { onExit: (e) => exits.push(e) });
+  b.sb.enter({ again: true, launch: true }); // A11: opened by itself as the page loaded
+  await settle();
+  assert.equal(b.sb.isOpen(), false, 'B is back on the app');
+  assert.equal(shown().length, 1, 'only A’s Standby is on screen');
+  assert.deepEqual(locks.waiting('jarvis-standby'), [], 'B doesn’t wait in line');
+  assert.equal(b.cap().starts, 0, 'B never opened the microphone');
+  assert.deepEqual(exits, [{ from: 'open' }], 'the app is told (its Standby key is up to date)');
+  a.sb.exit(); // MISSED-1: the owner leaves Standby in A
+  await settle();
+  assert.equal(b.cap().starts, 0, 'B still never opened the microphone');
+  assert.equal(locks.holder('jarvis-standby'), null, 'nobody holds Standby');
+});
+
+test('REGRESS-1: Standby at launch with no other window on Standby opens and listens as before; one the owner opens waits as before', async (t) => {
+  const { make } = await setup(t);
+  const a = make('A');
+  a.sb.enter({ again: true, launch: true });
+  await settle();
+  assert.equal(a.sb.listening, 'live', 'the launch Standby listens');
+  const b = make('B');
+  b.sb.enter(); // the owner's own tap: it waits, with Use this window
+  await settle();
+  assert.equal(b.sb.listening, 'elsewhere');
+  b.sb.exit();
+  await settle();
+  // Taken later by Use this window, a launch Standby that listened steps back like any other (it waits).
+  const c = make('C');
+  c.sb.enter();
+  await settle();
+  c.sb.exit();
+  await settle();
+  assert.equal(a.sb.listening, 'live');
 });
 
 test('Standby taken by another window during a kept session: the barge-in microphone goes too', async (t) => {

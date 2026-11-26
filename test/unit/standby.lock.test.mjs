@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStandbyLock, STANDBY_LOCK, VOICE_LOCK, holdVoiceLock, voiceOpenSomewhere } from '../../src/platform/standby-lock.js';
+import { createStandbyLock, STANDBY_LOCK, VOICE_LOCK, holdVoiceLock, voiceOpenSomewhere, standbyHeldSomewhere } from '../../src/platform/standby-lock.js';
 import { createFakeLocks } from './standby.fakes.mjs';
 
 const settle = async () => {
@@ -244,4 +244,24 @@ test('MAC-6: without Web Locks the voice lock does nothing and nobody is busy (a
   const throwing = { request() { throw new Error('SecurityError'); } };
   holdVoiceLock({ locks: throwing })();
   assert.equal(await voiceOpenSomewhere({ locks: throwing }), false);
+});
+
+// REGRESS-1: Standby at launch (A11) opens only where it can listen: app.js asks first whether another Jarvis window
+// holds Standby (without asking for the lock itself, so a window opening Standby at that moment isn't disturbed).
+test('REGRESS-1: standbyHeldSomewhere() says whether some window holds Standby, without taking or queuing for it', async () => {
+  const locks = createFakeLocks();
+  const ask = () => standbyHeldSomewhere({ locks: locks.as('B') });
+  assert.equal(await ask(), false, 'nobody on Standby');
+  const a = windowOn(locks, 'A');
+  a.lock.acquire();
+  await settle();
+  assert.equal(await ask(), true, 'A holds it');
+  assert.deepEqual(locks.waiting(STANDBY_LOCK), [], 'asking queued nothing');
+  assert.equal(locks.holder(STANDBY_LOCK), 'A', 'and took nothing from A');
+  a.lock.release();
+  await settle();
+  assert.equal(await ask(), false, 'A left Standby');
+  assert.equal(await standbyHeldSomewhere({ locks: null }), false, 'no Web Locks: as before');
+  assert.equal(await standbyHeldSomewhere({ locks: { request() {} } }), false, 'no query(): unknown, so not held (Standby itself steps back if it is)');
+  assert.equal(await standbyHeldSomewhere({ locks: { query: () => Promise.reject(new Error('SecurityError')) } }), false);
 });

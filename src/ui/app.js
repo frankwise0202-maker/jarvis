@@ -98,7 +98,7 @@ import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';
 import { createWakePending } from '../lib/wake/pending.js';
 import { setPausesWhenHidden as naturalPausesWhenHidden } from '../platform/voice/natural/natural-stream.js';
-import { createStandbyLock, holdVoiceLock, voiceOpenSomewhere } from '../platform/standby-lock.js';
+import { createStandbyLock, holdVoiceLock, voiceOpenSomewhere, standbyHeldSomewhere } from '../platform/standby-lock.js';
 import { bargeInAllowed, readHandsFreeTest } from '../lib/hands-free.js';
 import { setupOf, handsFreeMeasure } from '../lib/audio-devices.js';
 // v8.1: one router for what the owner says (SPEC §30), and each track's commands in its own module.
@@ -1940,7 +1940,7 @@ export async function startApp(rootEl) {
    * Call inside the tap where possible (iOS starts the microphone's audio only there). `again`: back
    * after the wake routine or a conversation (no tap needed then).
    */
-  function enterStandby({ again = false } = {}) {
+  function enterStandby({ again = false, launch = false } = {}) {
     if (state.demo) return false;
     if (isVoiceModeOpen()) return false; // Voice Mode closes itself into Standby ("go to sleep")
     cancelSheetReturn();
@@ -1950,7 +1950,7 @@ export async function startApp(rootEl) {
     closePhoneSheets();
     if (!standby) return false;
     if (again && standby.isAwaiting()) standby.resume();
-    else standby.enter({ again }); // v7.8.1: again = no tap behind it
+    else standby.enter({ again, launch }); // v7.8.1: again = no tap behind it; REGRESS-1: launch = by itself at start
     return true;
   }
 
@@ -5196,7 +5196,15 @@ export async function startApp(rootEl) {
 
   if (!state.demo && !getSettings().onboarded) openOnboarding();
   // v8.1 (A11): back on Standby after a restart or an update, without a click (a Mac whose owner wakes Jarvis by voice).
-  else if (safe(() => standbyAtLaunch(), false)) safe(() => enterStandby({ again: true }));
+  // REGRESS-1: only where it can listen. Another Jarvis window holding Standby (the lock): this one opens on the app as
+  // in v8.0, and never waits in line for the microphone; one that loses a race to it steps back by itself (launch).
+  else if (safe(() => standbyAtLaunch(), false)) {
+    Promise.resolve(safe(() => standbyHeldSomewhere(), false))
+      .catch(() => false)
+      .then((held) => {
+        if (!held && !isVoiceModeOpen() && safe(() => standbyAtLaunch(), false)) safe(() => enterStandby({ again: true, launch: true }));
+      });
+  }
 
   {
     try {

@@ -4392,14 +4392,19 @@ listening). A window that closes lets go of the lock with it. Not on a phone (no
 
 **Standby at launch** (A11, SHOULD; u1 gap 4). Setting `standbyAtLaunch` (`''` automatic, `'on'`, `'off'`; Settings →
 Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)**, computers only): on a computer, set up, not the demo,
-`'on'` or automatic with "Hey Jarvis" on (`wakeWord`), the boot opens Standby (`enterStandby({ again: true })`) after
-the onboarding check, unless the address asks for something else (`?optics=1`, `?homebase=…` from a notification). Standby's `needsClick()` dep: not a phone, `navigator.userActivation.hasBeenActive` false, and
-George can't speak without a click (`georgeWithoutClick()`: his voice, the home base's or this Mac's, on and ready,
-and Jarvis installed, `isStandalone()`). While it holds, the state line says **CLICK ONCE SO JARVIS CAN SPEAK**. The
-line is asked once per opening when Standby renders (Chrome makes the page active before the click or key reaches
-Standby, so the handler can't ask again), and the next click or Enter/Space answers it: `unlock({ tap: true })`
-inside that gesture, the line goes, Standby stays; any later tap leaves as before. The E2E harness seeds
-`standbyAtLaunch: 'off'` so scenarios with "Hey Jarvis" on start on the home screen.
+`'on'` or automatic with "Hey Jarvis" on (`wakeWord`), the boot opens Standby
+(`enterStandby({ again: true, launch: true })`) after the onboarding check, unless the address asks for something else
+(`?optics=1`, `?homebase=…` from a notification), or another Jarvis window holds Standby (REGRESS-1:
+`standbyHeldSomewhere()`, a read-only `navigator.locks.query()` for `jarvis-standby`): a second window or tab opens on
+the app, as in v8.0. A launch Standby that still finds the lock held (two windows starting together) steps back at once
+(`launch`: on `elsewhere`, `exit()`), so it never covers the window with a Standby that can't listen nor waits in line
+for the microphone (MISSED-1). Once it holds the lock it is an ordinary Standby. Standby's `needsClick()` dep: not a
+phone, `navigator.userActivation.hasBeenActive` false, and George can't speak without a click (`georgeWithoutClick()`:
+his voice, the home base's or this Mac's, on and ready, and Jarvis installed, `isStandalone()`). While it holds, the
+state line says **CLICK ONCE SO JARVIS CAN SPEAK**. The line is asked once per opening when Standby renders (Chrome
+makes the page active before the click or key reaches Standby, so the handler can't ask again), and the next click or
+Enter/Space answers it: `unlock({ tap: true })` inside that gesture, the line goes, Standby stays; any later tap leaves
+as before. The E2E harness seeds `standbyAtLaunch: 'off'` so scenarios with "Hey Jarvis" on start on the home screen.
 
 **Tests.** Unit `hands-free` (`followUp`), `voice.handsfree` (the 8 s window and one try; a follow-up answered; the
 brake, woken and tapped, Return to standby off; a tap or a barge-in starts the count again), `standby.lock` (one, two
