@@ -55,6 +55,7 @@ test('settings: defaults match SPEC and are frozen', async () => {
     homeBaseUrl: '', // the home base (Jarvis Core) address, not linked (v7.5)
     homeBaseHear: false, homeBaseSpeak: false, // hearing and voice through the home base, off (v7.7 beta)
     homeBaseSpeakBy: '', // nobody has set George's voice from the home base on this device yet (v7.8)
+    handsFreeBackground: true, standbyAtLaunch: '', // v8.1 (mac-hf): keep talking in the background (A1); Standby at launch, automatic (A11)
   };
   assert.deepEqual(r.s, expected);
   assert.deepEqual(r.d, expected);
