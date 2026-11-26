@@ -290,9 +290,9 @@ export default [
       await t.waitFor(async () => (await said(page)).some((s) => /\$1/.test(s)), { timeout: 15000, message: async () => `Jarvis to say the pause (${JSON.stringify(await said(page))})` });
       await page.waitForTimeout(1500);
       const spoken = await said(page);
-      const note = await noteText(page);
+      const shown = await noteText(page);
       const meter = await meterText(page);
-      note(t, `said ${JSON.stringify(spoken)}; note "${note}"; meter "${meter}"`);
+      note(t, `said ${JSON.stringify(spoken)}; note "${shown}"; meter "${meter}"`);
       await shot(t, 'mac-live-view-voice-cap');
       t.assert(!spoken.some((s) => /^Live view on/.test(s)), `never "Live view on" while it is paused at the limit (${JSON.stringify(spoken)})`);
       const all = spoken.join(' ');
