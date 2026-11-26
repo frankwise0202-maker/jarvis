@@ -49,6 +49,7 @@ import voiceGeorge from './scenarios/voice-george.mjs';
 import voiceGeorgeStuck from './scenarios/voice-george-stuck.mjs';
 // ==== v8.1: each builder imports its new scenario files between its two markers (keep the markers) ====
 // ---- mac-dev ▸
+import audioDevices from './scenarios/audio-devices.mjs';
 // ---- mac-dev ◂
 // ---- mac-hf ▸
 // ---- mac-hf ◂
@@ -85,6 +86,7 @@ const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
 // They run after today's scenarios.
 const V81_SCENARIOS = [
   // ---- mac-dev ▸
+  ...audioDevices,
   // ---- mac-dev ◂
   // ---- mac-hf ▸
   // ---- mac-hf ◂
