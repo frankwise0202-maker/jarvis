@@ -789,7 +789,9 @@ export const WINDOWS = {
     // "turn the hologram on" is never Optics' hologram (a new paid Look).
     ...['WINHO', 'WINHV', 'WINHF'].flatMap((state) => [
       ['turn the hologram off', state, 'windows-hologram:windows-hologram'],
+      ['turn off the hologram', state, 'windows-hologram:windows-hologram'],
       ['turn the hologram on', state, null],
+      ['hologram off', state, null],
     ]),
     // MISSED-R2V-2: everyday searches that start with a Google product's word stay searches (of exactly those words:
     // test/unit/screens.chrome.test.mjs), never a paid question.

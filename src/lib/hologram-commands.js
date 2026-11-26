@@ -271,7 +271,7 @@ const SIMPLE = [
   { re: /^(?:turn|switch) (?:the |all the )?(?:labels?|names|tags) off$/, action: 'labels-off' },
   { re: /^(?:turn|switch) (?:the )?(?:rotation|spinning|spin|auto rotate|autorotate) off$/, action: 'stop' },
   { re: /^(?:turn|switch) (?:the )?(?:rotation|spinning|auto rotate|autorotate) (?:back )?on$/, action: 'rotate' },
-  { re: /^(?:turn|switch) (?:the |this |that )?(?:hologram|model|3d model) off$/, action: 'close' },
+  { re: /^(?:turn|switch) (?:the |this |that )?(?:hologram|model|3d model) off$|^(?:turn|switch) off (?:the |this |that )?(?:hologram|model|3d model)$/, action: 'close' },
   // (never a phrase ending in "on" or "off": "turn the camera off", "turn the lights on" are switches, not turns:
   // ROUTING-R3-1)
   { re: new RegExp(`^(?!.* (?:on|off)$)(rotate|spin|turn|revolve|orbit|auto rotate|autorotate)${OBJ}( around| round)?$`), action: 'rotate' },
