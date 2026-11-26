@@ -4817,7 +4817,9 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   - `this`: "pull/bring/put/open/show this|that|it (up) in|on (Google) Chrome / my browser / a new tab".
   - `link` `{ ordinal }`: "open the (second) link|source (in Chrome)", "open link 3" (1-5, last), only when the
     newest reply has links (`state.reply.links`; otherwise declined: a Chrome task's in a Chrome context).
-  - `search` `{ query }` (`check: true`): "google …" (not a statement about Google: "google is a company"), "search
+  - `search` `{ query }` (`check: true`): "google …" (not a statement about Google: "google is a company", nor about
+    one of its products: "Google Docs won't open"; a product or its stock keeps "google" in the query: "google stock
+    price"), "search
     (for) … in Chrome / on Google", "look up … on Google", "search Google for …", "open <not a site> in Chrome".
     A query that goes on to act ("… and add it to the cart") is left to Jarvis for Chrome's tasks (`TASKISH`);
     "find" is not a search verb.

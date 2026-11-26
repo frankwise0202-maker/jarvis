@@ -112,6 +112,11 @@ const SEARCH_RE = [
 ];
 // "google USB-C chargers"
 const GOOGLE_RE = /^google (.+)$/;
+// ROUTING-3: Google's own products (and its stock) right after "Google" are the subject, not the first words of
+// a search: "Google Home isn't responding" is a statement for Jarvis; "google stock price" searches with "google".
+const GOOGLE_PRODUCT = /^(?:home|nest|docs?|drive|maps|photos|meet|calendar|pixel|fi|sheets|slides|play(?: store)?|assistant|gmail|chromecast|chrome|tv|stock|stocks|shares|earnings|news|translate|lens|keep|wallet|pay|classroom|workspace|cloud|fit|voice|account|one|flights|finance|fiber|ads)\b/;
+// A finite verb after the product ("… won't open", "… keeps freezing", "… has no sound"): a statement about it.
+const STATEMENT_VERB = /\b(?:isnt|arent|wasnt|werent|wont|doesnt|dont|didnt|cant|cannot|couldnt|wouldnt|keeps|kept|stopped|stops|has|had|sent|sends|deleted|deletes|drains|drained|crashed|crashes|froze|freezes|broke|breaks|died|dies|lost|loses|failed|fails|says|said|shows|showed|needs|wants|got|gets|went|goes|changed|moved|logged|logs|asks|asked|won|beat|beats)\b/;
 const SITE_RE = new RegExp(`^(?:open|go to|pull up|bring up|load|take me to|show me)(?: up)? ([a-z0-9. -]+?)(?: ${IN_BROWSER})?$`);
 // Things with names of their own in Jarvis: never a web search when "opened in Chrome".
 const NOT_A_SITE = /^(?:it|this|that|them|the camera|camera|optics|settings|history|the library|library|voice mode|standby|mission control|the hologram|the blueprint|the report|the answer)$/;
@@ -175,11 +180,17 @@ export function matchChromeCommand(text, state = {}) {
   m = GOOGLE_RE.exec(s);
   if (m) {
     const q = m[1].trim();
+    const asks = /^(?:what|how|why|who|when|where|which)\b/.test(q);
     // A query has no "is/are/was" unless it is itself a question ("google what is a heat pipe").
-    const statement = NOT_QUERY.test(q) || (/\b(?:is|are|was|were|has been|have been)\b/.test(q) && !/^(?:what|how|why|who|when|where|which)\b/.test(q));
-    if (!statement) {
+    const statement = NOT_QUERY.test(q) || (/\b(?:is|are|was|were|has been|have been)\b/.test(q) && !asks);
+    // "Google Docs won't open": a statement about a Google product (ROUTING-3).
+    const product = q !== 'maps' && GOOGLE_PRODUCT.test(q);
+    if (!statement && !(product && !asks && STATEMENT_VERB.test(q))) {
       if (q === 'maps') return chromeAction({ kind: 'site', url: CHROME_SITES['google maps'][0], name: CHROME_SITES['google maps'][1] }, 'auto');
-      return searchAction(q, '');
+      if (!product) return searchAction(q, '');
+      // "google stock price": the search keeps "google" (searchAction would take it off).
+      if (q.split(' ').length >= 16 || TASKISH.test(q) || PAGE_OBJECT.test(q)) return null;
+      return chromeAction({ kind: 'search', query: `google ${q}` }, 'auto', { check: true });
     }
   }
   m = SITE_RE.exec(s);
