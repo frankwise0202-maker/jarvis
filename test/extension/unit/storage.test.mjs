@@ -111,3 +111,46 @@ test('sites allowed permanently can be listed and forgotten', async () => {
   await store.forgetSite('amazon.com');
   assert.deepEqual(await store.getSites(), { 'bestbuy.com': 'always' });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Voice from Jarvis (v1.1): the link, its switches, the day's count of tasks from Jarvis.
+
+import { DEFAULT_VOICE, KEYS as KEYS_V, localDay } from '../../../extension/src/shared/storage.js';
+import { fakeStorageArea } from '../helpers/fake-chrome.mjs';
+
+test('Voice from Jarvis: off until linked; Link turns Tasks from Jarvis on; voice approvals stay off', async () => {
+  const fake = { storage: { local: fakeStorageArea() } };
+  const store = createStore(fake);
+  assert.deepEqual(DEFAULT_VOICE, { tasksFromJarvis: false, approvals: false });
+  assert.deepEqual(await store.getVoice(), { tasksFromJarvis: false, approvals: false });
+  assert.equal(await store.getLink(), null);
+  const key = 'A'.repeat(43);
+  assert.equal((await store.setLink({ core: 'https://evil.example', key })).ok, false, 'only a Tailscale home base');
+  assert.equal(await store.getLink(), null);
+  const res = await store.setLink({ core: 'https://alienware.tail4e5f6a.ts.net', key }, 1234);
+  assert.deepEqual(res.link, { v: 1, core: 'https://alienware.tail4e5f6a.ts.net', key, linkedAt: 1234 });
+  assert.deepEqual(fake.storage.local.data[KEYS_V.link], res.link, 'under chromeLink, as the wire says');
+  assert.deepEqual(await store.getVoice(), { tasksFromJarvis: true, approvals: false });
+  // Anything stored that isn't a link reads as none.
+  await fake.storage.local.set({ chromeLink: { v: 1, core: 'https://alienware.tail4e5f6a.ts.net', key: 'short' } });
+  assert.equal(await store.getLink(), null);
+  await store.setRelayState({ after: 'x', seen: ['a', 1, 'b'] });
+  assert.deepEqual(await store.getRelayState(), { after: 'x', seen: ['a', 'b'] });
+  await store.clearLink();
+  assert.equal(await store.getLink(), null);
+  assert.deepEqual(await store.getRelayState(), { after: '', seen: [] });
+  assert.equal(await store.getDevVoiceApprovals(), false, 'never outside development builds');
+});
+
+test('Voice from Jarvis: tasks are counted per day of this computer’s calendar', async () => {
+  const store = createStore({ storage: { local: fakeStorageArea() } });
+  const day1 = new Date(2026, 10, 26, 23, 59).getTime();
+  const day2 = new Date(2026, 10, 27, 0, 1).getTime();
+  assert.equal(localDay(day1), '2026-11-26');
+  assert.equal(await store.voiceTasksToday(day1), 0);
+  assert.equal(await store.countVoiceTask(day1), 1);
+  assert.equal(await store.countVoiceTask(day1), 2);
+  assert.equal(await store.voiceTasksToday(day1), 2);
+  assert.equal(await store.voiceTasksToday(day2), 0, 'a new day starts at 0');
+  assert.equal(await store.countVoiceTask(day2), 1);
+});

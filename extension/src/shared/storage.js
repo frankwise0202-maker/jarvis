@@ -284,9 +284,10 @@ export function createStore(chromeLike = globalThis.chrome) {
     async setLink({ core, key }, at = Date.now()) {
       const link = normalizeLink({ v: 1, core, key, linkedAt: at });
       if (!link) return { ok: false, error: 'That link code can’t be used.' };
-      await set(KEYS.link, link);
+      // (A new link starts reading the home base afresh: the old cursor goes first.)
       await local.remove(KEYS.relay);
       await this.setVoice({ tasksFromJarvis: true });
+      await set(KEYS.link, link);
       return { ok: true, link };
     },
     async clearLink() {
