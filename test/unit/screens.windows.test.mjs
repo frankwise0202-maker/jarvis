@@ -133,6 +133,10 @@ test('D5: size and swap words (a named window always; "it" only with a window op
   assert.equal(matchWindowCommand('make your window bigger in the kitchen', NONE), null);
   assert.equal(matchWindowCommand('make it bigger', NONE), null, 'no window: a question for Jarvis ("make it bigger" about an answer)');
   assert.equal(matchWindowCommand('make it bigger', { ...ONE, hologram: { open: true, inWindow: false } }), null, 'a viewer in the main window owns "it"');
+  assert.equal(matchWindowCommand('make it bigger', TWO), null, 'a hologram in a window owns "it": its zoom (D3)');
+  assert.deepEqual(pick(matchWindowCommand('make it full screen', TWO)), { op: 'size', size: 'fill', which: null }, 'filling is the window\'s');
+  assert.deepEqual(pick(matchWindowCommand('make the window bigger', { ...ONE, hologram: { open: true, inWindow: false } })), { op: 'size', size: 'bigger', which: null }, 'a window noun is a window, a viewer open or not');
+  assert.deepEqual(pick(matchWindowCommand('make that window smaller', TWO)), { op: 'size', size: 'smaller', which: null });
   assert.equal(matchWindowCommand('full screen', NONE), null);
   assert.equal(matchWindowCommand('make it shorter', ONE), null);
   assert.equal(matchWindowCommand('make it funnier', ONE), null);

@@ -168,11 +168,17 @@ export function matchWindowCommand(text, state = {}) {
 
   m = SIZE_NAMED_RE.exec(s);
   if (m) return action('size', { size: m[2] ? sizeOf(m[2]) : 'fill', which: kindOf(m[1] || m[3]) });
-  // "It" is a window only while one is open and no viewer in the main window owns "it".
+  // A window noun ("the window", "this window") is a window while one is open. "It" is a window only when
+  // no hologram owns it: the main window's viewer, or a hologram in a window for "make it bigger/smaller"
+  // (its zoom, D3). "This window" is the one with the focus: Jarvis's own when it has it (he says so).
   const viewer = !!(state && state.hologram && state.hologram.open && !state.hologram.inWindow);
+  const holoWindow = Array.isArray(state && state.windows) && state.windows.some((w) => w && w.kind === 'hologram');
   m = SIZE_IT_RE.exec(s);
-  // "This window" is the one with the focus: Jarvis's own when it has it (and he says so).
-  if (m && open >= 1 && !viewer) return action('size', { size: sizeOf(m[2]), which: null, ...(/^this \w/.test(m[1]) ? { here: true } : {}) });
+  if (m && open >= 1) {
+    const size = sizeOf(m[2]);
+    if (!/^(?:it|this|that)$/.test(m[1])) return action('size', { size, which: null, ...(/^this \w/.test(m[1]) ? { here: true } : {}) });
+    if (!viewer && !(holoWindow && m[1] === 'it' && size !== 'fill')) return action('size', { size, which: null });
+  }
   if (FILL_RE.test(s) && open >= 1 && !viewer) return action('size', { size: 'fill', which: null });
   return null;
 }
