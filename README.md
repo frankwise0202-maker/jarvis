@@ -261,7 +261,7 @@ you off.
 #### Everything by voice
 
 Say these in Voice Mode (after "Hey Jarvis" or two claps from Standby), or type them in the chat box,
-a hologram's field or Optics' field: the same words do the same thing everywhere. They act at once,
+a hologram's field or Optics' field: most of them do the same thing everywhere. They act at once,
 cost nothing unless the table says so, and Jarvis says one short line so you know what he did ("New
 chat.", "Settings are open."). Anything else is a question for Jarvis, as before: it waits 2 seconds
 on screen first, and costs what a question costs.
@@ -330,6 +330,12 @@ on screen first, and costs what a question costs.
 - **Opening something to look at** ("open settings", "open the library") from Voice Mode: Jarvis says
   so, Voice Mode closes, and it opens as if you had tapped it (it doesn't go back to Standby, since you
   asked to look at it).
+- **In a hologram's field or Optics' field** a few words are that viewer's question instead. Typed in a
+  hologram's field, "open optics", "close the camera", "research this", "which microphone are you
+  using?", "is Jarvis for Chrome linked?" and "brief me" go to Jarvis as a question. In Optics' field
+  (typed, or said to its microphone), Voice Mode's own words ("repeat that"), Apple Music ("stop the
+  music"), "which microphone are you using?", "is Jarvis for Chrome linked?" and "brief me" become the
+  Look's question (a Look, about 3¢). Say them in Voice Mode instead.
 
 #### Hands-free on a Mac
 
