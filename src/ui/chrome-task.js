@@ -965,7 +965,10 @@ export function createChromeVoice(deps = {}) {
     const line = taskDoneLine({ status, answer: t.answer });
     // Jarvis says the final answer where the owner talks to him; with Voice Mode closed everywhere, the card
     // shows it (and a notification tells the owner while Jarvis is hidden).
-    if (!v() && voiceElsewhere()) return;
+    const adapter = v();
+    if (!adapter && voiceElsewhere()) return;
+    // MAC-R3-2: Voice Mode open in several windows: only the one the owner talks to (or talked to last) says it.
+    if (adapter && typeof adapter.talksHere === 'function' && quiet(() => adapter.talksHere(), true) === false) return;
     if (!v() && quiet(() => hidden(), false) && typeof notify === 'function') {
       quiet(() => notify({ tag: 'chrome-task', title: 'Chrome', body: sayable(line.show, 180), onClick: () => focusApp && focusApp() }));
       return;
@@ -1037,7 +1040,9 @@ export function createChromeVoice(deps = {}) {
   function toVoiceOrNotice(entry) {
     const adapter = v();
     const line = promptLine(entry.prompt);
-    if (adapter && typeof adapter.prompt === 'function') {
+    // MAC-R3-2: Voice Mode open in several windows: only the one the owner talks to (or talked to last) says it.
+    const here = !!adapter && (typeof adapter.talksHere !== 'function' || quiet(() => adapter.talksHere(), true) !== false);
+    if (adapter && here && typeof adapter.prompt === 'function') {
       if (entry.handle && typeof entry.handle.update === 'function') {
         quiet(() => entry.handle.update({ say: line.say, answers: channelAnswers(entry) }));
       } else {

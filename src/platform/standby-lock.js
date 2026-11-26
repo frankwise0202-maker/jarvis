@@ -385,3 +385,50 @@ export function standbyHeldSomewhere({ locks = defaultLocks(), name = STANDBY_LO
     return Promise.resolve(false);
   }
 }
+
+/**
+ * MAC-R3-2: which Jarvis window of this device the owner talked to last (its Voice Mode listened or answered), kept in
+ * localStorage (one origin: the installed app and its tabs share it). While Voice Mode is open in several windows, only
+ * that one says Chrome's questions and news. note() when this window's Voice Mode starts to listen or answer; drop()
+ * when it closes or the page goes; here(): no window noted, or this one.
+ */
+export function createVoiceTalk({ storage = defaultStorage(), key = 'jarvis.voice.talk', win = '' } = {}) {
+  const me = win || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const read = () => {
+    try {
+      const r = storage ? JSON.parse(storage.getItem(key) || 'null') : null;
+      return r && typeof r === 'object' ? r : null;
+    } catch {
+      return null;
+    }
+  };
+  return {
+    note() {
+      try {
+        if (storage) storage.setItem(key, JSON.stringify({ win: me, at: Date.now() }));
+      } catch {
+        /* storage off: every window says them, as before */
+      }
+    },
+    drop() {
+      try {
+        const r = read();
+        if (storage && r && r.win === me) storage.removeItem(key);
+      } catch {
+        /* ignore */
+      }
+    },
+    here() {
+      const r = read();
+      return !r || r.win === me;
+    },
+  };
+}
+
+function defaultStorage() {
+  try {
+    return typeof globalThis.localStorage === 'object' && globalThis.localStorage ? globalThis.localStorage : null;
+  } catch {
+    return null;
+  }
+}

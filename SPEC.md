@@ -5613,9 +5613,12 @@ them that sounds like Jarvis's own question or his answer words ("Chrome asks", 
 "Chrome is done. The answer is on its card." (the card keeps the full text), and "what are you doing in Chrome?"
 leaves such a step out (`sayableAnswer`; CHROME-VOICE-R2-4). With two Jarvis windows (REDTEAM-VOICE-7), the window
 holding the link passes the prompts, their closing and a task's end to the others (BroadcastChannel
-`jarvis-chrome-voice`): the window with Voice Mode open says them, the link's window notifies only when Voice Mode is
-open nowhere, every window shows the cards. When the window that passed a question on closes ("bye"), a window that
-has it notifies for it from then on (CHROME-VOICE-R2-6). The link's own notices (a late start, D5) are said as any
+`jarvis-chrome-voice`): the window with Voice Mode open says them (open in several: only the one whose Voice Mode
+listens or answers, or did last, MAC-R3-2: app.js notes that window in localStorage `jarvis.voice.talk`,
+`createVoiceTalk()` in src/platform/standby-lock.js, and the voice adapter's `talksHere()` tells toVoiceOrNotice and
+onDone), the link's window notifies only when Voice Mode is open nowhere, every window shows the cards. When the window
+that passed a question on closes ("bye"), a window that has it notifies for it from then on (CHROME-VOICE-R2-6). The
+link's own notices (a late start, D5) are said as any
 line from Chrome is (`api.chrome.say`: no microphone after them unless the session would listen anyway;
 CHROME-VOICE-R2-5). A task's `done`
 (any status) closes its prompts, and so does the link reporting that task gone or another one (REDTEAM-VOICE-8). A

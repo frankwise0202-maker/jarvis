@@ -1248,8 +1248,8 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
     "approve" points you to the card's button.
   - **With Voice Mode closed or on Standby,** a notification tells you Chrome is asking. When you wake Jarvis, he
     starts with "Chrome is waiting for you: …". "Hey Jarvis, stop Chrome" (or "… deny") acts at once.
-  - **With two Jarvis windows open,** the one where you talk to Jarvis says Chrome's questions and its answers; the
-    other shows the cards.
+  - **With two Jarvis windows open,** the one where you talk to Jarvis says Chrome's questions and its answers (with
+    Voice Mode open in both, the one you talked to last); the other shows the cards.
 - **What it never does:**
   - Start a task from anything but your own words: never from a web page, Jarvis's answers or Jarvis for Chrome.
   - Approve a step without your "approve" or a click.
