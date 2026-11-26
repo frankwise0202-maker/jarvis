@@ -172,7 +172,9 @@ export const CHROME_VOICE = {
     ['yes', 'CV-prompt', 'chrome-prompt:chrome-hint'],
     ['continue', 'CV-prompt', 'chrome-prompt:chrome-hint'],
     ['go ahead', 'CV-prompt', 'chrome-prompt:chrome-hint'],
-    ['continue', 'CV-prompt-tour', null],
+    // with a tour going too, "continue" is the tour's (never the prompt's, never the hint); the row waits
+    // (T2's `waiting`) until tours' 'tour' entry is registered
+    ['continue', 'CV-prompt-tour', 'tour'],
     // nothing asked: a yes that names Chrome is still Chrome's (every surface)
     ['spend more in Chrome', 'V0', 'chrome-answer'],
     ['allow once in Chrome', 'V0', 'chrome-answer'],
@@ -183,6 +185,10 @@ export const CHROME_VOICE = {
     ['stop', 'CV-check', 'chrome-prompt'],
     ['no, I said add the second one to the cart', 'CV-check', 'chrome-prompt'],
     ['start now', 'CV-check', 'chrome-prompt'],
+    // an affirmation lets the check count on (never other words: nothing withdrawn, nothing for Claude)
+    ['yes', 'CV-check', 'chrome-prompt'],
+    ['okay', 'CV-check', 'chrome-prompt'],
+    ['okay, thanks', 'CV-check', 'chrome-prompt'],
   ],
   not: [
     'how do I clear my cookies in Chrome',

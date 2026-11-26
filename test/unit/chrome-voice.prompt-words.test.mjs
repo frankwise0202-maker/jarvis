@@ -194,7 +194,7 @@ test('every answer\'s words are reserved words, and every reserved word answers 
   }
 });
 
-test('the answer layer (chrome.prompt): the prompt\'s words, a bare "cancel" or "no" only when it was asked last, never a bare yes', () => {
+test('the answer layer (chrome-prompt): the prompt\'s words, a bare "cancel" or "no" only when it was asked last, never a bare yes', () => {
   const prompt = { id: 'chrome:p1', askedAt: 3000, ...PROMPTS.cart };
   const st = (patch = {}) => ({ prompt, questions: [], ...patch });
   const pick1 = (words, s = st()) => matchChromeAnswer(words, s);
@@ -216,10 +216,15 @@ test('the answer layer (chrome.prompt): the prompt\'s words, a bare "cancel" or 
   assert.equal(pick1('approve', { prompt: { id: 'x', askedAt: 1, kind: 'step', voice: { allowed: true } } }).answer, 'click', 'no approve choice: consumed, needs a click');
 });
 
-test('the answer layer while a check counts down: withdraw, correct, go; other words aren\'t its', () => {
+test('the answer layer while a check counts down: withdraw, correct, go, keep; other words aren\'t its', () => {
   const st = { chromeCheck: { kind: 'task' } };
   for (const w of ['cancel', 'no', 'stop', 'Stop!', 'never mind', 'wait', 'okay stop', 'cancel Chrome']) assert.equal((matchChromeAnswer(w, st) || {}).how, 'withdraw', w);
   for (const w of ['start now', 'send it', 'go ahead', 'do it']) assert.equal((matchChromeAnswer(w, st) || {}).how, 'go', w);
+  // An affirmation lets it count on (never sooner, never other words), for a task's check and a yes's.
+  for (const kind of ['task', 'approve']) {
+    for (const w of ['yes', 'Yes.', 'yeah', 'okay', 'Okay, thanks.', 'sure', 'yes please', 'thank you', 'sounds good']) assert.equal((matchChromeAnswer(w, { chromeCheck: { kind } }) || {}).how, 'keep', `${kind}: ${w}`);
+  }
+  assert.equal(matchChromeAnswer('yes', {}), null, 'no check, no prompt: a bare yes is nothing here');
   assert.deepEqual(matchChromeAnswer('No, I said add the second one to the cart', st), { free: true, undo: false, check: false, camera: false, do: 'chrome-check', how: 'correct', words: 'add the second one to the cart' });
   assert.equal(correctionOf('no I meant the 32-inch one'), 'the 32-inch one');
   assert.equal(correctionOf('I said find a USB-C hub.'), 'find a USB-C hub');

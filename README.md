@@ -966,7 +966,7 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
   the cart. Say cancel to stop." Two seconds after he finishes (five while Jarvis is behind other windows) it starts,
   and he says "Chrome is on it."
   - To stop it from starting, say "cancel", "no" or "stop", or press the card's **Cancel**. **Start now** skips the
-    wait.
+    wait. "Yes" or "okay" just lets it count on.
   - To change the words, say "no, I said …".
   - Typed in the chat, the card shows the price and starts after two seconds, with nothing said.
 - **"Click around for me":** Jarvis asks "What should I do in Chrome?", and your answer is the task (checked the

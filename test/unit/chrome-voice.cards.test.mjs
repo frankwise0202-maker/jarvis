@@ -191,7 +191,8 @@ test('in the chat\'s dock: a prompt\'s card answers with the prompt\'s hash (via
     out.cartStatus = dock.querySelector('[data-prompt-id="p-cart"] [data-testid="chrome-prompt-card-status"]').textContent;
     fake.closePrompt('p-site', 'clicked');
     out.siteStatus = dock.querySelector('[data-prompt-id="p-site"] [data-testid="chrome-prompt-card-status"]').textContent;
-    out.state = cv.state().prompt;
+    // Nothing waits for an answer now: no wake line for it (Voice Mode's channel holds an open prompt itself).
+    out.pending = cv.pending();
     return out;
   });
   assert.deepEqual(r.cards, ['p-site', 'p-cart'], 'newest first');
@@ -199,7 +200,7 @@ test('in the chat\'s dock: a prompt\'s card answers with the prompt\'s hash (via
   assert.deepEqual(r.answers, [{ promptId: 'p-cart', hash: 'h-cart-1', choice: 'approve', via: 'card' }]);
   assert.equal(r.cartStatus, 'Answered.');
   assert.equal(r.siteStatus, 'Answered.');
-  assert.equal(r.state, null);
+  assert.equal(r.pending, null);
   await p.waitForFunction(() => !document.querySelector('[data-testid="chrome-prompt-card"]'), null, { timeout: 6000 });
   assert.deepEqual(p.problems, []);
 });

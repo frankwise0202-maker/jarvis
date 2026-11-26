@@ -1022,8 +1022,6 @@ export function createChromeVoice(deps = {}) {
     return { linked: !!st.linked, online: !!st.online, task: t, lastTask: last, contextUntil: S.contextUntil };
   }
 
-
-
   /** Voice Mode opened, closed, slept or woke: cards and prompts follow it. */
   function voiceChanged() {
     const on = !!v();
