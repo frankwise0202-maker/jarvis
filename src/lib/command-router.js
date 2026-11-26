@@ -336,11 +336,20 @@ const OPTICS_CAMERA = new Set(['look', 'flip', 'live']);
 const THIS_TIME = /\bthis (?:morning|afternoon|evening|night|week|weekend|month|year|time|season|summer|winter|spring|fall|autumn|quarter|semester)\b/g;
 const POINTING = /\b(?:this|these|here)\b/;
 
-/** An Optics "this" question (a Look, or a question on the frozen frame) only about a time: not one. */
-function onlyAboutTime(cmd, text) {
-  if (!(cmd.action === 'ask' || (cmd.action === 'look' && !cmd.explicit))) return false;
+/**
+ * An Optics "this" question (a Look, or a question on the frozen frame) only about a time: not one. An
+ * explicit "what's this …" Look too, when it is no Look without its time words ("what's this weekend's
+ * weather"); "what am I looking at this morning?" still is one (ROUTING-9).
+ */
+function onlyAboutTime(cmd, text, frozen = false) {
+  if (!(cmd.action === 'ask' || cmd.action === 'look') || cmd.fresh) return false;
   const n = normalizeOpticsText(text);
-  return THIS_TIME.test(n) && !POINTING.test(n.replace(THIS_TIME, ' '));
+  THIS_TIME.lastIndex = 0;
+  if (!THIS_TIME.test(n)) return false;
+  const rest = n.replace(THIS_TIME, ' ').replace(/\s+/g, ' ').trim();
+  if (!(cmd.action === 'look' && cmd.explicit)) return !POINTING.test(rest);
+  const still = rest ? matchOpticsCommand(rest, { frozen }) : null;
+  return !(still && (still.action === 'look' || still.action === 'ask'));
 }
 
 function opticsAction(cmd) {
@@ -461,7 +470,7 @@ const TODAY_COMMANDS = [
       if (!(s.optics && s.optics.open)) return null;
       if (s.surface === 'voice' && !opticsOnTop(s)) return null;
       const cmd = matchOpticsCommand(text, { frozen: s.optics.mode === 'frozen' });
-      if (!cmd || onlyAboutTime(cmd, text)) return null;
+      if (!cmd || onlyAboutTime(cmd, text, s.optics.mode === 'frozen')) return null;
       if (s.surface === 'optics' && s.via === 'typed' && !(cmd.action === 'liveview' || (cmd.action === 'watch' && !cmd.on))) return null;
       return opticsAction(cmd);
     },

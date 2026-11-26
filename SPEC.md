@@ -4646,7 +4646,8 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
   tasks, Apple Music, the home base's research and watches, Optics' questions about "this").
 - R4: a sentence that starts like a question is never a command, except fixed forms a matcher names ("what am I looking
   at?", "how much have I spent today?"). Optics' "this" question is not one when its only "this" is a time ("this
-  month", "this weekend").
+  month", "this weekend"), the "what's this …" form included ("what's this weekend's weather?" is a question for
+  Jarvis; "what am I looking at this morning?" is still a Look).
 - R5: a matcher claims words only while its thing exists.
 - R6: a command that spends needs an explicit verb and object; the dearer ones say the price first and wait.
 - R7: the recognizer's other readings are tried only when the best reading isn't a question, and only for an action that
