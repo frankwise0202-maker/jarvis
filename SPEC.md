@@ -4696,7 +4696,8 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
    and open Standby).
 2. The answers, from the best reading only: `prompt` (the Chrome prompt's reserved words), `question` (the top owner
    question: the blueprint question, a tour decision, the research offer), `reply-building` (words heard while Voice
-   Mode's reply builds a hologram wait for it). A bare "cancel" or "no" answers whichever was asked last: Voice Mode
+   Mode's reply builds a hologram wait for it). A bare "cancel" or "no" (`isBareNo`: emphatic forms too, "no no no",
+   "no, cancel that", "no wait", "nope, nope"; ROUTING-R2-4) answers whichever was asked last: Voice Mode
    stamps `askedAt` on the prompt and each question when it says them, and `askedLast(state)` compares; the prompt's
    no is its answer marked `negative`; a question without a choice for it is set aside (`dismissTop`, onExpire
    `'dismissed'`), so it never goes on to Claude. "Stop" is never an answer.

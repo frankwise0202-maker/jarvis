@@ -207,6 +207,9 @@ export const VOICE = {
       r('this one', s, 'optics', 'a Look of the scene now (by design)'),
       r('is this ripe', s, 'optics', 'a question about "this" with the camera on is a Look (by design)'),
     ]),
+    // ROUTING-R2-4: the emphatic no's are bare no's: with Chrome's question asked last (H4) they are its no, as "no" is
+    // (voice's prompt entry first; chrome-voice's chrome-prompt says the same).
+    ...['no no no', 'No, no, no.', 'no, cancel that', 'Jarvis, no, cancel that.', 'no wait', 'nope, nope', 'no no, never mind', 'nah nah', 'no no'].map((w) => r(w, 'H4', 'prompt', 'asked last: the prompt (its no)')),
   ],
 };
 

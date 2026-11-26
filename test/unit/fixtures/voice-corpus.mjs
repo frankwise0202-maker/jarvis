@@ -235,6 +235,11 @@ export const VOICE = {
     ['bring everything back', 'H0', 'hologram'],
     ['bring everything back', 'VW', 'screens'],
     ['go back', 'VH', 'hologram:hologram'],
+    // ROUTING-R2-4: every form of no answers whatever was asked last: the research offer (optics' VQ, as app.js asks
+    // it) and a walkthrough's decision (TD), never a paid question.
+    ...['VQ', 'TD'].flatMap((state) =>
+      ['no no no', 'No, no, no.', 'no, cancel that', 'Jarvis, no, cancel that.', 'no wait', 'nope, nope', 'no no, never mind', 'no, forget it', 'no not now', 'nah nah'].map((words) => [words, state, 'question:answer']),
+    ),
   ],
   not: [
     'speak to me about history', 'how much did I spend at the store', 'stop it from overheating', 'repeat after me',

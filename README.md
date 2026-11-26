@@ -326,7 +326,7 @@ Mode or Optics first.
   "There's nothing to go back to."), "expand this in a different window" makes a window rather than
   taking the hologram apart, and "open the camera" with a laptop hologram on screen selects its camera
   part ("Say 'open Optics' for your camera.").
-- **A bare "cancel" or "no"** answers whatever Jarvis asked last. "Approve" only ever answers Chrome,
+- **A bare "cancel" or "no"** (also "no no no", "no, cancel that", "no wait") answers whatever Jarvis asked last. "Approve" only ever answers Chrome,
   and "continue" never does.
 - **Long sentences are questions.** A command is a short whole sentence; more than about 18 words is a
   question for Jarvis, except what carries your own words on (a Chrome task, a song, research for the
