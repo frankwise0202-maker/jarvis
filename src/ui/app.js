@@ -22,6 +22,7 @@ import { createMissionControl } from './hud/mission-control.js';
 import { createCore } from './hud/core.js';
 import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown, voiceModeSpoke } from './voice-mode.js';
 import { REVIEW_MS, listenPhrases } from './voice-heard.js';
+import { partHint, nothingBackAck } from './voice-visuals.js';
 import { createMicBands } from './hud/voice-bands.js';
 import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats, getStats, dayKey } from './stats.js';
 import { createShareOptions, redactSecrets } from './share.js';
@@ -3995,6 +3996,8 @@ export async function startApp(rootEl) {
     // ---- tours ▸ (s.tour)
     // ---- tours ◂
     // ---- voice ▸
+    // The chat's Speak reading an answer aloud: "stop" typed (or said in a viewer's field) stops it.
+    if (surface !== 'voice') s.speaking = !!state.speaking;
     // ---- voice ◂
     // ---- chrome-voice ▸
     // ---- chrome-voice ◂
@@ -4092,7 +4095,13 @@ export async function startApp(rootEl) {
         return standbyFromViewer() ? { handled: true } : null;
       case 'hologram': {
         const res = viewer ? safe(() => viewer.command(text, opts), null) : null;
-        return res && res.handled ? res : null;
+        if (!(res && res.handled)) return null;
+        // v8.1: "go back" with nothing to go back to is answered (C3); a part that took camera words
+        // says how to reach the camera (R10).
+        const cmd = res.command || {};
+        if (cmd.action === 'close-blueprint' && !getBlueprintViewer()) return { ...res, notice: Promise.resolve(nothingBackAck()) };
+        const hint = partHint(text, cmd);
+        return hint ? { ...res, notice: Promise.resolve(hint) } : res;
       }
       case 'screens': {
         // "Put this on my other screen" typed in a viewer: a screen command, not a message for Jarvis.

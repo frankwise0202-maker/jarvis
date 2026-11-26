@@ -1001,7 +1001,8 @@ function createVoiceMode(opts) {
     let hit = routeWords([text], local);
     if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt')) questions.dropTop('dropped');
     while (hit) {
-      if (act(hit, [text], { reviewed: true, typed: true })) return;
+      // An approval for Chrome keeps its check, typed too (it approves a step on a web page).
+      if (act(hit, [text], { reviewed: hit.id !== 'prompt', typed: true })) return;
       hit = routeWords([text], local, hit);
     }
     send(text);
