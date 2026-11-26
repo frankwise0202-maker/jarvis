@@ -36,7 +36,9 @@
 //
 // v8.1 (SPEC §28.4, §28.5):
 //   createLock(onChange)  one Jarvis per Mac answers (A9): platform/standby-lock.js (not with pauseWhenHidden: a
-//                         phone listens only on screen, as before; MAC-10). Standby takes the lock
+//                         phone listens only on screen, as before; MAC-10). When the owner leaves Standby in the
+//                         window that listens, the windows waiting leave too (PRIVACY-7: 'left'); only its window
+//                         closing hands Standby on. Standby takes the lock
 //                         before it listens and keeps it through a woken session; while another window
 //                         holds it, this one doesn't listen and says so ("Standby is on in another Jarvis
 //                         window"), with Use this window. Without it (or without Web Locks): as before.
@@ -458,6 +460,12 @@ export function createStandby(deps = {}) {
   }
 
   function onLockChange(st) {
+    if (phase === 'open' && st === 'left') {
+      // PRIVACY-7: the owner left Standby in the window that listened: this one leaves too (it doesn't start
+      // listening by itself). Only that window closing hands Standby on.
+      exit();
+      return;
+    }
     if (phase === 'open') {
       if (st === 'held') startListening();
       else if (st === 'elsewhere' && listen !== 'elsewhere') {
@@ -469,7 +477,7 @@ export function createStandby(deps = {}) {
         announce('Standby is on in another Jarvis window.');
       }
       render();
-    } else if (phase === 'awaiting' && st === 'elsewhere' && kept) {
+    } else if (phase === 'awaiting' && (st === 'elsewhere' || st === 'left') && kept) {
       // Taken during a woken session: the microphone kept for barge-in goes too.
       kept = false;
       if (capture) capture.stop();

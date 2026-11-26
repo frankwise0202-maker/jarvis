@@ -725,9 +725,24 @@ export default [
         t.assert((await a.evaluate(() => window.__fakeMic.standby)) === 0, 'A released its microphone');
         t.assert(await b.locator(tid('standby')).isVisible(), 'B is still on Standby');
       });
-      await t.step('B leaves Standby: A listens again by itself', async () => {
+      // PRIVACY-7: leaving Standby turns the microphone off. The window waiting behind leaves Standby too (it
+      // used to start listening by itself); it takes over by itself only when the one listening closes.
+      await t.step('B leaves Standby: A leaves too, and no microphone opens there', async () => {
+        const gets = await a.evaluate(() => window.__fakeMic.gets);
         await b.keyboard.press('Escape');
         await b.locator(tid('standby')).waitFor({ state: 'detached', timeout: 5000 });
+        await a.locator(tid('standby')).waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+        await a.waitForTimeout(1500);
+        const st = await standbyState(a);
+        t.assert(!st, `A left Standby too (${JSON.stringify(st)})`);
+        t.assert((await a.evaluate(() => window.__fakeMic.gets)) === gets && (await a.evaluate(() => window.__fakeMic.standby)) === 0, 'A never opened the microphone');
+      });
+      await t.step('the window on Standby closes: the one waiting behind it takes over by itself', async () => {
+        await (await t.visible('quick-key-standby', { page: b })).click();
+        await waitListening(t, b);
+        await (await t.visible('quick-key-standby', { page: a })).click();
+        await t.waitFor(async () => (await standbyState(a))?.listening === 'elsewhere', { message: async () => `A to wait (${JSON.stringify(await standbyState(a))})` });
+        await b.close();
         await waitListening(t, a);
       });
     },

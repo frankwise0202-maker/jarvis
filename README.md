@@ -360,8 +360,9 @@ other windows, minimized, or with the display asleep.
   core or press Space, as before.
 - **One Jarvis per Mac answers.** If Jarvis is open in two windows (the installed app and a forgotten tab, say),
   only one listens on Standby. The other says "Standby is on in another Jarvis window"; click **Use this window** to
-  move Standby there. When the one listening leaves Standby or closes, the other takes over by itself. While Voice
-  Mode is open in one window, Standby in another doesn't wake: "Hey Jarvis, …" said to Voice Mode gets one answer.
+  move Standby there. When you leave Standby in the one listening, the others leave Standby too, so no microphone
+  turns on by itself; only when its window closes does the next one take over by itself. While Voice Mode is open
+  in one window, Standby in another doesn't wake: "Hey Jarvis, …" said to Voice Mode gets one answer.
 - **Turn it off** with Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**.
   Then he greets you from the background and waits for you to switch to him, as before.
 - **Standby when Jarvis starts.** With "Hey Jarvis" on, Jarvis opens Standby by himself when he starts (after a

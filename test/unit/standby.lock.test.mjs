@@ -39,7 +39,10 @@ test('one window: it holds the lock while on Standby, and lets go when it leaves
   assert.equal(locks.holder(STANDBY_LOCK), null, 'free again');
 });
 
-test('two windows: the second waits ("elsewhere"), and takes over by itself when the first leaves Standby', async () => {
+// PRIVACY-7: leaving Standby turns the microphone off. The window waiting behind used to take over (and start
+// listening) whenever the holder let go; now only when the holder's window closes. When the owner leaves Standby,
+// the windows waiting behind are told 'left' (they leave Standby too) and never hold the lock to listen.
+test('two windows: the second waits ("elsewhere"); when the first leaves Standby, the second is told to leave too and never listens', async () => {
   const locks = createFakeLocks();
   const a = windowOn(locks, 'A');
   const b = windowOn(locks, 'B');
@@ -52,12 +55,27 @@ test('two windows: the second waits ("elsewhere"), and takes over by itself when
   assert.deepEqual(locks.waiting(STANDBY_LOCK), ['B']);
   a.lock.release();
   await settle();
+  assert.equal(b.lock.state, 'left', 'B is told: the owner left Standby');
+  assert.deepEqual(b.seen, ['asking', 'elsewhere', 'left'], 'never held to listen');
+  assert.equal(locks.holder(STANDBY_LOCK), null, 'nobody holds it');
+});
+
+test('two windows: when the first window closes (its locks go with it), the second takes over by itself', async () => {
+  const locks = createFakeLocks();
+  const a = windowOn(locks, 'A');
+  const b = windowOn(locks, 'B');
+  a.lock.acquire();
+  await settle();
+  b.lock.acquire();
+  await settle();
+  locks.close('A');
+  await settle();
   assert.equal(b.lock.state, 'held');
   assert.equal(locks.holder(STANDBY_LOCK), 'B');
   assert.deepEqual(b.seen, ['asking', 'elsewhere', 'held']);
 });
 
-test('"Use this window": B takes it from A at once; A steps back and waits; when B leaves, A has it again', async () => {
+test('"Use this window": B takes it from A at once; A steps back and waits; when the owner leaves Standby in B, A leaves too', async () => {
   const locks = createFakeLocks();
   const a = windowOn(locks, 'A');
   const b = windowOn(locks, 'B');
@@ -74,11 +92,28 @@ test('"Use this window": B takes it from A at once; A steps back and waits; when
   assert.deepEqual(a.seen, ['asking', 'held', 'elsewhere']);
   b.lock.release();
   await settle();
+  assert.equal(a.lock.state, 'left', 'B left Standby: A leaves too (PRIVACY-7)');
+  assert.equal(a.lock.take(), false, 'nothing to take: A isn’t waiting any more');
+  assert.equal(locks.holder(STANDBY_LOCK), null);
+});
+
+test('"Use this window", then B’s window closes: A has it again by itself', async () => {
+  const locks = createFakeLocks();
+  const a = windowOn(locks, 'A');
+  const b = windowOn(locks, 'B');
+  a.lock.acquire();
+  await settle();
+  b.lock.acquire();
+  await settle();
+  b.lock.take();
+  await settle();
+  locks.close('B');
+  await settle();
   assert.equal(a.lock.state, 'held');
   assert.equal(a.lock.take(), false, 'nothing to take when holding it');
 });
 
-test('three windows: "Use this window" gives it to that window, ahead of one already waiting; the line then goes in order', async () => {
+test('three windows: "Use this window" gives it to that window, ahead of one already waiting; closes then hand it on in order', async () => {
   const locks = createFakeLocks();
   const [a, b, c] = ['A', 'B', 'C'].map((w) => windowOn(locks, w));
   for (const w of [a, b, c]) {
@@ -91,12 +126,47 @@ test('three windows: "Use this window" gives it to that window, ahead of one alr
   assert.equal(locks.holder(STANDBY_LOCK), 'C');
   assert.deepEqual([a.lock.state, b.lock.state, c.lock.state], ['elsewhere', 'elsewhere', 'held']);
   assert.deepEqual(locks.waiting(STANDBY_LOCK), ['B', 'A']);
-  c.lock.release();
+  locks.close('C'); // the one listening closes: the next in line takes over
   await settle();
   assert.equal(locks.holder(STANDBY_LOCK), 'B');
-  b.lock.release();
+  assert.equal(b.lock.state, 'held');
+  b.lock.release(); // the owner leaves Standby in B: A, still waiting, leaves too
   await settle();
-  assert.equal(locks.holder(STANDBY_LOCK), 'A');
+  assert.equal(a.lock.state, 'left');
+  assert.equal(locks.holder(STANDBY_LOCK), null);
+});
+
+test('three windows: the owner leaves Standby in the one listening: both windows waiting behind leave too', async () => {
+  const locks = createFakeLocks();
+  const [a, b, c] = ['A', 'B', 'C'].map((w) => windowOn(locks, w));
+  for (const w of [a, b, c]) {
+    w.lock.acquire();
+    await settle();
+  }
+  a.lock.release();
+  await settle();
+  assert.deepEqual([a.lock.state, b.lock.state, c.lock.state], ['off', 'left', 'left']);
+  assert.ok(!b.seen.includes('held') && !c.seen.includes('held'), 'neither ever listened');
+  assert.equal(locks.holder(STANDBY_LOCK), null);
+});
+
+test('after a leave, Standby opened again listens at once, and a later close hands over as usual (the old leave no longer counts)', async () => {
+  const locks = createFakeLocks();
+  const a = windowOn(locks, 'A');
+  const b = windowOn(locks, 'B');
+  a.lock.acquire();
+  await settle();
+  a.lock.release(); // left on purpose, nobody waiting
+  await settle();
+  b.lock.acquire(); // the owner opens Standby in B
+  await settle();
+  assert.equal(b.lock.state, 'held');
+  a.lock.acquire(); // and in A again: it waits behind B
+  await settle();
+  assert.equal(a.lock.state, 'elsewhere');
+  locks.close('B'); // B's window closes (within the moment the leave is remembered)
+  await settle();
+  assert.equal(a.lock.state, 'held', 'A takes over by itself');
 });
 
 test('a waiting window that leaves Standby withdraws from the line', async () => {

@@ -237,7 +237,7 @@ test('two windows on Standby: only the one holding the lock listens; the other s
   assert.equal(rootB.dataset.listening, 'elsewhere');
 });
 
-test('Use this window: Standby moves to B (B listens, A stops and says so); A takes it back when B leaves', async (t) => {
+test('Use this window: Standby moves to B (B listens, A stops and says so); when the owner leaves Standby in B, A leaves too and no microphone opens (PRIVACY-7)', async (t) => {
   const { make, shown } = await setup(t);
   const a = make('A');
   a.sb.enter();
@@ -256,10 +256,28 @@ test('Use this window: Standby moves to B (B listens, A stops and says so); A ta
   assert.equal(a.cap().live, false, 'A released its microphone');
   assert.equal(pill(rootA), 'NOT LISTENING IN THIS WINDOW');
   assert.equal(b.sb.isOpen(), true, 'B is still on Standby (the button didn’t leave it)');
+  const starts = a.cap().starts;
   b.sb.exit();
   await settle();
-  assert.equal(a.sb.listening, 'live', 'A listens again by itself');
-  assert.equal(a.cap().live, true);
+  assert.equal(a.sb.isOpen(), false, 'A left Standby too: leaving Standby turns the microphone off');
+  assert.equal(a.cap().live, false);
+  assert.equal(a.cap().starts, starts, 'A never opened the microphone again');
+  assert.equal(shown().length, 0, 'no Standby on screen in either window');
+});
+
+test('PRIVACY-7: the window listening on Standby closes: the one waiting behind it takes over by itself', async (t) => {
+  const { make, locks } = await setup(t);
+  const a = make('A');
+  a.sb.enter();
+  await settle();
+  const b = make('B');
+  b.sb.enter();
+  await settle();
+  assert.equal(b.sb.listening, 'elsewhere');
+  locks.close('A'); // A's tab closes: the browser lets go of its locks
+  await settle();
+  assert.equal(b.sb.listening, 'live', 'B listens by itself');
+  assert.equal(b.cap().live, true);
 });
 
 test('a window that leaves Standby lets go; one opened later listens at once', async (t) => {
@@ -305,7 +323,8 @@ test('a woken window keeps the lock through the session: another window opened m
   a.sb.release();
   a.sb.exit();
   await settle();
-  assert.equal(b.sb.listening, 'live');
+  assert.equal(b.sb.isOpen(), false, 'the owner left Standby in A: B leaves too (PRIVACY-7)');
+  assert.equal(b.cap().starts, 0, 'B never opened the microphone');
 });
 
 test('barge-in allowed (keep()): the microphone stays on through the session; claps then go to detected(), and after the session the same microphone listens on', async (t) => {

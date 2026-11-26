@@ -4358,7 +4358,7 @@ him again). A TV left on can't run up paid questions. On screen the count doesn'
 stays.
 
 **One Jarvis per Mac** (A9, critique M6; src/platform/standby-lock.js `createStandbyLock({ onChange, locks, name })` →
-`{ acquire(), take(), release(), state }`, state `off` | `asking` | `held` | `elsewhere` | `unsupported`; Standby's
+`{ acquire(), take(), release(), state }`, state `off` | `asking` | `held` | `elsewhere` | `left` | `unsupported`; Standby's
 `createLock` dep): Standby asks for the Web Lock `jarvis-standby` when it opens (`ifAvailable` first; held elsewhere:
 `elsewhere`, and it waits in line) and listens only while it holds it; it keeps it through a woken session and lets go
 on `exit()`/`release()` (or when the window closes). While another window has it: `data-listening="elsewhere"`, the
@@ -4366,8 +4366,13 @@ pill "NOT LISTENING IN THIS WINDOW", the hint "Standby is on in another Jarvis w
 (`standby-use-here`; Tab reaches it, Enter or Space presses it; its click is not the tap that leaves Standby) →
 `take()`: a request with `steal: true` (the browser takes the lock from the holder at once, also from a frozen page,
 ahead of any other window waiting). The holder's request then fails with AbortError: it stops listening (a kept
-barge-in microphone too) and waits in line. When the holder leaves Standby or closes, the next window in line listens
-by itself. (The design had the holder asked to let go over a BroadcastChannel; `steal` needs no message and can't be
+barge-in microphone too) and waits in line. When the holder's window closes (the browser lets go of its locks), the
+next window in line listens by itself. When the owner leaves Standby there (`exit()`, `release()`), it doesn't
+(PRIVACY-7: leaving Standby turns the microphone off): the holder first holds `jarvis-standby-off` (shared) for 10 s,
+then lets go; a window granted the lock from the line checks it (an exclusive `ifAvailable` request) and, when it is
+held, holds it too for the next in line, lets go and is told `left`: its Standby leaves as well. The lock manager
+orders both requests, so no message can come too late. `acquire()` and `take()` (the owner's own) clear an earlier
+mark (a `steal` of `jarvis-standby-off`). (The design had the holder asked to let go over a BroadcastChannel; `steal` needs no message and can't be
 missed.) No Web Locks (or a request that throws): `unsupported`, as before. Not on a phone (MAC-10: app.js passes no
 `createLock`, and Standby ignores one with `pauseWhenHidden`): a phone's Standby listens only on screen, so its windows
 can't both listen; a hidden, paused one holding the lock kept a second window on screen deaf.
