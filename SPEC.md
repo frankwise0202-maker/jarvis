@@ -4368,7 +4368,9 @@ pill "NOT LISTENING IN THIS WINDOW", the hint "Standby is on in another Jarvis w
 ahead of any other window waiting). The holder's request then fails with AbortError: it stops listening (a kept
 barge-in microphone too) and waits in line. When the holder leaves Standby or closes, the next window in line listens
 by itself. (The design had the holder asked to let go over a BroadcastChannel; `steal` needs no message and can't be
-missed.) No Web Locks (or a request that throws): `unsupported`, as before.
+missed.) No Web Locks (or a request that throws): `unsupported`, as before. Not on a phone (MAC-10: app.js passes no
+`createLock`, and Standby ignores one with `pauseWhenHidden`): a phone's Standby listens only on screen, so its windows
+can't both listen; a hidden, paused one holding the lock kept a second window on screen deaf.
 
 **Voice Mode in another window** (MAC-6): the Standby lock keeps two Standbys apart, but the owner may talk to Voice
 Mode (opened by a tap) in one window while a forgotten tab is on Standby. Voice Mode open in any window holds the Web

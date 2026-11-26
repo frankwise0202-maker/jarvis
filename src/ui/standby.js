@@ -35,7 +35,8 @@
 // So is "Hey Jarvis" when its download or its worker fails (A12), and at once when the network comes back.
 //
 // v8.1 (SPEC §28.4, §28.5):
-//   createLock(onChange)  one Jarvis per Mac answers (A9): platform/standby-lock.js. Standby takes the lock
+//   createLock(onChange)  one Jarvis per Mac answers (A9): platform/standby-lock.js (not with pauseWhenHidden: a
+//                         phone listens only on screen, as before; MAC-10). Standby takes the lock
 //                         before it listens and keeps it through a woken session; while another window
 //                         holds it, this one doesn't listen and says so ("Standby is on in another Jarvis
 //                         window"), with Use this window. Without it (or without Web Locks): as before.
@@ -124,7 +125,9 @@ export function createStandby(deps = {}) {
   // before the click or key reaches Standby), and whether this opening already took that click.
   let clickAsked = false;
   let clickTaken = false;
-  const lock = typeof createLock === 'function' ? safeLock(() => createLock((st) => onLockChange(st))) : null;
+  // MAC-10: a phone (pauseWhenHidden) listens only on screen, so two of its windows can't both listen: no lock there,
+  // as before v8.1 (a hidden, paused Standby holding it kept another window on screen from listening).
+  const lock = typeof createLock === 'function' && !pauseWhenHidden ? safeLock(() => createLock((st) => onLockChange(st))) : null;
   const wordRetry = createBackoff(() => restartWord()); // v8.1 (A12): "Hey Jarvis" started again after a failure
 
   const settings = () => {

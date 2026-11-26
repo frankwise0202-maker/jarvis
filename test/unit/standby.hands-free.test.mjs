@@ -406,6 +406,27 @@ test('MAC-6: without the check (an iPhone, no Web Locks) Standby wakes at once, 
   assert.equal(a.cap().live, false);
 });
 
+// MAC-10: on a phone Standby listens only on screen (pauseWhenHidden); a hidden, paused Standby kept the lock, so a
+// second Jarvis window on screen said "NOT LISTENING IN THIS WINDOW". Phones use no lock, as before v8.1.
+test('MAC-10: a phone (Standby pauses while hidden) takes no lock: a hidden, paused Standby doesn’t keep another window on screen from listening', async (t) => {
+  const { make, locks, dom } = await setup(t);
+  const a = make('A', { pauseWhenHidden: true });
+  a.sb.enter();
+  await settle();
+  assert.equal(a.sb.listening, 'live');
+  dom.doc.hidden = true;
+  dom.doc.dispatch('visibilitychange');
+  await settle();
+  assert.equal(a.sb.listening, 'paused', 'A paused while hidden (as before)');
+  assert.equal(a.cap().live, false);
+  dom.doc.hidden = false; // window B on screen (A, another window, hears nothing of it)
+  const b = make('B', { pauseWhenHidden: true });
+  b.sb.enter();
+  await settle();
+  assert.equal(b.sb.listening, 'live', 'B listens, as before v8.1');
+  assert.equal(locks.holder('jarvis-standby'), null, 'no lock on a phone');
+});
+
 test('Standby taken by another window during a kept session: the barge-in microphone goes too', async (t) => {
   const { make, shown } = await setup(t);
   const a = make('A', { bargeIn: { keep: () => true, detected: () => true } });

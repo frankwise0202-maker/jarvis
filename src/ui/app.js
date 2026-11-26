@@ -1885,8 +1885,9 @@ export async function startApp(rootEl) {
     isIOS: safe(() => isIOS(), false),
     // v8.1: the pill names the chosen microphone, the capture follows it, the one-time Bluetooth line.
     audio: audioDevices ? audioDevices.standbyHooks() : null,
-    // v8.1 (A9, SPEC §28.5): one Jarvis per Mac listens on Standby (a Web Lock; "Use this window" moves it).
-    createLock: (onChange) => createStandbyLock({ onChange }),
+    // v8.1 (A9, SPEC §28.5): one Jarvis per Mac listens on Standby (a Web Lock; "Use this window" moves it). Not on a
+    // phone (MAC-10): Standby there listens only on screen, as before.
+    createLock: phoneLike ? null : (onChange) => createStandbyLock({ onChange }),
     // v8.1 (A8, SPEC §28.4): barge-in. In setup 1 or 3, once the hands-free Test's self-trigger step passed,
     // Standby's microphone and "Hey Jarvis" stay on through a woken session; what they hear goes to Voice Mode.
     bargeIn: {
