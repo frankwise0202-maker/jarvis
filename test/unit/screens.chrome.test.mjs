@@ -101,7 +101,7 @@ test('not Chrome: no browser word, questions, statements, tasks for Jarvis for C
 test('lead decision D1: page words are Jarvis for Chrome\'s tasks; "open the Nth link" only with reply links', () => {
   // Sentences that start with "click": never this matcher's (in a Chrome context they are tasks).
   for (const t of ['click the first result', 'click the first link', 'click on the second link', 'click add to cart', 'Click the cheapest one in Chrome']) {
-    assert.equal(matchChromeCommand(t, LINKS), null, `"${t}"`);
+    for (const st of [LINKS, NO_LINKS]) assert.equal(matchChromeCommand(t, st), null, `"${t}" (reply links: ${st === LINKS})`);
   }
   // Page objects: never a Google search, never "this".
   for (const t of [
@@ -122,7 +122,7 @@ test('lead decision D1: page words are Jarvis for Chrome\'s tasks; "open the Nth
     'scroll down in Chrome',
     'pull that one up in Chrome',
   ]) {
-    assert.equal(matchChromeCommand(t, LINKS), null, `"${t}"`);
+    for (const st of [LINKS, NO_LINKS]) assert.equal(matchChromeCommand(t, st), null, `"${t}" (reply links: ${st === LINKS})`);
   }
   // "Open the second link": the newest reply's link when it has links; otherwise declined (in a
   // Chrome context it becomes a task).
