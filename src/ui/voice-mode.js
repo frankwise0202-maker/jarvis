@@ -115,7 +115,9 @@
 //                           without a second search), briefing() -> { text, mode, part } | { done:
 //                           Promise<{ ack }> } (v7.6: the home base's briefing, said; free) | null,
 //                           returnToStandby() -> boolean (Settings), canSleep() -> boolean (no preview
-//                           playing), onAwake({ line, hidden }) }. The core boots with the wake sound
+//                           playing), onAwake({ line, hidden }), pending() -> [lines] (v8.1, lead decision
+//                           D3: what waited for the owner, said before the greeting, Chrome's question
+//                           first: src/lib/wake/pending.js) }. The core boots with the wake sound
 //                           while the microphone listens a moment for "wake up", "daddy's home", "I'm
 //                           home" ("Welcome home, Frank."); otherwise the greeting follows the time of
 //                           day ("Good evening, Frank."). Woken by "Hey Jarvis", a question said right
@@ -3433,7 +3435,8 @@ function createVoiceMode(opts) {
     const name = typeof wake.name === 'function' ? wake.name() : ownerName();
     const part = partOfDayFor(new Date());
     const music = W.offerData && W.offerData.segment && W.offerData.artist ? W.offerData : null;
-    const line = `${greetingLine({ now: new Date(), name, home })} ${suggestionLine({ artist: music ? music.artist : '', part })}`;
+    // v8.1 (D3): what waited for the owner comes first ("Chrome is waiting for you: …"), then the greeting.
+    const line = [...wakePendingLines(), greetingLine({ now: new Date(), name, home }), suggestionLine({ artist: music ? music.artist : '', part })].join(' ');
     W.line = line;
     if (music) {
       showMusicCard(music.segment, { fresh: true });
@@ -3445,6 +3448,18 @@ function createVoiceMode(opts) {
       /* decoration */
     }
     speakAck(line);
+  }
+
+  /** v8.1 (D3): the lines said before the greeting (wake.pending()), tidied; [] without the hook. */
+  function wakePendingLines() {
+    let v = null;
+    try {
+      v = typeof wake.pending === 'function' ? wake.pending() : null;
+    } catch {
+      v = null;
+    }
+    const list = Array.isArray(v) ? v : typeof v === 'string' ? [v] : [];
+    return list.map((x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : '')).filter(Boolean);
   }
 
   /**

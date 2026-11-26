@@ -89,6 +89,7 @@ import { createStandbyCapture } from '../platform/wake/capture.js';
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';
+import { createWakePending } from '../lib/wake/pending.js';
 // v8.1: one router for what the owner says (SPEC §30), and each track's commands in its own module.
 import { createRouter, registerTodayCommands, emptyState, REOPEN_ACTIONS } from '../lib/command-router.js';
 import { register as registerMacCommands } from './commands/mac.js';
@@ -1606,6 +1607,10 @@ export async function startApp(rootEl) {
   // time of day): the routine asks Claude nothing; only what the owner asks next costs. On a phone
   // listening pauses while Jarvis is not on screen; on a Mac it goes on in a background tab.
   const phoneLike = safe(() => isIOS() || isAndroid() || (isTouch() && window.matchMedia('(max-width: 1024px)').matches), false);
+  // v8.1 (lead decision D3): the lines said before the wake greeting. wakePending.add(fn, { waits }):
+  // fn() -> a line or null, asked at each wake; waits: it asks something and waits for the answer (Chrome's
+  // question), said first. The command modules get it as deps.wakePending (src/lib/wake/pending.js).
+  const wakePending = createWakePending();
   standby = createStandby({
     getSettings,
     onSettingsChange,
@@ -1862,6 +1867,7 @@ export async function startApp(rootEl) {
         briefing: () => wakeBriefing(),
         returnToStandby: () => getSettings().wakeReturn !== false,
         canSleep: () => !musicPlayer.isPlaying(),
+        pending: () => wakePending.lines(), // v8.1 (D3): said before the greeting
         // Woken in a background tab (a Mac): the greeting is said out loud; a notification brings Jarvis forward.
         onAwake: ({ line, hidden }) => {
           if (hidden) safe(() => missionFinished({ title: 'Jarvis is awake', summary: `${line} Switch to Jarvis to answer.` }));
@@ -4145,6 +4151,7 @@ export async function startApp(rootEl) {
       routerState: (surface, local) => routerState(surface, local),
       phone: phoneLike,
       demo: state.demo,
+      wakePending, // v8.1 (D3): wakePending.add(fn, { waits }) -> remove: a line before the wake greeting
     };
     const register = (name, fn, deps) => {
       try {
