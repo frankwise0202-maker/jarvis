@@ -6,7 +6,7 @@ import { createEmitter } from './emitter.js';
 import { createLimiter } from './limiter.js';
 import { ERROR_MESSAGES, classifyError, createClient } from './client.js';
 import { DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, DEPTHS, MODELS, MODES, bucketOf } from './models.js';
-import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsLatest, withTurnContextBlocks } from './prompts.js';
+import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, buildViewerLine, leadToolsLatest, withTurnContextBlocks } from './prompts.js';
 import { OPTICS_DEFAULT_TEXT, cameraIsLive, isPinsSegment, opticsContextLines, prepareOpticsFrame } from './optics.js';
 import { STOPPED_BY_OWNER, runLeadTurn, stoppedRoundResults, toolResultMessage } from './lead.js';
 import { WORKER_MAX_TOKENS } from './worker.js';
@@ -671,11 +671,13 @@ export function createJarvis(deps = {}) {
      * request is exactly as before. `blueprintFor: { model: 'lib_…', part: '<part id>'|null }` asks
      * for the 2D blueprint of one part (or, with part null, the whole object) of a saved hologram:
      * the turn context gets a "Blueprint request" block and the blueprint is linked to that part
-     * (only in conversations with the version 4 tools). Throws (before anything is appended) when
-     * the input is invalid, e.g. an attachment Claude would reject; the error message is worded for
-     * the owner.
+     * (only in conversations with the version 4 tools). `viewer` (a hologram on screen: its title,
+     * the glowing or selected part, exploded or not, a walkthrough's step) adds one line to this
+     * turn's <turn_context> (buildViewerLine), in the new message only. Throws (before anything is
+     * appended) when the input is invalid, e.g. an attachment Claude would reject; the error message
+     * is worded for the owner.
      */
-    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop, spoken, blueprintFor, optics } = {}) {
+    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop, spoken, blueprintFor, optics, viewer } = {}) {
       assertConversation(conv, 'startTurn');
       const body = typeof text === 'string' ? text.trim() : '';
       const files = normalizeAttachments(attachments);
@@ -740,10 +742,11 @@ export function createJarvis(deps = {}) {
       });
       const opticsLines = opticsContextLines(conv, frame, d);
       const fullContext = opticsLines.length ? withTurnContextBlocks(turnContext, opticsLines) : turnContext;
+      const viewerLine = buildViewerLine(viewer); // what the owner sees, so "that" has a meaning
       // Where this turn's messages start: a refused turn is removed from the history from here on.
       turn.apiStart = conv.apiMessages.length;
       // SPEC §15.1 order: turn context, attachments, then the owner's text (or the default text).
-      conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: fullContext }, ...content] });
+      conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: viewerLine ? withTurnContextBlocks(fullContext, [viewerLine]) : fullContext }, ...content] });
       conv.updatedAt = ts;
       conv.pending = { turnId: turn.id, toolUses: [], req: 0 };
       return launch(conv, turn, settings, { resume: false, req: 0, keepOnStop: keepOnStop === true });
