@@ -22,6 +22,7 @@ import { createMissionControl } from './hud/mission-control.js';
 import { createCore } from './hud/core.js';
 import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown, voiceModeSpoke } from './voice-mode.js';
 import { REVIEW_MS, listenPhrases } from './voice-heard.js';
+import { partHint, nothingBackAck } from './voice-visuals.js';
 import { createMicBands } from './hud/voice-bands.js';
 import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats, getStats, dayKey } from './stats.js';
 import { createShareOptions, redactSecrets } from './share.js';
@@ -4180,6 +4181,8 @@ export async function startApp(rootEl) {
     // ---- tours ▸ (s.tour)
     // ---- tours ◂
     // ---- voice ▸
+    // The chat's Speak reading an answer aloud: "stop" typed (or said in a viewer's field) stops it.
+    if (surface !== 'voice') s.speaking = !!state.speaking;
     // ---- voice ◂
     // ---- chrome-voice ▸ (s.chrome: the link, the latest task, the Chrome context)
     if (chromeVoice) s.chrome = { ...s.chrome, ...safe(() => chromeVoice.state(), {}) };
@@ -4296,7 +4299,13 @@ export async function startApp(rootEl) {
         return standbyFromViewer() ? { handled: true } : null;
       case 'hologram': {
         const res = viewer ? safe(() => viewer.command(text, opts), null) : null;
-        return res && res.handled ? res : null;
+        if (!(res && res.handled)) return null;
+        // v8.1: "go back" with nothing to go back to is answered (C3); a part that took camera words
+        // says how to reach the camera (R10).
+        const cmd = res.command || {};
+        if (cmd.action === 'close-blueprint' && !getBlueprintViewer()) return { ...res, notice: Promise.resolve(nothingBackAck()) };
+        const hint = partHint(text, cmd);
+        return hint ? { ...res, notice: Promise.resolve(hint) } : res;
       }
       case 'screens': {
         // "Put this on my other screen" typed in a viewer: a screen command, not a message for Jarvis.
@@ -4442,6 +4451,28 @@ export async function startApp(rootEl) {
         monthUsd: safe(() => getSpend().monthUsd, 0),
         liveUsd: safe(() => createLiveBudget().spent(), 0),
       }),
+      // SHOULD C5: the one-tap button for a Look at the screen (its share picker needs a tap); the
+      // price on it. In the chat, the line is the toast that carries the button.
+      screenLook: ({ surface = 'chat' } = {}) => {
+        if (state.demo || !safe(() => screenLookSupported(), false)) return { supported: false };
+        const fromVoice = surface === 'voice' && !!voiceApi && safe(() => isVoiceModeOpen(), false);
+        const tap = () => openOpticsScreen({ start: 'screen', voice: fromVoice });
+        if (fromVoice) {
+          safe(() => voiceApi.offer({ label: 'Look at my screen · about 3¢', testid: 'voice-screen-look', onTap: tap }));
+          return { supported: true };
+        }
+        if (surface === 'hologram' || surface === 'optics') closeViewersForSheet();
+        toast('Tap Look to look at your screen. A Look costs about 3 cents.', { level: 'info', id: 'screen-look', timeout: 30000, action: { label: 'Look', fn: tap } });
+        return { supported: true, shown: true };
+      },
+      // SHOULD C6: "brief me" with no home base (asked first in Voice Mode): the briefing protocol's words.
+      briefing: () => {
+        const p = safe(() => getProtocol('morning-briefing'), null);
+        const text = p ? safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '') : '';
+        if (!text) return false;
+        safe(() => presence.noteBriefing(new Date()));
+        return { send: text, mode: p.mode || 'swarm' };
+      },
       stopTarget: (target) => {
         switch (target) {
           case 'liveview': {

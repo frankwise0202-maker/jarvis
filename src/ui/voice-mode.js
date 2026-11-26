@@ -527,6 +527,10 @@ function createVoiceMode(opts) {
   const pillIcon = h('span', { class: 'vm-pill-icon', attrs: { 'aria-hidden': 'true' } });
   const pillLabel = h('span', { class: 'vm-pill-label' });
   const readFull = h('button', { class: 'vm-pill', type: 'button', hidden: true, attrs: { 'data-testid': 'voice-read-full' }, on: { click: onReadFull } }, pillIcon, pillLabel);
+  // v8.1 (SHOULD C5): a one-tap offer ("Look at my screen · about 3¢"): what only a tap can start.
+  const offerLabel = h('span', { class: 'vm-pill-label' });
+  const offerBtn = h('button', { class: 'vm-pill vm-offer', type: 'button', hidden: true, attrs: { 'data-testid': 'voice-offer' }, on: { click: () => takeOffer() } }, offerLabel);
+  let offer = null; // { onTap, timer }
 
   const input = h('input', {
     class: 'vm-input',
@@ -583,7 +587,7 @@ function createVoiceMode(opts) {
     },
     h('div', { class: 'vm-aura', attrs: { 'aria-hidden': 'true' } }),
     h('div', { class: 'vm-top' }, brand, contSwitch),
-    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, reviewEl, capSub, musicEl, chromeEl, missionEl, readFull),
+    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, reviewEl, capSub, musicEl, chromeEl, missionEl, readFull, offerBtn),
     h(
       'div',
       { class: 'vm-bottom' },
@@ -732,6 +736,11 @@ function createVoiceMode(opts) {
     setContinuous: (on) => setContinuous(on),
     /** v8.1 (C2): leave Voice Mode for something the owner asked to see ("open settings"): not into Standby. */
     leave: () => close('command'),
+    /**
+     * v8.1 (SHOULD C5): a one-tap button under the captions ({ label, testid, onTap, ttlMs = 60000 }):
+     * for what only a tap may start (the screen's share picker). A new offer replaces it.
+     */
+    offer: (spec) => showOffer(spec),
     /**
      * v8.1 (contract (a)): an owner question, said now (or once Voice Mode is free) and answered by
      * voice: { id, say, choices: [{ id, label, words: [...] }], match(text, readings) → choiceId | null,
@@ -1062,7 +1071,8 @@ function createVoiceMode(opts) {
     let hit = routeWords([text], local);
     if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt')) questions.dropTop('dropped');
     while (hit) {
-      if (act(hit, [text], { reviewed: true, typed: true })) return;
+      // An approval for Chrome keeps its check, typed too (it approves a step on a web page).
+      if (act(hit, [text], { reviewed: hit.id !== 'prompt', typed: true })) return;
       hit = routeWords([text], local, hit);
     }
     send(text);
@@ -3116,6 +3126,8 @@ function createVoiceMode(opts) {
       }
       case 'voice-controls':
         return voiceControl(hit);
+      case 'briefing':
+        return askBriefing(hit);
       default:
         return actRouted(hit, opts);
     }
@@ -3224,6 +3236,73 @@ function createVoiceMode(opts) {
       default:
         return false;
     }
+  }
+
+  /** v8.1 (SHOULD C5): show a one-tap offer (see api.offer). */
+  function showOffer(spec = {}) {
+    if (S.closed || !spec || typeof spec.onTap !== 'function') return false;
+    clearOffer();
+    offerLabel.textContent = String(spec.label || '').slice(0, 80);
+    if (spec.testid) offerBtn.setAttribute('data-testid', String(spec.testid));
+    offerBtn.hidden = false;
+    offer = { onTap: spec.onTap, timer: setTimeout(clearOffer, Number.isFinite(spec.ttlMs) ? spec.ttlMs : 60000) };
+    return true;
+  }
+
+  function clearOffer() {
+    if (offer && offer.timer) clearTimeout(offer.timer);
+    offer = null;
+    offerBtn.hidden = true;
+    offerBtn.setAttribute('data-testid', 'voice-offer');
+  }
+
+  /** The offer's tap: inside the gesture, as its button would be (a share picker may open). */
+  function takeOffer() {
+    const o = offer;
+    clearOffer();
+    if (!o || S.closed) return;
+    try {
+      o.onTap();
+    } catch (err) {
+      console.warn('[voice] the offer failed', err);
+    }
+  }
+
+  /**
+   * v8.1 (SHOULD C6): "brief me" with no home base: the price first, as a question; "yes" sends the
+   * briefing protocol as a turn of its own (a new chat, like the wake routine's briefing).
+   */
+  function askBriefing(hit) {
+    showCaption('quote', `“${hit.reading}”`);
+    askNew({
+      id: 'briefing',
+      say: appCommandLine(hit.action),
+      match: (text) => {
+        const reply = confirmReply(text);
+        return reply === 'yes' || reply === 'no' ? reply : null;
+      },
+      timeoutMs: CONFIRM_MS,
+      onAnswer: (choice, { words }) => {
+        showCaption('quote', `“${words}”`);
+        if (choice !== 'yes') {
+          speakAck('Okay, no briefing.');
+          return;
+        }
+        let out = null;
+        try {
+          out = router && typeof router.run === 'function' ? router.run(hit, { surface: 'voice', voice: api }) : null;
+        } catch (err) {
+          console.warn('[voice] the briefing could not start', err);
+        }
+        if (!out || typeof out.send !== 'string' || !out.send.trim()) {
+          speakAck('I couldn’t start the briefing.');
+          return;
+        }
+        const res = send(out.send, { caption: words, mode: out.mode, newChat: true });
+        if (res && res.error) speakAck(res.error);
+      },
+    });
+    return true;
   }
 
   /** Say `line`, then `then()` instead of listening again (also when speech fails, or is off). */
@@ -4988,6 +5067,7 @@ function createVoiceMode(opts) {
     if (levelFrame) cancelAnimationFrame(levelFrame);
     levelFrame = 0;
     if (inertObserver) callQuietly(() => inertObserver.disconnect());
+    callQuietly(() => clearOffer());
     callQuietly(() => questions.clear('closed'));
     callQuietly(() => endCheck('closed')); // v8.1 chrome-voice: a Chrome check withdrawn, nothing sent
     clearInterval(C.pump);
