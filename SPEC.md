@@ -4177,13 +4177,14 @@ gets its second try. Settings → Voice → Wake Jarvis → **Keep talking when 
 and the live view stop while hidden (camera.js; v8.0). Chrome's red dot and macOS's orange dot are on whenever Standby
 listens, so they can't tell "waiting for Hey Jarvis" from "hearing your question" (README).
 
-**Lines before the greeting** (lead decision D3): src/lib/wake/pending.js `createWakePending()` →
-`{ add(fn, { waits }) → remove(), lines() }`; app.js holds one (`wakePending`, also `deps.wakePending` for the command
-modules) and passes `wake.pending: () => wakePending.lines()`. `greetWake` says `[...lines, greeting, offer]`; when a
-question said in one breath with "Hey Jarvis" takes the greeting's place, the lines are said before its answer
-(`S.preface`, MAC-7). Each
-`fn()` returns a line or null at each wake; lines with `waits: true` (Chrome's question) come first, then the others
-in the order added; a throwing `fn` counts as null; lines are tidied and cut at 240 characters.
+**Lines before the greeting** (lead decision D3): src/lib/wake/pending.js `createWakePending()` → `{ add(fn, { waits })
+→ remove(), lines() }`; app.js holds one (`wakePending`, also `deps.wakePending` for the command modules) and passes
+`wake.pending: () => wakePending.lines()`. `greetWake` says `[...lines, greeting, offer]`; when a question said in one
+breath with "Hey Jarvis" takes the greeting's place, the lines are said before its answer (`S.preface`, MAC-7), asked
+for only as that answer starts to say them (MAC-R2-5: a free command, a withdrawn check or a turn that fails first leave
+them for the next greeting, since a hook counts a line it gives as said). Each `fn()` returns a line or null at each
+wake; lines with `waits: true` (Chrome's question) come first, then the others in the order added; a throwing `fn`
+counts as null; lines are tidied and cut at 240 characters.
 
 **Tests.** Unit `stt.background`, `sounds.hidden`, `attention.title`, `voice.handsfree` (Voice Mode on a Node
 harness, `voice-mode.fakes.mjs`), `wake.pending`. E2E `mac-handsfree-hidden-wake`, `mac-handsfree-hidden-mid-listen`,

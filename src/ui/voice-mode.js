@@ -4607,8 +4607,9 @@ function createVoiceMode(opts) {
       // the owner (D3: the speakerphone line, Chrome's question) is said before its answer instead of the greeting.
       S.wake = null;
       clearTimeout(W.timer);
-      const waited = wakePendingLines().join(' ');
-      if (waited) S.preface = { text: waited, at: Date.now() };
+      // MAC-R2-5: asked for only when an answer says them (a free command, a check withdrawn or a turn that fails
+      // first leave them for the next greeting: wake.pending() counts a line it gives as said).
+      S.preface = { lazy: true, at: Date.now() };
       return false;
     }
     if (W.phase !== 'asking') return false;
@@ -4859,18 +4860,32 @@ function createVoiceMode(opts) {
     startEstimator(sp);
     renderControls();
     if (R.preface) {
-      const line = R.preface;
+      const line = prefaceText(R.preface);
       R.preface = '';
       if (line) appendLive(sp, `${line} `);
     }
     return sp;
   }
 
-  /** v8.1: a short line said before the next turn's answer ("New look."), if it is still fresh. */
+  /**
+   * v8.1: a short line said before the next turn's answer ("New look."), if it is still fresh. MAC-R2-5: the wake's
+   * waiting lines come as a function, asked for only as the answer starts to say them (prefaceText()).
+   */
   function takePreface() {
     const p = S.preface;
     S.preface = null;
-    return p && Date.now() - p.at < 15000 ? p.text : '';
+    if (!p || Date.now() - p.at >= 15000) return '';
+    return p.lazy ? () => wakePendingLines().join(' ') : p.text;
+  }
+
+  /** MAC-R2-5: a turn's preface as text (a lazy one is asked for now, as it is said). */
+  function prefaceText(p) {
+    if (typeof p !== 'function') return p || '';
+    try {
+      return String(p() || '');
+    } catch {
+      return '';
+    }
   }
 
   function appendLive(sp, piece) {
@@ -4902,7 +4917,7 @@ function createVoiceMode(opts) {
 
   /** The answer said at the end, after the turn's preface ("New look.") when its live speech never said it. */
   function withPreface(R, text) {
-    const line = R && R.preface ? R.preface : '';
+    const line = R && R.preface ? prefaceText(R.preface) : '';
     if (R) R.preface = '';
     return line ? `${line} ${text}` : text;
   }

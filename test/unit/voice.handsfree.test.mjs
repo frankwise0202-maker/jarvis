@@ -544,6 +544,41 @@ test('MAC-R2-3: braked after claps, the routine’s free answers still work ("pl
   await until(env, () => env.log.turns.length >= 1, 'a question taken on screen', 60000);
 });
 
+// MAC-R2-5: a one-breath "Hey Jarvis, <free command>" took the speakerphone line (given once per absence) for a turn's
+// preface that never came: the line was never said. Now it is asked for only when an answer says it.
+test('MAC-R2-5: one breath "Hey Jarvis, play some AC/DC" (a free command) with the speakerphone away: the line isn’t taken, and the next wake’s greeting says it; a one-breath question still says it before its answer', async (t) => {
+  const LINE = 'I’m on the Mac’s speakers; the speakerphone isn’t connected.';
+  const { createWakePending } = await import('../../src/lib/wake/pending.js');
+  const music = { command: () => ({ handled: true, done: Promise.resolve({ ack: 'Here’s some AC/DC.' }) }) };
+  const router = { route: (readings) => (/^play\b/i.test(readings[0]) ? { id: 'music', layer: 'media', reading: readings[0], action: {} } : null), run: () => false };
+  for (const words of ['play some AC/DC', Q]) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    const st = { away: true, given: 0 };
+    const wp = createWakePending();
+    wp.add(() => {
+      if (!st.away) return null;
+      st.away = false; // awayLine(): given once per absence
+      st.given += 1;
+      return LINE;
+    });
+    env.say((n) => (n === 0 ? words : null));
+    env.open({ wake: env.wakeHooks({ trigger: 'word', pending: () => wp.lines() }), listenWhileHidden: () => true, answer: ANSWER, extra: { router, music } });
+    await until(env, () => env.log.spoken.some((s) => /AC\/DC|Paris/.test(s.text)), 'the answer');
+    await env.advance(30000);
+    const first = env.log.spoken.map((s) => s.text);
+    if (words === Q) {
+      assert.ok(first.some((x) => x.startsWith(`${LINE} `) && x.includes('Paris')), `said before the answer (${JSON.stringify(first)})`);
+      continue;
+    }
+    assert.equal(st.given, 0, 'not taken by a free command');
+    env.say(() => null);
+    env.open({ wake: env.wakeHooks({ trigger: 'clap', pending: () => wp.lines() }), listenWhileHidden: () => true });
+    await env.advance(8000);
+    assert.ok(env.log.spoken.some((s) => s.text.startsWith(`${LINE} Good`)), `the next greeting says it (${JSON.stringify(env.log.spoken.map((s) => s.text))})`);
+  }
+});
+
 // ---- D3: wake.pending() --------------------------------------------------------------------------------------
 
 test('D3: the lines that waited for the owner (wake.pending()) come before the greeting', async (t) => {
