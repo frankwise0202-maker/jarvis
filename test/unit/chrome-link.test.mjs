@@ -7,9 +7,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChromeLink, cleanPrompt, cleanOpenUrl, cleanRect, cleanText, readLinkRecord, CHROME_LINK_KEY, CHROME_LINK_INBOX_KEY, REPLY_TIMEOUT_MS, PENDING_MS, ONLINE_MS, LATE_START_LINE } from '../../src/platform/chrome-link.js';
+import { createChromeLink, cleanPrompt, cleanOpenUrl, cleanRect, cleanText, readLinkRecord, containsLinkSecret, linkSecrets, CHROME_LINK_KEY, CHROME_LINK_INBOX_KEY, REPLY_TIMEOUT_MS, PENDING_MS, ONLINE_MS, LATE_START_LINE } from '../../src/platform/chrome-link.js';
 import { fakeRelay, answerRelay, createFakeChromePeer, chromeLinkRecord, CHROME_TEST_KEY, CORE_ORIGIN, CORE_URL } from '../e2e/core-fakes.mjs';
-import { importLinkKey, sealEnvelope, newLinkKey, parseLinkCode } from '../../src/lib/relay-envelope.js';
+import { importLinkKey, sealEnvelope, newLinkKey, parseLinkCode, makeLinkCode } from '../../src/lib/relay-envelope.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -263,6 +263,16 @@ test('open: only http(s) addresses without a user name; the window\'s rectangle 
   for (const bad of ['javascript:alert(1)', 'chrome://settings', 'file:///etc/passwd', 'https://user:pw@example.com/', 'not a url', '', 'https://x.example/' + 'a'.repeat(2100), 42]) assert.equal(cleanOpenUrl(bad), null, String(bad).slice(0, 40));
   assert.deepEqual(cleanRect({ left: 760.4, top: -0.2, width: 680, height: 900 }), { left: 760, top: 0, width: 680, height: 900 });
   for (const bad of [null, { left: 0, top: 0, width: 50, height: 900 }, { left: NaN, top: 0, width: 600, height: 600 }, { left: 1e9, top: 0, width: 600, height: 600 }, [1, 2, 3, 4]]) assert.equal(cleanRect(bad), null, JSON.stringify(bad));
+});
+
+test('LINK-5: a link code or this device\'s link key is spotted in any text (the chat refuses it; backups leave it out)', () => {
+  const key = newLinkKey();
+  const prev = newLinkKey();
+  const code = makeLinkCode({ core: CORE_ORIGIN, key });
+  for (const text of [code, `here: ${code} thanks`, `\n${code}\n`, `my key ${key}`, `old ${prev}`]) assert.equal(containsLinkSecret(text, [key, prev]), true, text.slice(0, 30));
+  for (const text of ['pull this up in Chrome', 'eyJ2IjoxLCJjb3JlIjoi', 'sk-ant-xyz', '', null, 42]) assert.equal(containsLinkSecret(text, [key, prev]), false, String(text));
+  const stored = new Map([[CHROME_LINK_KEY, JSON.stringify({ v: 1, core: CORE_ORIGIN, key, linkedAt: 1, madeAt: 1, prev, rekeyAt: Date.now(), prevSeenAt: Date.now() })]]);
+  assert.deepEqual(linkSecrets((k) => stored.get(k) ?? null), [key, prev], 'the stored key, and the code\'s while a rekey is unconfirmed');
 });
 
 // ---- linking ---------------------------------------------------------------------------------------------

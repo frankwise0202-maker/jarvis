@@ -52,6 +52,7 @@ import { resetSpend } from './spend.js';
 import { listConversations, getConversation, deleteAllConversations, restoreConversation } from './db.js';
 import { deleteAllLibraryItems, exportLibraryItems, importLibraryItems, listLibraryIds, listLibraryItems, IMPORT_MAX_ITEMS } from './library.js';
 import { removeItemsWithPrefix } from './storage.js';
+import { LINK_CODE_RE, LINK_CODE_RE_ALL, linkSecrets } from './chrome-link.js';
 import { isPlainObject, reportWarning } from './util.js';
 import { DEPTHS, MODES } from '../engine/models.js';
 import { isKnownLeadSetup } from '../engine/prompts.js';
@@ -97,6 +98,8 @@ export const RESTORED_SETTINGS = Object.freeze([
 
 /** What replaces an API key in exported data. */
 export const KEY_REMOVED = '[API key removed]';
+/** What replaces a Jarvis for Chrome link code or key in exported data (REDTEAM-LINK-5). */
+export const LINK_REMOVED = '[link code removed]';
 /**
  * Anything shaped like an Anthropic API key (not only the saved one: an old or second key too),
  * in any letter case (a key retyped or auto-capitalized by a phone keyboard).
@@ -145,7 +148,15 @@ async function buildBackup() {
   const key = getApiKey();
   // The saved key as it appears inside JSON text (identical for any real key).
   const savedKey = typeof key === 'string' && key.length >= 8 ? JSON.stringify(key).slice(1, -1) : '';
-  const mentionsKey = (json) => (!!savedKey && json.includes(savedKey)) || KEY_LIKE.test(json);
+  // Jarvis for Chrome's link code and this device's link key count too (REDTEAM-LINK-5): one pasted into the chat
+  // must not reach the home base that carries the link's messages, in a backup or a sync upload.
+  let linkKeys = [];
+  try {
+    linkKeys = linkSecrets();
+  } catch {
+    linkKeys = [];
+  }
+  const mentionsKey = (json) => (!!savedKey && json.includes(savedKey)) || KEY_LIKE.test(json) || LINK_CODE_RE.test(json) || linkKeys.some((k) => json.includes(k));
   const conversations = [];
   const excluded = [];
   for (const row of await listConversations()) {
@@ -176,6 +187,8 @@ async function buildBackup() {
   // like one. (The pattern never spans a JSON string boundary, so the JSON stays valid.)
   if (savedKey) json = json.split(savedKey).join(KEY_REMOVED);
   json = json.replace(KEY_LIKE_ALL, KEY_REMOVED);
+  for (const k of linkKeys) json = json.split(k).join(LINK_REMOVED);
+  json = json.replace(LINK_CODE_RE_ALL, LINK_REMOVED);
   const ids = {
     conv: conversations.map((c) => c.id).concat(excluded.map((c) => c.id)),
     lib: data.library && Array.isArray(data.library.items) ? data.library.items.map((it) => it && it.id).filter((id) => typeof id === 'string') : [],

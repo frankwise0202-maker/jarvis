@@ -278,6 +278,29 @@ export function readLinkRecord(read = readItem) {
   };
 }
 
+/**
+ * A link code in some text: base64url of `{"v":1,"core":"https://…`, whose first 20 characters never change, and the
+ * rest of a code after them (REDTEAM-LINK-5).
+ */
+export const LINK_CODE_RE = /eyJ2IjoxLCJjb3JlIjoi[A-Za-z0-9_-]{40,}/;
+export const LINK_CODE_RE_ALL = new RegExp(LINK_CODE_RE.source, 'g');
+
+/** This device's link secrets: its link key, and the code's key while a rekey is unconfirmed (never shown anywhere). */
+export function linkSecrets(read = readItem) {
+  const r = readLinkRecord(read);
+  return r ? [r.key, r.prev].filter(Boolean) : [];
+}
+
+/**
+ * True when `text` holds a link code or this device's link key (REDTEAM-LINK-5): the chat refuses to send it to
+ * Claude, and a conversation holding one stays out of backups and sync, like one holding an API key.
+ */
+export function containsLinkSecret(text, secrets = linkSecrets()) {
+  if (typeof text !== 'string' || !text) return false;
+  if (LINK_CODE_RE.test(text)) return true;
+  return (Array.isArray(secrets) ? secrets : []).some((k) => typeof k === 'string' && k.length >= 40 && text.includes(k));
+}
+
 /** The same link, a rekey apart (REDTEAM-LINK-4): a new key replacing the code's is not a new link. */
 export function sameLink(a, b) {
   if (!a || !b || a.core !== b.core) return false;

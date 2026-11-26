@@ -14,6 +14,7 @@ import { MODES } from '../engine/index.js';
 import { getSettings as platformGetSettings, onSettingsChange } from '../platform/settings.js';
 import { ATTACHMENT_LIMITS, AttachmentError, attachmentMeta, describeAttachments, formatBytes, processFile, safeThumb } from './attachments.js';
 import { containsApiKey } from './share.js';
+import { containsLinkSecret } from '../platform/chrome-link.js';
 
 const MODE_INFO = {
   auto: { icon: 'sparkle', hint: 'Jarvis decides: answer, search, or deploy agents' },
@@ -880,6 +881,17 @@ export function createComposer(o) {
     }
     if (containsApiKey(text) && text !== keyOkText) {
       askAboutKey();
+      return false;
+    }
+    // The Jarvis for Chrome link code (or its key) never goes to Claude, a backup or sync (REDTEAM-LINK-5).
+    let linkSecret = false;
+    try {
+      linkSecret = containsLinkSecret(text);
+    } catch {
+      linkSecret = false;
+    }
+    if (linkSecret) {
+      showNotice('That’s the Jarvis for Chrome link code: it stays out of the chat. Paste it in Jarvis for Chrome’s side panel.', 'warn');
       return false;
     }
     const extras = { attachments };
