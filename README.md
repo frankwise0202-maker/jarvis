@@ -264,6 +264,25 @@ you off.
 #### Always on: the Mac checklist
 
 <!-- v8.1: mac-dev writes this part. -->
+For Jarvis to be listening and speaking on the Mac day and night, with a speakerphone across the room. Jarvis
+can't change these himself, so check them once:
+
+- **The Mac on power, with the lid open.** "Speakerphone speaks, Mac listens" and the claps use the Mac's own
+  microphone, and a MacBook switches its microphone off while the lid is closed.
+- **The Mac mustn't sleep:** System Settings → Battery → Options → turn on **Prevent automatic sleeping on power
+  adapter when the display is off**. The display may sleep; the Mac must not (a sleeping Mac hears nothing).
+- **Install Jarvis as an app** (the install icon in Chrome's address bar). It gets its own window, and after a
+  restart George can speak without you clicking first.
+- **Chrome:**
+  - the microphone for Jarvis on **Allow on every visit**, not "Allow this time" (that ends after 16 hours, or 5
+    minutes after Jarvis stops using it, and Standby then wakes up to MICROPHONE BLOCKED);
+  - notifications allowed (Settings → Appearance & sound → Allow notifications);
+  - pop-ups allowed for Jarvis;
+  - Chrome's Settings → Performance → **Always keep these sites active** → add the Jarvis site.
+- **The speakerphone set up:** Settings → Voice → **Microphone and speaker** (below), or the no-setting way:
+  System Settings → Sound → Output: the speakerphone; Input: the MacBook's microphone.
+- **One Standby per room.** With Standby open on the iPhone and on the Mac, both would answer "Hey Jarvis", and
+  you'd pay twice.
 
 ### Wake Jarvis (Standby)
 
@@ -588,6 +607,61 @@ runs on your own computer at home, and nothing goes to any cloud.
 #### Microphone and speaker (Mac)
 
 <!-- v8.1: mac-dev writes this part. -->
+Where Jarvis listens and speaks on a computer: **Settings → Voice → Microphone and speaker** (Chrome or Edge on a
+Mac; the card isn't there on iPhone).
+
+- **The simplest way needs no setting at all:** on the Mac, System Settings → Sound → **Output**: the speakerphone;
+  **Input**: the MacBook's own microphone. That is the recommended setup below, and Jarvis follows it. Every other
+  sound of the Mac goes to the speakerphone then; to keep those on the Mac's speakers, choose it in the card
+  instead. With nothing chosen in the card, Jarvis follows the Mac's sound settings, as before.
+- **Why Bluetooth needs a choice.** While any app on the Mac has the speakerphone's Bluetooth microphone open,
+  macOS switches it to its phone-call mode, and everything it plays sounds like a phone call (Apple's support
+  article 102217). It switches back when the microphone closes, with a short gap (about a second). Standby keeps
+  Jarvis's microphone open all the time, Jarvis closes his question microphone while he speaks, and Standby lets
+  go of its own when he wakes. So if Jarvis listens through the speakerphone, George sounds like a phone call
+  whenever Standby listens, and the speakerphone flips mode at every turn of a conversation.
+- **Three setups** (the card shows them when the speaker or the microphone is Bluetooth):
+  1. **Speakerphone speaks, Mac listens** (recommended): George always sounds his best, nothing switches, and
+     "Hey Jarvis" can interrupt him. The Mac's microphone hears you less well from across the room, and only with
+     the lid open.
+  2. **Speakerphone for both:** Jarvis hears you best from across the room. George sounds like a phone call
+     whenever its microphone is open (Standby listens all the time, so mostly), with a short gap at each switch.
+  3. **Switch** (experimental): the Mac's microphone waits for "Hey Jarvis"; your question is heard on the
+     speakerphone's microphone; George answers in full sound. A short gap at each switch.
+- **Microphone ▾ and Speaker ▾** list your devices by name and connection ("MacBook Pro Microphone · Built-in").
+  Pick one by hand and the setup says **Custom**. Until the microphone is allowed for Jarvis, only **Default** is
+  offered, with **Show my devices** (it asks for the microphone once and lets go at once). Everything Jarvis plays
+  (George, the chimes, music previews) goes to the one speaker you choose.
+- **The tests** (each starts only when you tap it):
+  - **Test microphone** (5 seconds): a level bar, what the recognizer heard ("Heard: …"), and "Clap twice now"
+    through Standby's own clap detector.
+  - **Test speaker:** George says one sentence through the chosen speaker. **Compare:** the same sentence with
+    the speakerphone's microphone closed, then open, so you can hear the phone-call mode.
+  - **Test hands-free**, three steps: (1) switch to another app and say "testing" within 10 seconds (did Jarvis
+    hear you in the background?); (2) George says a sentence with "Jarvis" in it while the wake microphone
+    listens (if that wakes him, interrupting him by voice stays off, and the card says why); (3) "Did you hear
+    that from the speakerphone?" The results are kept on this Mac and shown on the card.
+- **Notes.** When George isn't speaking, the Mac's own voice uses the Mac's sound output (System Settings →
+  Sound). "Speakerphone speaks, Mac listens" needs the lid open. Chrome's own microphone setting is
+  `chrome://settings/content/microphone` (a page can't open it: the card has a **Copy** button). Chrome 135 or
+  later hands Jarvis's recognizer the microphone you chose; with an older Chrome the card says **Set Chrome's
+  microphone to …**, because the recognizer then uses Chrome's own choice.
+- **When the speakerphone goes away** (turned off, out of range, its battery flat), Jarvis keeps listening on the
+  Mac's microphone and the Standby pill says so: **LISTENING ON THE MAC’S MICROPHONE · SPEAKERPHONE
+  DISCONNECTED**. George plays on the Mac's speakers meanwhile. When it's back, Jarvis moves back by himself. At
+  your next "Hey Jarvis" he says it once before the greeting: "I'm on the Mac's speakers; the speakerphone isn't
+  connected." He never says it out loud by himself at night. A Bluetooth switch that only looks like the
+  speakerphone leaving changes nothing: it must be gone for about 3 seconds.
+- **Standby tries the microphone again by itself** when it's busy or gone: after 2 seconds, 5, 15, a minute, then
+  every 5 minutes, also in the background. After the Mac has slept, Standby starts its microphone again.
+- **The first time Standby runs with a Bluetooth speaker and nothing chosen** it shows one line: "Using a
+  Bluetooth speakerphone? Set it up in Settings → Voice."
+- **Free, and on this Mac only:** nothing here asks Claude anything, and the choice stays on this Mac (it isn't in
+  backups or synced to your other devices: device names and ids are per computer).
+- **Honest limits:** this was tested in Chrome with stand-in devices, not yet on your Mac with the speakerphone:
+  how George sounds in each setup, how long each switch takes (George waits 0.8 seconds after a Bluetooth
+  microphone closes), whether Chrome's echo cancellation follows George to the speakerphone, and what macOS
+  reports when the speakerphone drops are for you to try.
 
 ### A more natural voice
 
@@ -998,6 +1072,10 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **Two claps don't wake Jarvis** | Check that Standby's pill says **LISTENING ON THIS DEVICE · TWO CLAPS**. Clap sharply, twice, about half a second apart, then wait a second (he checks that no third clap follows). Soft claps or a noisy room: Settings → Voice → Wake Jarvis → **Clap sensitivity** → **High**. From far away the sensitivity doesn't help: clap sharper, or say "Hey Jarvis". On iPhone Jarvis must be open on screen. |
 | **Jarvis wakes up by himself** | Settings → Voice → Wake Jarvis → **Clap sensitivity** → **Low**, or turn off **Clap twice** and use "Hey Jarvis". Woken by claps, he never sends what the room is saying anywhere; he greets you and waits. |
 | **"Hey Jarvis" doesn't wake him** | Wait until Standby's pill names “HEY JARVIS” (the first time it downloads about 15 MB). Say "Hey Jarvis" clearly and pause; closer to the device works better, and loud music in the room makes it harder. Two claps always work too. |
+| **George sounds like a phone call (Mac, Bluetooth speakerphone)** | The speakerphone's Bluetooth microphone is open, so macOS put it in its phone-call mode. Choose **Speakerphone speaks, Mac listens** in Settings → Voice → Microphone and speaker (or, with no setting: System Settings → Sound → Input: the MacBook's microphone). **Compare** in that card plays the difference. |
+| **The Standby pill says SPEAKERPHONE DISCONNECTED** | The speakerphone is off, out of range or out of battery. Jarvis listens on the Mac's microphone meanwhile and moves back by himself when it's connected again (check that it's on and paired in the Mac's Bluetooth settings). |
+| **The Microphone and speaker card says "Set Chrome's microphone to …"** | This Chrome can't hand its recognizer the microphone you chose (Chrome before 135). Update Chrome, or paste `chrome://settings/content/microphone` into a new tab and choose the same microphone there. |
+| **Standby says NOT LISTENING on the Mac** | Another app may hold the microphone (a call), or the Mac just woke up: Standby tries again by itself (after 2 s, 5 s, 15 s, a minute, then every 5 minutes). MICROPHONE BLOCKED means Chrome's permission: choose **Allow on every visit** (see [Always on: the Mac checklist](#always-on-the-mac-checklist)). |
 | **Jarvis stops listening before I have finished** | Settings → Voice → **Wait after I stop talking** → **Long** (2.6 seconds). Pausing on "and" or "um" already gives you a second more. In Voice Mode you can also just keep talking while your words are shown: they are added. |
 | **Jarvis hears the wrong words** | Check Settings → Voice → **Listening language**: Automatic uses your device's language; pick yours if you speak another language or accent. Fix a word before it is sent: tap the words, or say "no, I said …". Speaking a little closer to the phone helps too. |
 | **I don't want the 2-second check** | Settings → Voice → **After I stop talking** → **Send right away**. A tap on the core while you speak also sends at once. |

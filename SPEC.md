@@ -3859,10 +3859,139 @@ and `liveSpentText`.
 ### 28.2 Microphone and speaker
 
 <!-- v8.1: mac-dev writes this part. -->
+Settings → Voice → **Microphone and speaker** (after Jarvis's voice): which microphone Jarvis listens on and which
+speaker he plays on, on a computer in Chrome or Edge. With nothing chosen everything is as before v8.1: no device
+ids, no `setSinkId`, `recognition.start()`, Standby's raw request.
+
+**Files.**
+- `src/lib/audio-devices.js` (pure): `audioTransport(label)` (Chromium's Mac labels end in the transport:
+  " (Built-in)", " (Bluetooth)", " (Bluetooth LE)", " (Virtual)", " (Aggregate)", " (HDMI)", " (DisplayPort)",
+  " (AirPlay)", " (Thunderbolt)", " (PCI)", " (FireWire)", " (AVB)", and for USB " (vvvv:pppp)";
+  core_audio_util_mac.cc), `describeAudioDevice`, `listAudioDevices(devices)` → `{ inputs, outputs, defaultInput,
+  defaultOutput, labelled }` (Chrome's "Default - …"/"Communications - …" entries are left out and named as the
+  device they stand for), `deviceTitle` ("MacBook Pro Microphone · Built-in"), `pickDevice(list, { id, label })`
+  (by id, then label; `missing`), `AUDIO_SETUPS`, `SETUP_IDS`, `RECOMMENDED_SETUP` (`'speaker-mac-mic'`: owner
+  question 1), `BLUETOOTH_FACTS`, `AUDIO_NOTES`, `setupDevices`, `planSetup`, `audioConstraints`, the hot-plug rule
+  (§28.3), `trackStartSupport`, the hands-free Test's shape.
+- `src/platform/audio-devices.js`: `audioChoiceSupported()` (`AudioContext.prototype.setSinkId`), `recognizerTakesTrack()`,
+  `micPermission()`, `showMyDevices()`, `openMic({ id, processing })`, `firstSound(track, maxMs)`, and
+  `createAudioDevices({ getSettings, phoneLike, playChime })`: one controller per page (app.js; none in a screen
+  window).
+- `src/ui/audio-devices-card.js` and `src/styles/audio-devices.css` (the card); `src/platform/wake/capture.js`
+  (`device`, the fallback, `onRelease`, `onTrack`, `cap.device`); `src/platform/voice/stt.js` (`audioTrack`);
+  `natural/audio-out.js` (`setSink`, `settle`, `onDevice`); `src/ui/sounds.js` (`setSoundsSink`); `music/player.js`
+  (`setSink`); `src/ui/standby.js` (the `audio` dependency); `src/platform/backup.js` (`EXCLUDED_SETTINGS`).
+
+**Settings** (this computer's own: in `EXCLUDED_SETTINGS`, so never exported, synced or imported): `audioSetup`
+(`''` none, `'speaker-mac-mic'`, `'speakerphone-both'`, `'switch'`), `audioInputId`, `audioInputLabel`,
+`audioOutputId`, `audioOutputLabel` (ids: printable ASCII up to 256 characters; labels: one line up to 200). Picking
+a setup stores `setupDevices(setup, …)`: the speakerphone is the speaker already chosen when it isn't built in,
+else the default output when it isn't built in, else a Bluetooth output (one with a microphone of its own group
+first); its microphone is the input of the same group, else of the same name; the Mac's microphone is the
+built-in input. Picking a device by hand stores it with `audioSetup: ''` ("Custom"). "Follow the Mac" clears all
+five.
+
+**What each setup does** (`planSetup(setup, devices, chosen, gone)`; `questionMic` is the stored input):
+
+| setup | Standby's capture (`wakeMic`) | its processing (EC / NS / AGC) | questions (`questionMic`) | speaker |
+|---|---|---|---|---|
+| none, nothing chosen | Chrome's own choice | off / off / off (as before) | Chrome's own choice | the default |
+| Custom (devices by hand) | the chosen microphone | off / off / off | the chosen microphone | the chosen one |
+| 1 `speaker-mac-mic` | the stored input (the Mac's) | **on** / off / off | the same | the speakerphone |
+| 2 `speakerphone-both` | the stored input (the speakerphone's) | off / off / off | the same | the speakerphone |
+| 3 `switch` | the Mac's built-in input | **on** / off / off | the stored input (the speakerphone's) | the speakerphone |
+
+Questions are always heard with echo cancellation, noise suppression and auto gain on. A device is asked for by
+`deviceId: { exact }`; a chosen device confirmed gone (§28.3) is replaced by the default (no id), and one missed by
+a single enumeration is still asked for by its remembered id. `mac-hf`'s barge-in (§28.4) reads `audioSetup`:
+Custom counts as unset.
+
+**Where the choice is used.**
+- Standby's capture (`createCapture` with `captureOn('wake')`) and the home base's hearing capture (Whisper, §25;
+  `captureOn('question')`, also Settings → Home base → Hearing's Test) ask `device()` at each start. A
+  `NotFoundError` or `OverconstrainedError` on the chosen id is asked again without it (the default device):
+  `{ ok: true, fellBack: true }` and `cap.device.fellBack` instead of today's `no-mic`.
+- Every recognizer listen (the chat's mic, Voice Mode, Optics' and the hologram's mic, the home base's fallback)
+  goes through `audio.wrapStt(stt)`: when a question microphone is chosen and `recognizerTakesTrack()` (Chrome or Edge
+  135+ on a computer, Firefox 160+; older Chrome ignores the argument without an error, so this is decided by the
+  version, never by a failure), the listen gets `audioTrack`: stt.js opens that microphone first, starts
+  `recognition.start(track)`, reuses the track for every restart within the listen and stops it when listening
+  ends. An `InvalidStateError` or `TypeError` from `start(track)` (the track ended) falls back to
+  `recognition.start()`. The card shows "Set Chrome's microphone to …" when the browser can't take a track.
+- The speaker: `audio.addSink(target)` calls `target.setSink(id)` with the planned speaker (`''` = the default) now
+  and on every change, for George's context (`naturalVoice.audio`: on this device and from the home base, one
+  output; also applied when a new context is made, `ensure()`), the sounds context and the music `<audio>`. Nothing
+  is asked of a sink while nothing is chosen. Everything Jarvis plays goes to the one device: Chrome's echo
+  cancellation takes one output as its reference.
+- After a Bluetooth microphone closes (the question track, a capture's `onRelease`), George's output waits
+  `SETTLE_MS` (800 ms) before its first sound: the speakerphone is switching back from its phone-call mode.
+- Setup 3: Voice Mode's `listen-start` chime is held (`audio.holdChime`) until the question track delivers a
+  non-zero sample (`firstSound`) or 1.2 s (`SWITCH_CHIME_MAX_MS`).
+
+**The card** (test ids in the file's header; `audio-devices`): shown where `audioChoiceSupported()` and not on a
+phone; nothing in the demo. Before the microphone is allowed (`navigator.permissions` and unnamed devices) only
+"Default" and **Show my devices** (`getUserMedia` inside the tap, stopped at once). The Bluetooth facts and the
+three setups show when the effective speaker or microphone is Bluetooth, or a setup is chosen. Microphone ▾ and
+Speaker ▾ ("Default (…)", each device, "… (not connected)" for a chosen one that is missing). **Test microphone**
+(5 s: a level bar on its own track of the question microphone, `data-peak`; the recognizer on that microphone,
+"Heard: …"; Standby's capture with claps on the wake microphone, "Two claps heard."). **Test speaker** (one sentence
+through the router; the card says when the Mac's own voice spoke it instead of George). **Compare** (the same
+sentence twice, the second time with the speakerphone's microphone open; only with a Bluetooth speaker that has a
+microphone of its group). **Test hands-free**: (1) a 10-s listen with `background: true`, `hiddenWords` = words
+arrived while `document.hidden` (null when the page was never hidden); (2) Standby's capture on the wake
+microphone with claps (and the "Hey Jarvis" worker when the wake word is on) while George says
+"Jarvis here. This is a test: when I say Jarvis, I should not wake myself. Jarvis, out.": `selfTrigger` 'failed'
+when a detector fired, 'passed' when none did, null when George didn't speak it (the Mac's own voice isn't in
+Chrome's echo reference) or the capture couldn't start; (3) Yes / No → `heardSpeaker`. Each step is saved as it
+ends, in localStorage `jarvis.handsFreeTest.v1` = `{ at, hiddenWords: true|false|null, selfTrigger:
+'passed'|'failed'|null, heardSpeaker: true|false|null }` (`normalizeHandsFreeTest`), and shown on the card.
+Notes: the Mac's own voice follows the Mac's sound output; setup 1 needs the lid open; Chrome's microphone setting
+as text (`chrome://settings/content/microphone`) with **Copy**.
+
+**Standby's one-time line**: with nothing chosen, the first time Standby's capture is live on a computer whose
+default output is Bluetooth, `standby-tip` says "Using a Bluetooth speakerphone? Set it up in Settings → Voice."
+(once per device: localStorage `jarvis.audio.firstTimeLine`; hidden when Standby leaves).
 
 ### 28.3 The speakerphone coming and going
 
 <!-- v8.1: mac-dev writes this part. -->
+**One watcher** (the controller of §28.2): `devicechange` on `navigator.mediaDevices` (once a choice is made; the
+card also asks while it is open), debounced 250 ms; the live tracks' `ended`, `mute` and `unmute` (Standby's capture
+through `onTrack`, the question track); George's context `error` and `statechange` (`audio-out.js` `onDevice`). Each
+enumerates the devices.
+
+**The two-enumeration rule** (`audioHotplugPlan({ state, devices, chosen, now })`): a Bluetooth mode switch can
+fire `devicechange` while the device stays, so a chosen device counts as gone only when two enumerations at least
+about 3 s apart (`AUDIO_GONE_MS`, with 20% slack) both miss it. Per role (input, output): `present` → missed once:
+`suspect` (a re-check is scheduled 3 s later) → missed again then: `gone` (action `fallback`); seen again: `present`
+(after `gone`: action `back`, at once). The first enumeration decides at once (nothing to wait out); a new choice
+starts over (the state is keyed by id and label).
+- Microphone gone: the plan's microphones become the default; Standby's capture starts again on it (its key
+  `wakeKey()` changed; a capture that already fell back by itself isn't restarted). Back: Standby moves back to
+  the chosen one.
+- Speaker gone: every sink gets `setSink('')`; back: `setSink(id)`.
+- While the chosen microphone is missing (confirmed, or the capture fell back), the Standby pill says
+  `LISTENING ON THE MAC’S MICROPHONE · SPEAKERPHONE DISCONNECTED` (the microphone listened on, from the track's
+  label; "SPEAKERPHONE" for a Bluetooth device, else its name); a missing speaker alone says the same. With a choice
+  and everything there: `LISTENING ON THE MAC’S MICROPHONE · TWO CLAPS · “HEY JARVIS”` (or the device's name). With
+  nothing chosen: `LISTENING ON THIS DEVICE · …`, as before.
+- At the next wake, once per absence, the line before the greeting: "I’m on the Mac’s speakers; the speakerphone
+  isn’t connected." (microphone only: "I’m listening on the Mac’s microphone; …"). app.js's `audioWakeLine()`
+  returns it, or null, for mac-hf's `wake.pending()` hook (decision D3); never said by itself.
+
+**Standby's retries**: a failed capture (`busy`, `no-mic`, `error`) or a track that ended is tried again after 2 s,
+5 s, 15 s, 60 s, then every 5 minutes (`createBackoff`, `captureRetryDelay`), on a Mac also while hidden (a phone
+still pauses while hidden and starts again when shown). `denied`, `needs-tap` and `unsupported` aren't retried.
+While a retry is pending the hint says "The microphone is busy. Jarvis tries it again by himself." (or "The
+microphone stopped. …"). A success starts the series over.
+
+**The Mac's sleep**: while Standby is open, a check every 15 s (`SLEEP_CHECK_MS`) notices a jump in `Date.now()`
+more than 2 minutes beyond it (`clockJumped`; a hidden page's timers may run once a minute, which isn't a sleep):
+the devices are enumerated, George's context is probed once (`probe()`), and Standby starts its capture again.
+
+**Not verifiable here** (device tests): which of these events macOS and Chrome really fire when a Bluetooth
+speakerphone drops, reconnects or switches mode; how long a switch takes (`SETTLE_MS`); whether a capture opened
+on the default device follows a macOS default change.
 
 ### 28.4 Interrupting by voice
 
