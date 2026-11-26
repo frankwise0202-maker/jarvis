@@ -3664,7 +3664,8 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
 
 The owner asked for a live "video mode" on the cheap model, "always looking … constant for like an hour. Max is $1
 per hour." The live view is that: one-off looks on Claude Haiku 5.5 about once a second, for up to an hour, under a
-hard budget of $1 in any rolling hour.
+budget of $1 in any rolling hour that its own looks never pass. Questions asked during it count in the same hour and
+are always answered (below), so after a question at the limit the hour can read a few cents over $1.
 
 **Files.**
 - `src/engine/live.js`: `LIVE_DEFAULT_MODEL` (`claude-haiku-5-5`), `LIVE_SYSTEM` (starts "You are Jarvis Live view"),
@@ -3688,20 +3689,35 @@ hard budget of $1 in any rolling hour.
   spending is only ever counted a little longer; corrupt storage reads as empty but never as more allowed than what it
   can parse; `resumeAt(usd)` (Infinity when `usd` alone passes the cap); `reload()` for other tabs, which also writes
   back spending another tab's stale write dropped), `estimateLiveLookUsd`, `nextLiveDelay`, `liveBackoff`,
-  `canSpeakLive`, `liveMeterText`, `liveResumeShownAt` (the time named at the limit, rounded up to the minute).
+  `canSpeakLive`, `liveMeterText`, `liveSpentText` (the hour as the meter shows it: `formatUsd`, but "$1.00" from 99.5¢,
+  never "100¢" next to "limit $1"), `liveResumeShownAt` (the time named at the limit, rounded up to the minute).
 - `src/ui/optics/optics.js` (the key, the loop, the panel, the caption, the words), `src/styles/optics.css`,
   `src/lib/optics-commands.js` (the words), `src/ui/app.js` (deps), `src/ui/voice-mode.js` (`api.say(line)`).
 
 **Starting.** The **Live view** key (`optics-liveview-toggle`, `aria-pressed`) sits right after Watch in every layout
 (Mac; iPhone portrait; iPhone held sideways, where it takes the next line of the key column; 320 px phones, where the
 keys close up). Option/Alt-L toggles it. Words, typed in `optics-ask` or said (Optics' mic, or Voice Mode over Optics):
-"live view", "start live view", "turn on live view", "watch me", "keep watching" (`matchOpticsCommand` →
-`{ action: 'liveview', on: true }`). It never turns the camera on: the camera must be live in Optics (a Look on screen
-goes back to Live first). In Voice Mode with Optics closed the same words follow the Look rule
-(`voiceLiveViewRequest`): on a computer where the camera is allowed, Optics opens over Voice Mode with
-`deps.autoLive` and the live view starts once the camera is live; otherwise (iPhone, not allowed yet) Jarvis says
-"Tap Look, and I'll keep watching." and the next tap on Voice Mode's Look within 30 s starts it. Without
-`deps.liveLook` (the demo) the key is hidden. Starting the live view stops Watch and starting Watch stops the live view.
+"live view", "start live view", "turn on live view" and every phrase that names it ("show me the live view", "back to
+the live view", "resume live view", "continue the live view") → `{ action: 'liveview', on: true }`; "watch me", "keep
+watching" → `{ action: 'liveview', on: true, watching: true }`: while Watch is on these mean "go on" (Watch stays:
+"I'm already watching."), while the key or the words that name the live view still switch. The camera's own words
+("go live", "back to the camera", "unfreeze") are `{ action: 'live' }` and say "This is the camera." / "Back to the
+camera.", never anything about the live view (before, "show me the live view" answered "This is the live view." and
+started nothing). It never turns the camera on: the camera must be live in Optics (a Look on screen goes back to Live
+first). In Voice Mode with Optics closed the same words follow the Look rule
+(`voiceLiveViewRequest(text, { viewerOpen, cameraAllowed, ios })`): never while a hologram or blueprint is on screen
+(null: the words go to Jarvis, as "what is this?" does); on a computer where the camera is allowed, Optics opens over
+Voice Mode with `deps.autoLive` and `deps.autoLiveSaid`, and Voice Mode waits ("One moment…") for `api.autoLiveDone`,
+which resolves once the camera is live and the live view has started: `{ ack }` ("Live view on. I'll speak up when I
+see something.", or the note at the limit when the hour's $1 is already spent, or the offline note) or `{ error }`
+(the camera's own message, such as "The camera is in use by another app…"); Voice Mode says it (`viewerOutcome`
+speaks `ack`). Otherwise (iPhone, not allowed yet) Jarvis says "Tap Look, and I'll keep watching." and the next tap on
+Voice Mode's Look within 30 s starts it (Optics then says a pause at the limit itself). With Optics open, `command()`
+acks the outcome the same way: `startLiveView()` checks the budget at once and starts paused at the limit when the $1
+is spent, so "Live view on" is said only when looks will go. While the live view is on, its words: paused for a Look →
+back to Live ("Back to the live view."); paused at the limit → Resume if the time has come ("The live view goes on."),
+else the note again; offline → it waits; on → "I'm already watching." Without `deps.liveLook` (the demo) the key is
+hidden. Starting the live view stops Watch and starting Watch stops the live view.
 
 **The loop.** One look at a time (`liveView.inflight`, an AbortController): budget check, capture (640 × 360 for a
 16:9 camera, JPEG 0.75), `deps.liveLook(frame, { summary, said, signal, model })`, then the next look is scheduled by
@@ -3715,14 +3731,18 @@ two requests are never less than a second apart.
   the browser's storage, so every Jarvis tab and window of that browser shares it (the `storage` event refreshes the
   meter); on an iPhone the Home Screen app and Safari keep separate storage, so each counts its own hour.
 - **After each reply**: the real cost (`costUsd`, from usage) is added to the budget, and to the month's spending by
-  `onSpend` → `addSpend` (as Watch frames are). A look aborted after it was sent (stopped, closed) is counted at its
-  estimate.
+  `onSpend` → `addSpend` (as Watch frames are). A look sent but never answered (stopped, closed, hidden, a timeout, a
+  dropped connection: `costUnknown`) may still be billed: it is counted at its estimate in the hour and in the month
+  (`deps.liveSpendEstimate` → `addSpend`), so Settings → Spending and the hour agree.
 - **The answer**: `summary` becomes the caption under the video (`optics-liveview-caption`) and the scene so far for
   the next look. A `worth_saying` line not said before goes to the top of the list (`optics-liveview-lines`, newest
   first, the last five, each `optics-liveview-line` with `data-spoken`), is announced, and is spoken when
   `deps.liveSpeech.state()` says Jarvis may (`allowed`: Voice Mode open, or replies read aloud; never while the
   owner is talking, a microphone hearing words, or Jarvis is speaking) and `canSpeakLive` allows (15 s since the last
-  spoken line). Lines in between are shown only (with the notify cue).
+  spoken line). A line held back (someone speaking, or within 15 s of the last one) is only shown, without a sound.
+  The notify cue marks a line only where Jarvis may not speak at all (`allowed` false: Voice Mode closed, replies not
+  read aloud), never while the owner is talking (a microphone open), and at most once every 15 s
+  (`data-liveview-cues`). Before, it rang for every held-back line, about once a second, over Jarvis and the owner.
 - **Errors**: 429/529 → `liveBackoff(prev, retryAfterMs)`, and the note "Looking less often: your Anthropic
   account's speed limit." until a look succeeds. A refusal or a reply cut short (a reply with a cost) skips that
   frame. No reply at all (network, server) backs off too; after three in a row the note says Jarvis can't reach
@@ -3733,19 +3753,36 @@ two requests are never less than a second apart.
 **Speaking** (app.js). `liveSpeech.state()` → `{ allowed, ownerSpeaking, jarvisSpeaking }` from Voice Mode's
 `voiceInfo` (listening with words heard; speaking or busy), the chat mic and `state.speaking`. `liveSpeech.say(line)`:
 with Voice Mode open, `voiceApi.say(line)`, which says it only while Voice Mode is free (no turn, no speech, no
-2-second check or question waiting, the wake routine over, no words heard); a listen that has heard nothing yet is put
-aside for the line, so the microphone never hears Jarvis, and Continuous listens again after it. Otherwise the voice
-router speaks it (George when he's on), as a `state.speaking` entry with no turn, so Stop and the chat mic cut it like
-any read-aloud reply. `liveSpeech.unlock()` runs inside the Live view tap (iOS speech).
+2-second check or question waiting, the wake routine over, no words heard). A listen the owner opened is never taken:
+one started by a tap (`gesture`), or any listen while Continuous is off (only a tap or a question of Jarvis's opens one
+then): the line is only shown, so the question they tapped to ask is never lost. Continuous's own listen that has heard
+nothing yet is put aside for the line, so the microphone never hears Jarvis, and listening starts again after it.
+Otherwise the voice router speaks it (George when he's on), as a `state.speaking` entry with no turn, so Stop, the chat
+mic and Optics' and the hologram viewer's mics cut it like any read-aloud reply (`sttPausingPreviews.startListening`
+calls `stopSpeakingNow()` first: through the Mac's speakerphone the recognizer would otherwise hear Jarvis's line as
+the owner's question). `liveSpeech.unlock()` runs inside the Live view tap (iOS speech).
+
+**Notices said aloud.** Where Jarvis may speak, the live view's own stops and pauses are said once, not only shown:
+hands-free, silence would read as "nothing worth saying". `sayNotice(text)` for the end of the session, the pause at
+the limit (not when the words that started it already say it: `startLiveView({ aloud: false })`), a camera unplugged
+and a `fatal` error; it waits until neither the owner nor Jarvis is speaking (retried each second for up to 30 s, past
+the 15 s between lines), and a newer notice replaces one still waiting. `data-liveview-notices` counts them.
 
 **Pauses** (`data-liveview-paused`): `look` — a Look (typed, Space, LOOK, or said in Voice Mode) or a past Look
 reopened from the log puts its frame and answer on screen: "Paused while you look at this" until **Live**; a look already under way finishes and is counted, but its summary isn't shown and its line isn't
 listed or said (the next look after Live says it if it still matters). The Look and its
-follow-ups asked during the live view count toward the hour's $1 when their turns end (`liveCount`). `cap` — "Live
+follow-ups (Tell me more, What's this part?, Hologram of this) asked during the live view count toward the hour's $1
+when their turns end (`liveCount`), through a run listener of their own (`countLiveRun`, attached as soon as the run
+exists): Live, the LIVE pill, Esc or Optics closing take the answer sheet and its listener away while the answer goes
+on in the chat and is billed, and the cost is still counted (also after Optics has closed: the budget lives in
+localStorage). Questions are never refused at the limit: they work as before the live view, are counted, and can take
+the hour a few cents over $1 ("$1.03 this hour"); the looks then wait until the hour is back under $1. `cap` — "Live
 view paused: it has spent $1 in the last hour. It can go on at 2:41 PM." (`budget.resumeAt`, named rounded up to the
 minute by `liveResumeShownAt`, so Resume already works at the minute named) with **Resume**
 (`optics-liveview-resume`, `data-resume-at`), disabled until then; the live view never goes on by itself. If another
-tab spent meanwhile, a tap on Resume names the new time. `offline`.
+tab spent meanwhile, a tap on Resume names the new time. `offline`. While paused the pill reads LIVE VIEW PAUSED
+(`aria-label` "Live view is paused…"), and at the limit or offline the caption is hidden: nothing says Jarvis is
+watching while he isn't.
 
 **Stops** (never a pause): the key, the panel's ×, "stop live view", "turn off live view", "that's enough", "stop
 watching" (it stops whichever of Watch and the live view is on); Optics closed (Esc, the LIVE pill, ×, Voice Mode
@@ -3758,15 +3795,31 @@ off during the live view. In v8.0 it runs only in Optics itself, never in a came
 **On screen.** The panel `optics-liveview` (under the top bar on a phone, with the frozen frame of a Look moved below
 it (`--live-hud-h`) so no label hides behind it; at the top of the side column on a computer): the meter
 `optics-liveview-meter` ("LIVE VIEW · 12 min · 9¢ this hour · limit $1", breaking only between its parts;
-`data-spent-usd`, `data-looks`), × (`optics-liveview-stop`), the note `optics-liveview-note` (`data-kind` info|warn),
-Resume and the lines. The LIVE pill reads LIVE VIEW. `optics` carries `data-liveview` (on|off),
-`data-liveview-paused`, `data-liveview-looks`, `data-liveview-slow` (from 90¢), `data-liveview-limited`,
-`data-liveview-spoken`. `onLiveChange` gets `liveView: true`; the app's status line says "Live view" and Presence
+`liveSpentText`, so "$1.00" from 99.5¢; `data-spent-usd`, `data-looks`), × (`optics-liveview-stop`), the note
+`optics-liveview-note` (`data-kind` info|warn), Resume and the lines. On a phone (portrait, held sideways, 320 px) the
+picture keeps the room: one line of caption, and only the newest line said (at most two lines of text, with "+4"
+when there are more); a tap on the list (`optics-liveview-lines`) shows the last five and a tap again only the newest
+(`optics-liveview[data-expanded]`); the older lines stay in the page, clipped, for screen readers. Held sideways the
+panel keeps to the top-left corner (at most 340 px wide). The LIVE pill reads LIVE VIEW (LIVE VIEW PAUSED while it
+waits). `optics` carries `data-liveview` (on|off), `data-liveview-paused`, `data-liveview-looks`, `data-liveview-slow`
+(from 90¢), `data-liveview-limited`, `data-liveview-spoken`, `data-liveview-notices`, `data-liveview-cues`. `onLiveChange` gets `liveView: true`; the app's status line says "Live view" and Presence
 shows WATCHING. `api.stopLiveView()` and `api.liveView` (`{ on, paused, looks }`).
 
 **Privacy.** Nothing is recorded: each frame is encoded, sent and released (no preview kept, nothing in the
 conversation, nothing in backups or sync); the lines live only in the open Optics. Pictures go to Anthropic about once
-a second only while the live view is on, which the owner starts and which stops after an hour.
+a second only while the live view is on, which the owner starts and which stops after an hour. There is no stream to
+log into: each picture is one API request. Anthropic deletes API inputs and outputs within 30 days by default (longer
+only when a request is flagged under its usage policy or the law requires it) and doesn't train its models on them;
+the README says so in these terms, not "the picture is gone".
+
+**Known limits.** The budget ages its entries by the device's clock: a clock set forward by hand (or a bad time
+sync) makes it forget the hour's spending. Not guarded: a page can't tell a jump from time really passing across a
+reload, and `performance.now()` can stand still while a computer sleeps, so a guard would hold the live view paused
+longer than needed after a sleep; a clock set back counts the hour longer, which is safe. Two tabs that check the
+budget in the same millisecond at the edge can each send one look (about 0.014¢), and a reply can cost up to about
+0.01¢ more than its estimate (100 output tokens assumed, `max_tokens` 300). A question whose page is reloaded before its
+answer ends is cut off and isn't counted in the hour. In Voice Mode over Optics, a question without "this" ("is it
+charged?") is an ordinary turn for Jarvis: it neither pauses the live view nor counts in the hour.
 
 **Tests.** The strict mock answers a structured request whose system prompt starts "You are Jarvis Live view"
 (`test/mock/optics.mjs` `liveLookPlan`; `configureLive(t.mock, { scene, costUsd, delayMs, errors })`: one scripted
@@ -3782,4 +3835,79 @@ starts the live view), `optics-live-cap` (95¢ spent elsewhere: 5 s apart, pause
 it, Resume from then), `optics-live-hidden` (slow replies: one in flight; hidden mid-look: stopped, camera released,
 nothing after), `optics-live-ratelimit` (429 with retry-after 3 s, then 529), `optics-live-look` (a question: a Look on
 the main model, paused, Live resumes, its cost counted), `optics-live-hour` (an 8 s session ends by itself and says
-so) and `optics-live-watch` (Watch and the live view stop each other; "stop watching").
+so) and `optics-live-watch` (Watch and the live view stop each other; "stop watching"; "keep watching" with Watch on
+keeps Watch). `optics-live-cap` also checks the hidden caption and LIVE VIEW PAUSED at the limit, and
+`optics-live-hidden` that the month counts a look given up as the hour does. `optics-live-2.mjs`, the review's cases:
+`optics-live-look-early` (a question, then Live, the LIVE pill or Tell me more + Live before the answer ends: still
+counted), `optics-live-voice-hologram` ("keep watching" over a hologram stays with Jarvis), `optics-live-voice-cap`
+(at the limit Jarvis says the pause, never "Live view on"; the meter reads $1.00), `optics-live-voice-busy` (the
+camera in use: said), `optics-live-voice-words` ("live view" after a question, "show me the live view", "resume live
+view", "go live"), `optics-live-voice-notices` (the pause at the limit and the end said aloud), `optics-live-bell`
+and `optics-live-bell-voice` (the cue's rule), `optics-live-mic` (Optics' mic stops Jarvis first), `optics-live-tap`
+(the owner's tap kept with Continuous off) and `optics-live-phone-panel` (how much of the picture the panel and
+caption cover in portrait, sideways and at 320 px; the tap for all five lines). Unit tests: the words, the viewer rule
+and `liveSpentText`.
+
+## 28. v8.1: Hands-free on a Mac
+
+<!-- v8.1: mac-hf writes 28.1, 28.4 and 28.5; mac-dev writes 28.2 and 28.3. -->
+
+### 28.1 Listening in the background
+
+<!-- v8.1: mac-hf writes this part. -->
+
+### 28.2 Microphone and speaker
+
+<!-- v8.1: mac-dev writes this part. -->
+
+### 28.3 The speakerphone coming and going
+
+<!-- v8.1: mac-dev writes this part. -->
+
+### 28.4 Interrupting by voice
+
+<!-- v8.1: mac-hf writes this part. -->
+
+### 28.5 The follow-up window, the brake and one window
+
+<!-- v8.1: mac-hf writes this part. -->
+
+## 29. v8.1: Walkthroughs
+
+<!-- v8.1: tours writes 29.1 and 29.3; tour-render writes 29.2. -->
+
+### 29.1 The tour and the planner
+
+<!-- v8.1: tours writes this part. -->
+
+### 29.2 The renderer
+
+<!-- v8.1: tour-render writes this part. -->
+
+### 29.3 Narration and voice
+
+<!-- v8.1: tours writes this part. -->
+
+## 30. v8.1: One router
+
+<!-- v8.1: voice writes this part. -->
+
+## 31. v8.1: Windows and tabs
+
+<!-- v8.1: windows writes this part. -->
+
+## 32. v8.1: Jarvis for Chrome by voice
+
+<!-- v8.1: chrome-relay writes 32.1, chrome-ext 32.2 and chrome-voice 32.3. -->
+
+### 32.1 The link and the relay
+
+<!-- v8.1: chrome-relay writes this part. -->
+
+### 32.2 The extension's side and the voice policy
+
+<!-- v8.1: chrome-ext writes this part. -->
+
+### 32.3 Asking by voice
+
+<!-- v8.1: chrome-voice writes this part. -->

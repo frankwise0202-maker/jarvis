@@ -89,6 +89,16 @@ import { createStandbyCapture } from '../platform/wake/capture.js';
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';
+// v8.1: one router for what the owner says (SPEC §30), and each track's commands in its own module.
+import { createRouter, registerTodayCommands, emptyState, REOPEN_ACTIONS } from '../lib/command-router.js';
+import { register as registerMacCommands } from './commands/mac.js';
+import { register as registerAudioCommands } from './commands/audio.js';
+import { register as registerTourCommands } from './commands/tours.js';
+import { register as registerVoiceCommands } from './commands/voice.js';
+import { register as registerChromeVoiceCommands } from './commands/chrome-voice.js';
+import { register as registerWindowCommands } from './commands/windows.js';
+import { register as registerOpticsCommands } from './commands/optics.js';
+import { register as registerChromeCommands } from './commands/chrome.js';
 
 const { sttSupported, startListening } = stt;
 // Speech: the device voice (tts.js), or the opt-in natural voice (Kokoro in a Worker) when it
@@ -234,6 +244,10 @@ export async function startApp(rootEl) {
 
   const ttsOk = safe(() => ttsSupported(), false);
   const sttOk = safe(() => sttSupported(), false);
+  // v8.1: the command router (SPEC §30), with today's four chains' matchers; each track's commands
+  // are registered below (registerCommandModules), and routerState() gives it the moment's state.
+  const commandRouter = createRouter();
+  registerTodayCommands(commandRouter);
 
   // ---- engine & store ---------------------------------------------------------------------
   // The saved library of holograms and blueprints (IndexedDB, src/platform/library.js).
@@ -471,6 +485,9 @@ export async function startApp(rootEl) {
   const sttPausingPreviews = {
     ...stt,
     startListening: (options = {}) => {
+      // Jarvis stops talking first, as the chat mic does (v8.0): a live view line or a reply read
+      // aloud through the Mac's speakerphone would otherwise be heard as the owner's question.
+      safe(() => stopSpeakingNow());
       safe(() => musicPlayer.pauseForMic());
       let open = true;
       otherMics += 1;
@@ -566,7 +583,9 @@ export async function startApp(rootEl) {
     // "How's the home base?": the Jarvis Core answers, free (a local exchange; v7.5).
     // v7.6: "research … in the background", "what did the home base find?", "watch for …", "brief me":
     // the home base acts (free, local exchanges) while one is linked.
-    onCommand: (text) => !!screenCommand(text, null, 'typed') || !!musicCommand(text, { source: 'typed' }) || standbyFromChat(text) || homeBaseFromChat(text) || brainFromChat(text),
+    // v8.1: the router picks the command, in the chat's order (routeChat); if it fails, the words
+    // are a message, as for any words no command takes.
+    onCommand: (text) => safe(() => routeChat(text), false),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
@@ -1323,8 +1342,7 @@ export async function startApp(rootEl) {
   let voiceInfo = null; // its listening state, mirrored on the mic button of a hologram viewer over it
   // The hologram last shown over this Voice Mode ({ segment, conversationId, turnId }): once its
   // viewer is closed, a command for it ("expand it", "show the separator") opens it again, free.
-  let lastVoiceHologram = null;
-  const REOPEN_ACTIONS = new Set(['explode', 'collapse', 'select', 'focus', 'isolate', 'labels-on', 'labels-off', 'view', 'parts-list', 'photos', 'show-all', 'zoom-in', 'zoom-out', 'rotate', 'blueprint']);
+  let lastVoiceHologram = null; // REOPEN_ACTIONS (command-router.js): the commands that open it again
 
   function startTurnForVoice(text, { mode, blueprintFor, attachments, optics, newChat: freshChat = false } = {}) {
     if (!state.demo && !safe(getApiKey, '')) throw new Error('Add your Anthropic API key first: exit voice mode, then open Settings → API key.');
@@ -1513,6 +1531,11 @@ export async function startApp(rootEl) {
         look: { supported: () => !state.demo && safe(() => cameraSupported(), false), open: () => openOpticsForVoiceLook() },
         mode: () => composer.getMode(),
         visuals: voiceVisuals,
+        // v8.1: the command router, with the app's state of the moment (Voice Mode adds its own part).
+        router: {
+          route: (readings, local, opts) => commandRouter.route(readings, routerState('voice', local), opts),
+          run: (hit, ctx) => commandRouter.run(hit, ctx),
+        },
         // Standby (v7.4): "Jarvis, standby" / "go to sleep" closes Voice Mode into Standby.
         standby: state.demo ? null : {},
         wake,
@@ -2154,20 +2177,24 @@ export async function startApp(rootEl) {
 
   function voiceLookRequest(text) {
     if (state.demo || !voiceApi || !safe(() => cameraSupported(), false)) return null;
+    // Only words plainly about seeing: "what's that?" or "what is it?" in a conversation is about
+    // something Jarvis said, and goes to Jarvis as usual. So does "what is this?" while a hologram or
+    // blueprint is on screen: it is about that. The live view's words follow the same rule: with a
+    // hologram or blueprint on screen, "keep watching" never turns the camera on (v8.0).
+    const viewerOpen = !!(getHologramViewer() || getBlueprintViewer());
     // "Live view", "watch me", "keep watching": the camera opens by the same rule, then the live view.
-    const live = safe(() => voiceLiveViewRequest(text, { cameraAllowed, ios: isIOS() }), null);
+    const live = safe(() => voiceLiveViewRequest(text, { viewerOpen, cameraAllowed, ios: isIOS() }), null);
     if (live === 'need-tap') {
       pendingVoiceLook = { text: '', at: Date.now(), live: true };
       return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and I’ll keep watching.' } };
     }
     if (live === 'start') {
-      const optics = openOpticsScreen({ voice: true, autoLive: true });
-      return { handled: true, command: { action: 'optics', kind: 'liveview', ack: optics ? 'Live view on. I’ll speak up when I see something.' : 'The camera couldn’t start.' } };
+      // Jarvis says the outcome once the camera is live and the live view has started: "Live view
+      // on…", the pause at the hour's $1, or why the camera couldn't start (never "on" when it isn't).
+      const optics = openOpticsScreen({ voice: true, autoLive: true, autoLiveSaid: true });
+      const done = optics && optics.autoLiveDone ? optics.autoLiveDone : Promise.resolve({ error: 'The camera couldn’t start.' });
+      return { handled: true, command: { action: 'optics', kind: 'liveview', ack: '' }, done };
     }
-    // Only words plainly about seeing: "what's that?" or "what is it?" in a conversation is about
-    // something Jarvis said, and goes to Jarvis as usual. So does "what is this?" while a hologram or
-    // blueprint is on screen: it is about that.
-    const viewerOpen = !!(getHologramViewer() || getBlueprintViewer());
     const kind = safe(() => voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios: isIOS() }), null);
     if (!kind) return null;
     if (kind === 'need-tap') {
@@ -2204,6 +2231,8 @@ export async function startApp(rootEl) {
       // v8.0 Live view: looks on the cheap model, the lines spoken through the voice output.
       liveLook: state.demo ? null : liveFromOptics,
       liveSpeech: { state: liveSpeechState, say: sayLiveLine, unlock: () => safe(() => unlockSpeech()) },
+      // A live look sent but never answered (stopped, a timeout): the month counts its estimate too.
+      liveSpendEstimate: (usd) => safe(() => addSpend(usd)),
       liveOptions: devLiveOptions(),
       stt: sttPausingPreviews,
       sttSupported: sttOk,
@@ -2216,8 +2245,9 @@ export async function startApp(rootEl) {
       // and the cores' OPTICS bead; a Look's capture flares the home's core.
       onLiveChange: (live) => onOpticsLive(live),
       onCapture: () => presence.cue('capture'),
-      // "Put the camera on my other screen", typed or said in Optics (Screens acts on it at once).
-      screenCommand: (text, { spoken = false } = {}) => !!screenCommand(text, null, spoken ? 'voice' : 'typed'),
+      // v8.1: words typed or said in Optics go to the router first ("put the camera on my other
+      // screen", then Optics' own words: routeFromOptics).
+      route: (text, { spoken = false } = {}) => routeFromOptics(text, { spoken }),
       onClose: ({ cameraOff } = {}) => {
         if (cameraOff) toast('Camera off.', { level: 'info', id: 'optics-off' });
         if (!chat.isEmpty()) chat.scrollToBottom(false);
@@ -2233,7 +2263,7 @@ export async function startApp(rootEl) {
    * words of a Look to take as soon as the camera is live ("what am I looking at?" said in Voice Mode).
    * Returns the Optics api (truthy), or false.
    */
-  function openOpticsScreen({ start, voice = false, autoLook = '', autoLive = false } = {}) {
+  function openOpticsScreen({ start, voice = false, autoLook = '', autoLive = false, autoLiveSaid = false } = {}) {
     if (isOpticsOpen()) return currentOptics() || true;
     if (!voice) stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
@@ -2241,6 +2271,7 @@ export async function startApp(rootEl) {
     if (start === 'screen') extra.start = start;
     if (autoLook) extra.autoLook = autoLook;
     if (autoLive) extra.autoLive = true; // "live view" said in Voice Mode: it starts once the camera is live
+    if (autoLive && autoLiveSaid) extra.autoLiveSaid = true; // and Voice Mode says the outcome (autoLiveDone)
     if (voice && voiceApi) {
       Object.assign(extra, {
         voice: { tap: () => safe(() => voiceApi && voiceApi.tap()) },
@@ -2362,17 +2393,8 @@ export async function startApp(rootEl) {
   async function sendFromViewer(text, { conversationId, mode = 'auto', blueprintFor = null, signal = null } = {}) {
     const clean = String(text || '').trim();
     if (!clean) return { error: 'Nothing to send.' };
-    // "Put this on my other screen" typed in a viewer: a screen command, not a message for Jarvis.
-    if (!blueprintFor) {
-      const sc = screenCommand(clean, null, 'viewer');
-      if (sc) return { notice: screenMessage(await sc.done) };
-      // "Play Back in Black": found in Apple Music, free; the card is in the chat behind the viewer.
-      const mc = !voiceApi ? musicCommand(clean, { source: 'viewer' }) : null;
-      if (mc) {
-        const out = await mc.done;
-        return { notice: mc.stop ? out.ack : `${out.ack}${out.segment && out.segment.items.length ? ' It’s in the chat.' : ''}` };
-      }
-    }
+    // v8.1: "put this on my other screen" and "play Back in Black" typed in a viewer are taken before
+    // this, by the router (routeFromViewer).
     let conv = await viewerConversation(conversationId);
     if (signal && signal.aborted) return { error: 'Stopped.', stopped: true };
     // A conversation from before holograms can't take a 2D request: ask in a new one.
@@ -2469,6 +2491,8 @@ export async function startApp(rootEl) {
       blueprintCost: (conversationId) => blueprintCost(conversationId),
       requestBlueprint: (req) => requestBlueprint(req),
       sendMessage: (text, opts) => sendFromViewer(text, opts),
+      // v8.1: the command field's words go to the router first (the hologram's, Screens, Apple Music).
+      route: (text, opts) => routeFromViewer(text, opts),
       openBlueprint: (source) => openBlueprintSource(source),
       // Voice Mode covers the chat: "Open in chat" leaves it (as Exit does: a running reply carries
       // on in the chat), so the reply, details below its --- line included, is what shows.
@@ -3515,6 +3539,23 @@ export async function startApp(rootEl) {
       // v7.6: Settings → Home base → keep this device in sync.
       sync: syncCtl,
       toast,
+      // ==== v8.1: what each builder's Settings slot needs, between its markers (keep them) ====
+      // ---- mac-dev ▸ (Voice → Microphone and speaker)
+      // ---- mac-dev ◂
+      // ---- mac-hf ▸
+      // ---- mac-hf ◂
+      // ---- tours ▸ (Holograms)
+      // ---- tours ◂
+      // ---- voice ▸
+      // ---- voice ◂
+      // ---- chrome-voice ▸
+      // ---- chrome-voice ◂
+      // ---- windows ▸
+      // ---- windows ◂
+      // ---- optics ▸
+      // ---- optics ◂
+      // ---- chrome-relay ▸ (Jarvis for Chrome)
+      // ---- chrome-relay ◂
     });
     const sheet = createSheet({
       kind: 'full',
@@ -3917,6 +3958,220 @@ export async function startApp(rootEl) {
   setInterval(() => {
     if (chat.isEmpty() && !document.hidden) chat.refreshEmpty();
   }, 10 * 60 * 1000);
+
+  // ---- v8.1: one router for what the owner says (SPEC §30) --------------------------------------
+  // command-router.js picks which local command takes the words, in each surface's order; the surface
+  // carries it out. Today's matchers were registered at the start (registerTodayCommands); each
+  // track's own commands come from its module in src/ui/commands/ (registerCommandModules, below).
+
+  /**
+   * The router's view of the app at the moment of routing (contract (b)): command-router.js's
+   * emptyState(surface) with what exists today, then `local` (the surface's own part: Voice Mode's
+   * questions and prompt, whether it speaks, how the words came). Each builder fills its own fields
+   * in its block below (keep them apart: one line between blocks).
+   */
+  function routerState(surface, local = null) {
+    const s = emptyState(surface);
+    const holo = getHologramViewer();
+    const optics = currentOptics();
+    s.hologram = holo ? safe(() => ({ open: true, inWindow: false, parts: holo.parts(), selected: holo.getState().selected || null }), null) : null;
+    s.blueprintOpen = !!getBlueprintViewer();
+    s.optics = optics ? { open: true, mode: optics.frozen ? 'frozen' : optics.state === 'live' ? 'live' : null, liveView: !!(optics.liveView && optics.liveView.on), card: null, cameraAllowed, sceneChanged: null } : null;
+    s.camera = { supported: !state.demo && safe(() => cameraSupported(), false), allowed: cameraAllowed, ios: safe(() => isIOS(), false) };
+    s.windows = screensCtl ? safe(() => screensCtl.list().map((w) => ({ id: w.id, kind: w.kind, label: w.label, focused: false })), []) : [];
+    s.reply = { links: [], hologram: reopenableHologram() };
+    s.music = { playing: safe(() => musicPlayer.isPlaying(), false) };
+    s.homebase = { available: !!homeBase, linked: !!(brain && safe(() => brain.base(), null)) };
+    s.standby = { available: !state.demo && !!standby, open: !!standby && safe(() => standby.isOpen(), false) };
+    s.voiceOpen = !!voiceApi && safe(() => isVoiceModeOpen(), false);
+    s.hidden = !!document.hidden;
+    s.phone = phoneLike;
+    // ---- mac-dev ▸ its state fields
+    // ---- mac-dev ◂
+    // ---- mac-hf ▸
+    // ---- mac-hf ◂
+    // ---- tours ▸ (s.tour)
+    // ---- tours ◂
+    // ---- voice ▸
+    // ---- voice ◂
+    // ---- chrome-voice ▸
+    // ---- chrome-voice ◂
+    // ---- windows ▸ (s.windows, s.reply.links)
+    // ---- windows ◂
+    // ---- optics ▸ (s.optics.mode 'aside', card, sceneChanged)
+    // ---- optics ◂
+    // ---- chrome-relay ▸ (s.chrome)
+    // ---- chrome-relay ◂
+    return local ? Object.assign(s, local) : s;
+  }
+
+  /** The hologram shown last over Voice Mode, while a command about it can open it again (free). */
+  function reopenableHologram() {
+    const seg = lastVoiceHologram && lastVoiceHologram.segment;
+    const spec = seg && seg.status !== 'building' && isObj(seg.spec) && Array.isArray(seg.spec.parts) ? seg.spec : null;
+    if (!spec) return null;
+    return { title: String(spec.title || seg.title || ''), parts: spec.parts.filter(isObj).map((p) => ({ id: p.id, name: p.name, aka: Array.isArray(p.aka) ? p.aka : [] })) };
+  }
+
+  /**
+   * A command registered by a src/ui/commands module, carried out on a surface (Voice Mode does its
+   * own): its run() acts; `present(say)` shows its line. True when it acted.
+   */
+  function runRouted(hit, ctx, present) {
+    let out;
+    try {
+      out = commandRouter.run(hit, { ...ctx, reading: hit.reading });
+    } catch (err) {
+      console.error('[jarvis] a command failed:', err);
+      return false;
+    }
+    if (out === false) return false;
+    Promise.resolve(out).then(
+      (o) => present(o && typeof o.say === 'string' ? o.say : ''),
+      () => present('That didn’t work.'),
+    );
+    return true;
+  }
+
+  /**
+   * Words typed in the chat (or its microphone's, once in the box): the first local command the router
+   * picks acts here (today: Screens, Apple Music, Standby, the home base, its brain). True when one did.
+   */
+  function routeChat(text) {
+    const words = String(text || '');
+    const st = routerState('chat', { via: 'typed' });
+    for (let hit = commandRouter.route([words], st); hit; hit = commandRouter.route([words], st, { after: hit })) {
+      if (runChat(hit, words)) return true;
+    }
+    return false;
+  }
+
+  function runChat(hit, text) {
+    switch (hit.id) {
+      case 'screens':
+        return !!screenCommand(text, null, 'typed');
+      case 'music':
+        return !!musicCommand(text, { source: 'typed' });
+      case 'standby':
+        return standbyFromChat(text);
+      case 'homebase':
+        return homeBaseFromChat(text);
+      case 'brain':
+        return brainFromChat(text);
+      default:
+        return runRouted(hit, { surface: 'chat', via: 'typed' }, (say) => {
+          if (say) toast(say, { level: 'info', id: 'command' });
+        });
+    }
+  }
+
+  /**
+   * Words from a hologram's command field or its microphone: the first local command the router picks
+   * acts (today: the hologram's own, then Screens, then Apple Music while Voice Mode is closed):
+   * { handled: true, …the hologram's result } or { handled: true, notice: Promise<line> } (the viewer
+   * shows the line); null: they go to Jarvis (the viewer sends them).
+   */
+  function routeFromViewer(text, opts = {}) {
+    const words = String(text || '');
+    const viewer = opts.viewer || getHologramViewer();
+    const st = routerState('hologram', { via: opts.source === 'voice' ? 'voice' : 'typed' });
+    for (let hit = commandRouter.route([words], st); hit; hit = commandRouter.route([words], st, { after: hit })) {
+      const out = runFromViewer(hit, words, viewer, opts);
+      if (out) return out;
+    }
+    return null;
+  }
+
+  function runFromViewer(hit, text, viewer, opts) {
+    const clean = text.trim();
+    switch (hit.id) {
+      case 'hologram': {
+        const res = viewer ? safe(() => viewer.command(text, opts), null) : null;
+        return res && res.handled ? res : null;
+      }
+      case 'screens': {
+        // "Put this on my other screen" typed in a viewer: a screen command, not a message for Jarvis.
+        const sc = screenCommand(clean, null, 'viewer');
+        return sc ? { handled: true, notice: sc.done.then((o) => screenMessage(o)) } : null;
+      }
+      case 'music': {
+        // "Play Back in Black": found in Apple Music, free; the card is in the chat behind the viewer.
+        const mc = !voiceApi ? musicCommand(clean, { source: 'viewer' }) : null;
+        if (!mc) return null;
+        return { handled: true, notice: mc.done.then((out) => (mc.stop ? out.ack : `${out.ack}${out.segment && out.segment.items.length ? ' It’s in the chat.' : ''}`)) };
+      }
+      default: {
+        let said = null;
+        const notice = new Promise((resolve) => (said = resolve));
+        return runRouted(hit, { surface: 'hologram', via: opts.source === 'voice' ? 'voice' : 'typed' }, (say) => said(say)) ? { handled: true, notice } : null;
+      }
+    }
+  }
+
+  /**
+   * Words typed in Optics' field (spoken: heard by its own microphone): the first local command the
+   * router picks acts (today: Screens, then Optics' own words; typed, only the live view's words and
+   * "stop watching"): { handled: true, ack, done? } (Optics announces the ack, and done's line), or
+   * null: Optics takes them as the Look's question (live) or a follow-up (frozen).
+   */
+  function routeFromOptics(text, { spoken = false } = {}) {
+    const words = String(text || '');
+    const st = routerState('optics', { via: spoken ? 'voice' : 'typed' });
+    for (let hit = commandRouter.route([words], st); hit; hit = commandRouter.route([words], st, { after: hit })) {
+      if (hit.id === 'screens') {
+        if (screenCommand(words, null, spoken ? 'voice' : 'typed')) return { handled: true, ack: '' };
+      } else if (hit.id === 'optics') {
+        const optics = currentOptics();
+        const res = optics ? safe(() => optics.command(words), null) : null;
+        if (res && res.handled) return { handled: true, ack: (res.command && res.command.ack) || '' };
+      } else {
+        let said = null;
+        const done = new Promise((resolve) => (said = resolve));
+        if (runRouted(hit, { surface: 'optics', via: spoken ? 'voice' : 'typed' }, (say) => said(say))) return { handled: true, ack: '', done };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Each track's commands, registered once (contract (b)): every module gets the shared deps plus its
+   * own, added in its own call below (keep one line between calls).
+   */
+  function registerCommandModules() {
+    const shared = {
+      getSettings,
+      saveSettings,
+      toast: (msg, opts) => toast(msg, opts),
+      voice: () => (voiceApi && safe(() => isVoiceModeOpen(), false) ? voiceApi : null),
+      routerState: (surface, local) => routerState(surface, local),
+      phone: phoneLike,
+      demo: state.demo,
+    };
+    const register = (name, fn, deps) => {
+      try {
+        fn(commandRouter, deps);
+      } catch (err) {
+        console.error(`[jarvis] the ${name} commands could not register:`, err);
+      }
+    };
+    // mac-hf (src/ui/commands/mac.js):
+    register('mac', registerMacCommands, { ...shared });
+    // mac-dev (src/ui/commands/audio.js):
+    register('audio', registerAudioCommands, { ...shared });
+    // tours (src/ui/commands/tours.js):
+    register('tour', registerTourCommands, { ...shared });
+    // voice (src/ui/commands/voice.js):
+    register('voice', registerVoiceCommands, { ...shared });
+    // chrome-voice (src/ui/commands/chrome-voice.js):
+    register('chrome-voice', registerChromeVoiceCommands, { ...shared });
+    // windows (src/ui/commands/windows.js):
+    register('windows', registerWindowCommands, { ...shared });
+    // optics (src/ui/commands/optics.js):
+    register('optics', registerOpticsCommands, { ...shared });
+    // chrome-relay (src/ui/commands/chrome.js):
+    register('chrome', registerChromeCommands, { ...shared });
+  }
+  registerCommandModules();
 
   // ---- boot ------------------------------------------------------------------------------------
   applyLayout();
